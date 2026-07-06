@@ -15,3 +15,6 @@ openbb-alpaca/
 openbb-arcticdb/
 openbb-kdb/
 openbb-eodhd/
+
+# Derived connection env, generated from the dependency containers by the skill.
+deps.env
