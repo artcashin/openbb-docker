@@ -1,0 +1,77 @@
+services:
+  openbb:
+    build: .
+    image: openbb-local:4.7.2
+    platform: linux/amd64
+    restart: unless-stopped
+    # Interactive Terminal needs a TTY + stdin.
+    stdin_open: true
+    tty: true
+    # Provider API keys (FMP_API_KEY=..., etc.). Optional: copy
+    # credentials.env.example -> credentials.env and fill in the ones you use.
+    env_file:
+      - path: ./credentials.env
+        required: false
+    # Persist settings, credentials, and user data across container runs.
+    volumes:
+      - openbb-data:/root/.openbb_platform
+      - ./workspace:/workspace
+    # Expose the OpenBB REST API when launched with the `api` profile.
+    ports:
+      - "6900:6900"
+
+  # Optional: REST API server instead of the Terminal.
+  # Start with: docker compose --profile api up
+  openbb-api:
+    profiles: ["api"]
+    build: .
+    image: openbb-local:4.7.2
+    platform: linux/amd64
+    restart: unless-stopped
+    command: ["openbb-api", "--host", "0.0.0.0", "--port", "6900"]
+    env_file:
+      - path: ./credentials.env
+        required: false
+    volumes:
+      - openbb-data:/root/.openbb_platform
+    ports:
+      - "6900:6900"
+
+  # Optional: ArcticDB shared store (S3-compatible) via MinIO.
+  # Start with:  docker compose --profile s3 up -d
+  # Then set ARCTICDB_URI in credentials.env to the s3:// URI (see that file).
+  # To move the store to another machine, run just this service there and change
+  # the host in ARCTICDB_URI from `minio` to that machine's IP/hostname.
+  minio:
+    profiles: ["s3"]
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # web console
+    volumes:
+      - minio-data:/data
+
+  # One-shot: create the ArcticDB bucket on MinIO (ArcticDB won't create it).
+  minio-setup:
+    profiles: ["s3"]
+    image: minio/mc:latest
+    depends_on:
+      - minio
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      ARCTICDB_BUCKET: ${ARCTICDB_BUCKET:-openbb}
+    entrypoint: >
+      /bin/sh -c "
+      until mc alias set local http://minio:9000 \"$$MINIO_ROOT_USER\" \"$$MINIO_ROOT_PASSWORD\"; do echo waiting for minio; sleep 1; done;
+      mc mb -p \"local/$$ARCTICDB_BUCKET\";
+      echo \"bucket '$$ARCTICDB_BUCKET' ready\";
+      "
+
+volumes:
+  openbb-data:
+  minio-data:

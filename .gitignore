@@ -1,0 +1,17 @@
+# Secrets — real API keys / connection strings (compose reads this at runtime)
+credentials.env
+*.env
+!*.env.example
+!.env.example
+
+
+# Build/scratch
+*.log
+workspace/
+.DS_Store
+
+# Nested extension repos — each is its own git repository, tracked separately.
+openbb-alpaca/
+openbb-arcticdb/
+openbb-kdb/
+openbb-eodhd/
