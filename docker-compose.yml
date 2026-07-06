@@ -1,7 +1,7 @@
 services:
   openbb:
     build: .
-    image: openbb-local:4.7.2
+    image: ${OPENBB_IMAGE:-openbb-local:4.7.2}
     platform: linux/amd64
     restart: unless-stopped
     # Interactive Terminal needs a TTY + stdin.
@@ -25,7 +25,7 @@ services:
   openbb-api:
     profiles: ["api"]
     build: .
-    image: openbb-local:4.7.2
+    image: ${OPENBB_IMAGE:-openbb-local:4.7.2}
     platform: linux/amd64
     restart: unless-stopped
     command: ["openbb-api", "--host", "0.0.0.0", "--port", "6900"]
