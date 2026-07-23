@@ -85,6 +85,18 @@ RUN pip install /opt/openbb-kdb
 COPY openbb-eodhd/ /opt/openbb-eodhd/
 RUN pip install /opt/openbb-eodhd
 
+# Custom DuckDB + Polars analytics integration: `.duckdb` OBBject accessor +
+# generic store (SQL over results/Parquet, catalog tables). Pulls duckdb/polars/
+# pyarrow (pure wheels, no shared-lib pin conflict). No OHLCV provider — stored
+# bars are served by provider="arcticdb"; DuckDB queries across them.
+COPY openbb-duckdb/ /opt/openbb-duckdb/
+RUN pip install /opt/openbb-duckdb
+
+# Custom FMP BULK helpers (whole-market ratios/metrics/statements the standard
+# openbb-fmp provider does not expose). Plain library, not a provider.
+COPY openbb-fmp-bulk/ /opt/openbb-fmp-bulk/
+RUN pip install /opt/openbb-fmp-bulk
+
 # Pre-compile the static package + assets so the first run is instant, and verify
 # the platform, CLI, and the custom extensions register at build time. (ruff is
 # present in the image, so the static codegen's lint/import-fix step runs.)
@@ -96,9 +108,21 @@ assert hasattr(OBBject, 'arcticdb'), 'arcticdb accessor not registered'; \
 assert 'kdb' in obb.coverage.providers, 'kdb provider not registered'; \
 assert hasattr(OBBject, 'kdb'), 'kdb accessor not registered'; \
 assert 'eodhd' in obb.coverage.providers, 'eodhd provider not registered'; \
-print('OpenBB + CLI + alpaca + arcticdb + kdb + eodhd OK')"
+assert hasattr(OBBject, 'duckdb'), 'duckdb accessor not registered'; \
+import openbb_duckdb, openbb_fmp_bulk; \
+import duckdb, polars, pyarrow; \
+print('OpenBB + CLI + alpaca + arcticdb + kdb + eodhd + duckdb + fmp-bulk OK')"
 
 WORKDIR /workspace
+
+# Self-provision the persistent mount points so the image is drop-in on any host
+# (QNAP Container Station, plain Docker) with bind mounts to not-yet-created
+# /share/Container/openbb/... paths. Runs as root, so no privilege drop -- just
+# `mkdir -p`. OPENBB_HOME persists settings/credentials; /workspace holds user data.
+ENV APP_DIRS="/root/.openbb_platform /workspace"
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 
 # Default to the interactive Terminal. Override with e.g.:
 #   docker run -it openbb-local python      -> Python REPL with `from openbb import obb`

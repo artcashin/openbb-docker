@@ -1,0 +1,28 @@
+# OpenBB Platform (REST API) on a QNAP NAS via Container Station.
+#
+# Container Station 3.x: Applications -> Create -> paste this -> Create.
+#
+# No host pre-setup required. dockerd auto-creates the bind-mount source dirs and
+# the container's entrypoint `mkdir -p`s OPENBB_HOME + /workspace on first boot
+# (it runs as root, so no permission dance is needed).
+#
+# This runs the long-lived REST API server (sensible for a NAS), NOT the
+# interactive Terminal. Reach it at http://<NAS-IP>:6900/docs.
+#
+# Provider API keys: put them at /share/Container/openbb/credentials.env
+# (FMP_API_KEY=..., EODHD_API_KEY=..., etc). Optional -- omit for public data.
+services:
+  openbb:
+    image: ghcr.io/artcashin/openbb-local:4.7.2
+    container_name: openbb
+    platform: linux/amd64
+    restart: unless-stopped
+    command: ["openbb-api", "--host", "0.0.0.0", "--port", "6900"]
+    env_file:
+      - path: /share/Container/openbb/credentials.env
+        required: false
+    ports:
+      - "6900:6900"
+    volumes:
+      - /share/Container/openbb/openbb_home:/root/.openbb_platform  # settings/creds (self-created)
+      - /share/Container/openbb/workspace:/workspace                # user data (self-created)
