@@ -68,6 +68,25 @@ p.write_text(src)
 PY
 RUN python -c "import ast; ast.parse(open('/usr/local/lib/python3.12/site-packages/openbb_cftc/cftc_router.py').read()); print('cftc_router patch parses OK')"
 
+# Patch openbb_core.api.rest_api CORS setup to allow Chrome's Private Network
+# Access preflight. OpenBB Workspace runs at https://pro.openbb.co (a public
+# origin); a fetch from there to http://127.0.0.1:6900 is a public->private
+# request, which Chrome gates behind an OPTIONS preflight carrying
+# Access-Control-Request-Private-Network: true. Starlette's CORSMiddleware
+# rejects that with "400 Disallowed CORS private-network" unless
+# allow_private_network=True, so the browser never issues the real request and
+# the Workspace "Connect backend" test times out. OpenBB passes only
+# origins/methods/headers through, with no setting for this.
+RUN python - <<'PY'
+import pathlib
+p = pathlib.Path("/usr/local/lib/python3.12/site-packages/openbb_core/api/rest_api.py")
+src = p.read_text()
+anchor = "    allow_headers=system.api_settings.cors.allow_headers,\n)"
+assert anchor in src, "rest_api.py CORS block not found - upstream changed"
+p.write_text(src.replace(anchor, anchor.replace("\n)", "\n    allow_private_network=True,\n)"), 1))
+PY
+RUN python -c "import ast; ast.parse(open('/usr/local/lib/python3.12/site-packages/openbb_core/api/rest_api.py').read()); print('rest_api CORS patch parses OK')"
+
 # Custom Alpaca provider extension (equity historical pricing via IEX/SIP).
 COPY openbb-alpaca/ /opt/openbb-alpaca/
 RUN pip install /opt/openbb-alpaca
