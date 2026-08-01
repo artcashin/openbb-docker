@@ -116,6 +116,17 @@ RUN pip install /opt/openbb-duckdb
 COPY openbb-fmp-bulk/ /opt/openbb-fmp-bulk/
 RUN pip install /opt/openbb-fmp-bulk
 
+# Official OpenBB MCP server: wraps the Platform FastAPI app in-process and
+# serves MCP over streamable-http. 1.4.1 requires openbb-core>=1.6.10,<2 and
+# fastmcp>=3.2.0 — an exact match for openbb 4.7.2. PIP_CONSTRAINT (the
+# extension-first ceilings) still applies to this install, so it cannot drag
+# shared libs past what arcticdb/pykx/eodhd tolerate. Launched by the NAS
+# compose as: openbb-mcp --host 127.0.0.1 --port 6901 (default transport is
+# streamable-http; default port 8001 is NOT used to avoid ambiguity with the
+# Spark's gemma port). Endpoint path: /mcp/.
+RUN pip install "openbb-mcp-server==1.4.1"
+RUN python -c "import openbb_mcp_server; print('openbb-mcp-server import OK')"
+
 # Pre-compile the static package + assets so the first run is instant, and verify
 # the platform, CLI, and the custom extensions register at build time. (ruff is
 # present in the image, so the static codegen's lint/import-fix step runs.)

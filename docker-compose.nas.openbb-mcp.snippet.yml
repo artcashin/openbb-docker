@@ -1,0 +1,38 @@
+# NOT a standalone compose file. Task 1 (image build only, no NAS access) could
+# not SSH to fetch the live NAS compose at /share/Container/openbb/ to merge
+# into. This is the `openbb-mcp` service block for Task 3 to paste into that
+# live file (repo's committed docker-compose.nas.yml is a stale pre-sidecar
+# single-service version predating the tailscale-sidecar stack — see
+# openbb-nas-stack memory note and Dockerfile git history; do NOT treat it as
+# current).
+#
+# `tailscale` below = whatever the sidecar SERVICE is named in the live file
+# (container_name is known to be `openbb-ts`; the openbb-api service in that
+# file uses `network_mode: service:<that name>` — confirm the exact service
+# key before pasting). env_file / volumes are copied from the pattern used by
+# the live `openbb-api` service (same credentials.env + deps.env + OPENBB_HOME
+# mount, since openbb-mcp wraps the same Platform app in-process) — Task 3
+# should diff against the actual live openbb-api block and correct paths if
+# they differ from what's shown here.
+#
+# Binding 127.0.0.1 is deliberate: the shared netns means Tailscale Serve
+# (Task 3) reaches it as localhost, and nothing is exposed to LAN or tailnet
+# directly.
+
+  openbb-mcp:
+    image: ghcr.io/artcashin/openbb-local:4.7.2
+    container_name: openbb-mcp
+    platform: linux/amd64
+    restart: unless-stopped
+    network_mode: service:tailscale
+    depends_on:
+      - tailscale
+    command: ["openbb-mcp", "--host", "127.0.0.1", "--port", "6901"]
+    env_file:
+      - path: /share/Container/openbb/credentials.env
+        required: false
+      - path: /share/Container/openbb/deps.env
+        required: false
+    volumes:
+      - /share/Container/openbb/openbb_home:/root/.openbb_platform
+      - /share/Container/openbb/workspace:/workspace
