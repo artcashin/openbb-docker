@@ -97,7 +97,12 @@ services:
     depends_on:
       - tailscale
       - kdb
-    command: ["openbb-mcp", "--host", "127.0.0.1", "--port", "6901"]
+    # --default-categories keeps the initial tools/list small enough to fit the
+    # model's context window: all 219 tools cost ~152k prompt tokens against a
+    # 65,536-token slot, which hard-errors. --tool-discovery then lets the agent
+    # enable further categories on demand, so nothing is permanently hidden.
+    command: ["openbb-mcp", "--host", "127.0.0.1", "--port", "6901",
+              "--default-categories", "equity", "--tool-discovery"]
     environment:
       # Disables the bundled skills provider. That provider is the only write
       # target for the unconditionally-registered `install_skill` admin tool,
