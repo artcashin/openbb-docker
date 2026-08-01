@@ -2,8 +2,8 @@
 
 Runs beside openbb-api inside the NAS shared network namespace
 (network_mode: service:tailscale), serving streamable-http MCP on
-127.0.0.1:6902 (path /mcp/), published by Tailscale Serve on
-https://openbb.tailb9874f.ts.net:8444/mcp/.
+127.0.0.1:6902 (path /mcp), published by Tailscale Serve on
+https://openbb.tailb9874f.ts.net:8444/mcp.
 
 Why it exists: the REST arcticdb/kdb providers only answer known-symbol OHLCV
 queries and return 204 against this store's raw quote/trade tick data. These
@@ -12,26 +12,43 @@ raw reads.
 
 Config (already present in the NAS env files):
   ARCTICDB_URI       s3://100.122.250.60:openbb?port=9000&...  (raw tailnet IP;
-                     MagicDNS names do NOT resolve inside NAS containers)
+                     MagicDNS names do NOT resolve inside NAS containers).
+                     NOTE: this URI embeds S3 access/secret credentials --
+                     never let it or a raw exception from the arcticdb client
+                     reach the caller; see _scrub / _bounded below.
   KX_HOST / KX_PORT  kdb IPC target; KX_PORT may be the combined
                      "127.0.0.1:5000" form used by deps.env — parsed here.
   STORES_HOST/PORT   bind address, default 127.0.0.1:6902.
+  STORES_TIMEOUT_S   hard wall-clock timeout (seconds) applied to every
+                     ArcticDB/kdb+ backend call, default 15. Bounds how long
+                     a dead S3 endpoint or unreachable kdb+ can hang a tool
+                     call (and, transitively, an anyio worker thread).
+
+  ARCTICDB_LIBRARY is intentionally NOT read here. It configures the REST
+  arcticdb provider/other services sharing these env files; this server
+  always requires an explicit `library` argument (discovered via
+  arctic_list_libraries) because cross-library reads are the point of these
+  tools, not a default to paper over.
 
 Safety: all tools are read-only. kdb access NEVER interpolates user input into
 q source: the table name is validated against tables[], symbols/timestamps are
 regex-gated and passed as typed ARGUMENTS to fixed q lambdas (_Q_META,
 _Q_SELECT). Strings cross IPC as char vectors (bytes) and are cast server-side
-(`$s / "P"$st), so a hostile string can never become q code.
+(`$s / "P"$st), so a hostile string can never become q code. _Q_META and
+_Q_SELECT are the only two strings ever sent as q source, always verbatim.
 """
 import json
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as _FutureTimeoutError
 
 from fastmcp import FastMCP
 
 MAX_ROWS = 10_000
-_IDENT_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
-_TIME_RE = re.compile(r"^[0-9T:. \-]{1,35}$")  # ISO-ish date/timestamp text
+STORES_TIMEOUT_S = float(os.environ.get("STORES_TIMEOUT_S", "15"))
+_IDENT_RE = re.compile(r"\A[A-Za-z0-9._-]{1,64}\Z")
+_TIME_RE = re.compile(r"\A[0-9T:. \-]{1,35}\Z")  # ISO-ish date/timestamp text
 
 # Fixed q sources. Only ever sent verbatim with arguments — never edited.
 _Q_META = '{[t] 0!meta get `$t}'
@@ -42,11 +59,59 @@ _Q_SELECT = (
     'if[(count s)>0; m:m and (tbl `$sc)=`$s]; '
     'if[(count st)>0; m:m and (tbl `$tc)>="P"$st]; '
     'if[(count et)>0; m:m and (tbl `$tc)<="P"$et]; '
-    'n sublist select from tbl where m}'
+    'select[n] from tbl where m}'  # [n] bounds rows AT the select, not after
 )
 _KDB_TIME_TYPES = tuple("pmdznuvt")  # q temporal type chars
 
-mcp = FastMCP("stores")
+# mask_error_details is a FastMCP behavior that could change upstream; it's
+# belt-and-braces on top of the source-level scrub in _bounded (finding 1).
+mcp = FastMCP("stores", mask_error_details=True)
+
+
+# ---------- credential scrubbing / backend call bounding ----------
+
+# Matches the credential params in an ArcticDB S3 URI (access=/secret=) and
+# any bare s3(s)://... URI, wherever they show up in exception text.
+_CRED_PARAM_RE = re.compile(r"(?i)\b(access|secret)=[^&\s\"']*")
+_S3_URI_RE = re.compile(r"s3s?://\S+")
+
+
+def _scrub(text: str) -> str:
+    """Redact S3 credentials from arbitrary error text before it can reach
+    the caller. Idempotent and harmless on text with nothing to redact."""
+    text = _S3_URI_RE.sub("s3://<redacted>", text)
+    text = _CRED_PARAM_RE.sub(lambda m: f"{m.group(1)}=<redacted>", text)
+    return text
+
+
+def _bounded(fn, *args, **kwargs):
+    """Run a raw ArcticDB backend call with a hard wall-clock timeout, and
+    scrub any embedded S3 credentials out of its exception text.
+
+    Only wraps calls that touch arcticdb directly (never our own validation
+    raises, which don't contain secrets and should keep their exception
+    type). arcticdb/pykx give no cooperative cancellation, so on timeout the
+    worker thread is abandoned rather than joined -- this call always
+    returns or raises within STORES_TIMEOUT_S regardless of what the backend
+    is doing.
+    """
+    ex = ThreadPoolExecutor(max_workers=1)
+    try:
+        fut = ex.submit(fn, *args, **kwargs)
+        try:
+            return fut.result(timeout=STORES_TIMEOUT_S)
+        except _FutureTimeoutError:
+            raise TimeoutError(
+                f"backend call timed out after {STORES_TIMEOUT_S}s"
+            ) from None
+        except Exception as e:
+            scrubbed = _scrub(str(e))
+            try:
+                raise type(e)(scrubbed) from None
+            except TypeError:  # exception type needs >1 positional arg
+                raise RuntimeError(scrubbed) from None
+    finally:
+        ex.shutdown(wait=False)
 
 
 # ---------- shared helpers ----------
@@ -54,7 +119,7 @@ mcp = FastMCP("stores")
 def _arctic():
     from arcticdb import Arctic  # lazy: unit tests mock the module
 
-    return Arctic(os.environ["ARCTICDB_URI"])
+    return _bounded(Arctic, os.environ["ARCTICDB_URI"])
 
 
 def _kdb_conn():
@@ -64,7 +129,12 @@ def _kdb_conn():
     port = os.environ.get("KX_PORT", "5000")
     if ":" in port:  # deps.env combined form: KX_PORT=127.0.0.1:5000
         host, port = port.rsplit(":", 1)
-    return pykx.SyncQConnection(host=host, port=int(port))
+    return pykx.SyncQConnection(
+        host=host,
+        port=int(port),
+        connection_timeout=STORES_TIMEOUT_S,
+        timeout=STORES_TIMEOUT_S,
+    )
 
 
 def _decode_df(df):
@@ -91,17 +161,19 @@ def _check_ident(kind, value):
 
 def arctic_list_libraries() -> list[str]:
     """List ArcticDB libraries in the store (e.g. 'ticks')."""
-    return sorted(_arctic().list_libraries())
+    ac = _arctic()
+    return sorted(_bounded(ac.list_libraries))
 
 
 def arctic_list_symbols(library: str) -> list[str]:
     """List symbols stored in an ArcticDB library."""
     ac = _arctic()
-    if library not in ac.list_libraries():
+    if library not in _bounded(ac.list_libraries):
         raise ValueError(
             f"unknown library {library!r}; call arctic_list_libraries first"
         )
-    return sorted(ac[library].list_symbols())
+    lib = _bounded(ac.__getitem__, library)
+    return sorted(_bounded(lib.list_symbols))
 
 
 def arctic_read(
@@ -116,29 +188,39 @@ def arctic_read(
     start/end are ISO dates/timestamps filtering the stored index
     (ArcticDB date_range). Returns at most tail_rows rows (the most recent
     ones in range, hard cap 10000) as JSON records with ISO timestamps.
+
+    The READ itself is bounded, not just the response: with no start/end
+    this uses ArcticDB's native `Library.tail(symbol, n)` so an unfiltered
+    call never materializes the whole symbol. With start/end, ArcticDB's
+    storage-level date_range read is already scoped to that window (mutually
+    exclusive with row_range at the API level), then trimmed to tail_rows.
     """
     import pandas as pd  # available: arcticdb depends on pandas
 
     tail_rows = max(1, min(int(tail_rows), MAX_ROWS))
     ac = _arctic()
-    if library not in ac.list_libraries():
+    if library not in _bounded(ac.list_libraries):
         raise ValueError(
             f"unknown library {library!r}; call arctic_list_libraries first"
         )
-    lib = ac[library]
-    if symbol not in lib.list_symbols():
+    lib = _bounded(ac.__getitem__, library)
+    if symbol not in _bounded(lib.list_symbols):
         raise ValueError(
             f"unknown symbol {symbol!r} in {library!r}; call arctic_list_symbols first"
         )
-    date_range = None
+
     if start or end:
         date_range = (
             pd.Timestamp(start) if start else None,
             pd.Timestamp(end) if end else None,
         )
-    df = lib.read(symbol, date_range=date_range).data
-    total = len(df)
-    df = df.tail(tail_rows).reset_index()
+        df = _bounded(lib.read, symbol, date_range=date_range).data
+        total = len(df)
+        df = df.tail(tail_rows).reset_index()
+    else:
+        total = _bounded(lib.get_description, symbol).row_count
+        df = _bounded(lib.tail, symbol, n=tail_rows).data.reset_index()
+
     return {
         "library": library,
         "symbol": symbol,
@@ -196,11 +278,15 @@ def kdb_select(
 ) -> dict:
     """Filtered read of a kdb+ table (parameterized; never raw q).
 
-    symbol filters the table's symbol-typed column; start_time/end_time are
-    ISO timestamps filtering the first temporal column. Returns at most
-    `limit` rows (hard cap 10000).
+    symbol filters the table's symbol-typed column (empty/whitespace means
+    "no filter", same as omitting it); start_time/end_time are ISO
+    timestamps filtering the first temporal column. Returns at most `limit`
+    rows (hard cap 10000) -- bounded at the q select itself (`select[n]`),
+    not by truncating a fully materialized result.
     """
     _check_ident("table", table)
+    if symbol is not None:
+        symbol = symbol.strip() or None
     if symbol is not None:
         _check_ident("symbol", symbol)
     for name, val in (("start_time", start_time), ("end_time", end_time)):

@@ -129,7 +129,7 @@ RUN python -c "import openbb_mcp_server; print('openbb-mcp-server import OK')"
 
 # Read-only ArcticDB/kdb+ "stores" MCP server (fastmcp arrives above as a
 # dependency of openbb-mcp-server). Launched by the NAS compose as:
-#   python /opt/mcp_stores/server.py     (binds 127.0.0.1:6902, path /mcp/)
+#   python /opt/mcp_stores/server.py     (binds 127.0.0.1:6902, path /mcp)
 COPY mcp_stores/ /opt/mcp_stores/
 RUN python -c "import sys; sys.path.insert(0, '/opt/mcp_stores'); import server; print('mcp_stores imports OK')"
 

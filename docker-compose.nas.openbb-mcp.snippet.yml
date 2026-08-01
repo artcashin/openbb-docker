@@ -58,3 +58,10 @@
         required: false
       - path: /share/Container/openbb/deps.env
         required: false
+    environment:
+      # Pinned explicitly (not just relying on server.py's 127.0.0.1
+      # default) so a stray STORES_HOST=0.0.0.0 in either env file above
+      # can never expose this unauthenticated store to the tailnet.
+      # `environment:` always wins over `env_file:` in Compose.
+      - STORES_HOST=127.0.0.1
+      - STORES_PORT=6902
