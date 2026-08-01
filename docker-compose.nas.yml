@@ -1,28 +1,154 @@
-# OpenBB Platform (REST API) on a QNAP NAS via Container Station.
+# OpenBB Platform API + KDB-X on the QNAP NAS, behind a Tailscale sidecar.
 #
-# Container Station 3.x: Applications -> Create -> paste this -> Create.
+# The tailscale container owns the network namespace; the API and kdb join it,
+# so all three appear on the tailnet as one node named "openbb". NOTHING is
+# published to the LAN and no ports are mapped -- Tailscale Serve is the only
+# way in:
 #
-# No host pre-setup required. dockerd auto-creates the bind-mount source dirs and
-# the container's entrypoint `mkdir -p`s OPENBB_HOME + /workspace on first boot
-# (it runs as root, so no permission dance is needed).
+#   https://openbb.tailb9874f.ts.net/    (Serve terminates TLS, real LE cert)
 #
-# This runs the long-lived REST API server (sensible for a NAS), NOT the
-# interactive Terminal. Reach it at http://<NAS-IP>:6900/docs.
+# Why this replaces the Mac's localhost:6900 setup: OpenBB Workspace runs at
+# https://pro.openbb.co, and a browser fetch from there to http://127.0.0.1:6900
+# is a public->private request that Chrome gates behind a Private Network Access
+# preflight. Over the tailnet the origin is a real HTTPS host in CGNAT space
+# (100.64/10), which Chrome classifies as public, so that gate never applies.
 #
-# Provider API keys: put them at /share/Container/openbb/credentials.env
-# (FMP_API_KEY=..., EODHD_API_KEY=..., etc). Optional -- omit for public data.
+# The auth key lives in ./ts.env (chmod 600) and is NOT in this file.
 services:
-  openbb:
-    image: ghcr.io/artcashin/openbb-local:4.7.2
-    container_name: openbb
-    platform: linux/amd64
+  tailscale:
+    image: tailscale/tailscale:v1.98.9
+    container_name: openbb-ts
+    hostname: openbb
     restart: unless-stopped
-    command: ["openbb-api", "--host", "0.0.0.0", "--port", "6900"]
     env_file:
-      - path: /share/Container/openbb/credentials.env
-        required: false
-    ports:
-      - "6900:6900"
+      - ./ts.env
+    environment:
+      - TS_HOSTNAME=openbb
+      # MANDATORY. The image defaults to userspace networking, where
+      # tailscaled terminates inbound tailnet connections itself and forwards
+      # them to 127.0.0.1 -- which would make the API reachable AROUND Serve at
+      # <node-ip>:6900, and would expose kdb on :5000 to the whole tailnet.
+      # Kernel mode (this, plus the tun device and NET_ADMIN below) makes the
+      # tailnet IP a real interface, so the 127.0.0.1 sockets below are
+      # genuinely unreachable from other peers.
+      - TS_USERSPACE=false
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_SERVE_CONFIG=/config/serve.json
     volumes:
-      - /share/Container/openbb/openbb_home:/root/.openbb_platform  # settings/creds (self-created)
-      - /share/Container/openbb/workspace:/workspace                # user data (self-created)
+      - ./ts-state:/var/lib/tailscale
+      - ./ts-config:/config
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+
+  # KDB-X. Shares the sidecar netns, so the API reaches it at 127.0.0.1:5000.
+  #
+  # KX_PORT is "127.0.0.1:5000", not "5000", and that is load-bearing. The
+  # entrypoint runs `q ... -p "$KX_PORT"`, and kdb+ accepts -p [host:]port.
+  # Plain "5000" binds 0.0.0.0, and because TS_USERSPACE=false makes the tailnet
+  # IP a REAL interface, that exposed kdb to every tailnet peer -- verified
+  # reachable from another node before this was fixed. kdb+ IPC has no auth and
+  # permits remote execution, so this must stay bound to loopback.
+  kdb:
+    image: ghcr.io/artcashin/kdb-x:amd64
+    container_name: openbb-kdb
+    restart: unless-stopped
+    network_mode: service:tailscale
+    depends_on:
+      - tailscale
+    environment:
+      - KX_PORT=127.0.0.1:5000
+    volumes:
+      - ./kdb-data:/data
+    command: ["/data/startup.q"]
+
+  # OpenBB Platform REST API. Binds 127.0.0.1 so only Serve can reach it.
+  openbb-api:
+    image: ghcr.io/artcashin/openbb-local:4.7.2
+    container_name: openbb-api
+    restart: unless-stopped
+    network_mode: service:tailscale
+    depends_on:
+      - tailscale
+      - kdb
+    command: ["openbb-api", "--host", "127.0.0.1", "--port", "6900"]
+    env_file:
+      - path: ./credentials.env
+        required: false
+      # NAS-specific overrides (kdb on the shared loopback). Loaded AFTER
+      # credentials.env so these win, same convention as the Mac stack.
+      - path: ./deps.env
+        required: false
+    volumes:
+      - openbb-data:/root/.openbb_platform
+
+  # OpenBB MCP server: wraps the same Platform app as openbb-api, in-process,
+  # and serves MCP over streamable-http. Same image, same env and OPENBB_HOME
+  # volume as openbb-api so it sees identical provider credentials. Bound to
+  # 127.0.0.1; Tailscale Serve publishes it on :8443. Endpoint path is /mcp
+  # (a request to /mcp/ 307-redirects there).
+  openbb-mcp:
+    image: ghcr.io/artcashin/openbb-local:4.7.2
+    container_name: openbb-mcp
+    restart: unless-stopped
+    network_mode: service:tailscale
+    depends_on:
+      - tailscale
+      - kdb
+    command: ["openbb-mcp", "--host", "127.0.0.1", "--port", "6901"]
+    environment:
+      # Disables the bundled skills provider. That provider is the only write
+      # target for the unconditionally-registered `install_skill` admin tool,
+      # which accepts an arbitrary {filename: content} dict -- an agent reaching
+      # this server could otherwise persist files whose SKILL.md content later
+      # agent sessions read as trusted instructions (prompt-injection
+      # persistence). The bundled skills are OpenBB dev-docs we do not need.
+      # There is no tag/tool filter in openbb-mcp-server 1.4.1 or fastmcp 3.4.0
+      # that can suppress the tool itself, so removing its write target is the
+      # supported lever.
+      - OPENBB_MCP_DEFAULT_SKILLS_DIR=
+    env_file:
+      - path: ./credentials.env
+        required: false
+      - path: ./deps.env
+        required: false
+    volumes:
+      - openbb-data:/root/.openbb_platform
+
+  # Read-only ArcticDB + kdb+ "stores" MCP server. Talks to ArcticDB over S3
+  # (ARCTICDB_URI from deps.env) and to kdb+ over IPC on the shared loopback,
+  # so it needs no volume.
+  #
+  # KX_HOST/KX_PORT are set HERE on purpose: deps.env defines KDB_HOST/KDB_PORT
+  # (consumed by the openbb-kdb provider extension), and KX_PORT lives only on
+  # the kdb service's own environment block -- neither reaches this container.
+  # Without these the server would fall back to defaults that merely happen to
+  # be correct.
+  #
+  # STORES_HOST is pinned so a stray STORES_HOST=0.0.0.0 in either env file
+  # can never expose this unauthenticated store to the tailnet (environment
+  # always wins over env_file). Serve publishes it on :8444.
+  stores-mcp:
+    image: ghcr.io/artcashin/openbb-local:4.7.2
+    container_name: openbb-stores-mcp
+    restart: unless-stopped
+    network_mode: service:tailscale
+    depends_on:
+      - tailscale
+      - kdb
+    command: ["python", "/opt/mcp_stores/server.py"]
+    env_file:
+      - path: ./credentials.env
+        required: false
+      - path: ./deps.env
+        required: false
+    environment:
+      - STORES_HOST=127.0.0.1
+      - STORES_PORT=6902
+      - KX_HOST=127.0.0.1
+      - KX_PORT=5000
+
+volumes:
+  openbb-data:
