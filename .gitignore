@@ -10,6 +10,10 @@ credentials.env
 workspace/
 .DS_Store
 
+# Python build artifacts (mcp_stores/ and any future top-level Python code)
+__pycache__/
+*.pyc
+
 # Nested extension repos — each is its own git repository, tracked separately.
 openbb-alpaca/
 openbb-arcticdb/

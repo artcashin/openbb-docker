@@ -127,6 +127,12 @@ RUN pip install /opt/openbb-fmp-bulk
 RUN pip install "openbb-mcp-server==1.4.1"
 RUN python -c "import openbb_mcp_server; print('openbb-mcp-server import OK')"
 
+# Read-only ArcticDB/kdb+ "stores" MCP server (fastmcp arrives above as a
+# dependency of openbb-mcp-server). Launched by the NAS compose as:
+#   python /opt/mcp_stores/server.py     (binds 127.0.0.1:6902, path /mcp/)
+COPY mcp_stores/ /opt/mcp_stores/
+RUN python -c "import sys; sys.path.insert(0, '/opt/mcp_stores'); import server; print('mcp_stores imports OK')"
+
 # Pre-compile the static package + assets so the first run is instant, and verify
 # the platform, CLI, and the custom extensions register at build time. (ruff is
 # present in the image, so the static codegen's lint/import-fix step runs.)
