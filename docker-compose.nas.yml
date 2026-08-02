@@ -66,7 +66,7 @@ services:
 
   # OpenBB Platform REST API. Binds 127.0.0.1 so only Serve can reach it.
   openbb-api:
-    image: ghcr.io/artcashin/openbb-local:4.7.2
+    image: ghcr.io/artcashin/openbb-local:4.7.2-mcp
     container_name: openbb-api
     restart: unless-stopped
     network_mode: service:tailscale
@@ -90,7 +90,7 @@ services:
   # 127.0.0.1; Tailscale Serve publishes it on :8443. Endpoint path is /mcp
   # (a request to /mcp/ 307-redirects there).
   openbb-mcp:
-    image: ghcr.io/artcashin/openbb-local:4.7.2
+    image: ghcr.io/artcashin/openbb-local:4.7.2-mcp
     container_name: openbb-mcp
     restart: unless-stopped
     network_mode: service:tailscale
@@ -136,7 +136,7 @@ services:
   # can never expose this unauthenticated store to the tailnet (environment
   # always wins over env_file). Serve publishes it on :8444.
   stores-mcp:
-    image: ghcr.io/artcashin/openbb-local:4.7.2
+    image: ghcr.io/artcashin/openbb-local:4.7.2-mcp
     container_name: openbb-stores-mcp
     restart: unless-stopped
     network_mode: service:tailscale
