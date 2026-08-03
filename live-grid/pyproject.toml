@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "live-grid"
+version = "0.1.0"
+description = "OpenBB Workspace live_grid backend streaming EODHD websocket prices"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    # Official EODHD SDK, pinned to a GitHub commit: the PyPI release (1.0.32)
+    # can sys.exit() on API errors, has no request timeouts, and predates the
+    # SDK's typed error handling.
+    "eodhd @ https://github.com/EodHistoricalData/EODHD-APIs-Python-Financial-Library/archive/f98e69d797140ca03f16fa7451046d84aab9643e.tar.gz",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "httpx", "ruff"]
+
+[tool.setuptools]
+packages = ["app"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
