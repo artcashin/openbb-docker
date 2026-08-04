@@ -1,0 +1,19 @@
+# secrets & machine-specific config — never committed
+credentials.env
+api-auth.env
+ts.env
+deps.env
+.env
+.env.*
+scripts/scrub-private-patterns.txt
+
+# runtime state
+ts-state/
+kdb-data/
+*.log
+
+# python
+__pycache__/
+*.egg-info/
+.pytest_cache/
+.venv/
