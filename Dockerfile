@@ -1,9 +1,9 @@
-# OpenBB Platform API, containerized. Companion image for
-# "Adventures in OpenBB, Ep. 1: Your Own Bloomberg in a Closet" (v1.0.0).
+# OpenBB Platform API + MCP server, containerized. Companion image for the
+# Adventures in OpenBB series (v6.0.0).
 #
-# Scope (v1.0.0): the Platform REST API with OpenBB's standard providers and
-# the analysis extensions. No CLI/Terminal, no custom providers, no MCP —
-# those arrive in later releases, with their episodes.
+# Scope (v6.0.0): the Platform REST API with OpenBB's standard providers,
+# the analysis extensions, and the official MCP server for AI agents.
+# No CLI/Terminal, no custom providers — those arrive with their episodes.
 FROM python:3.12-slim
 
 # OpenBB version. Override with --build-arg to track a newer release.
@@ -66,6 +66,12 @@ assert anchor in src, "rest_api.py CORS block not found - upstream changed"
 p.write_text(src.replace(anchor, anchor.replace("\n)", "\n    allow_private_network=True,\n)"), 1))
 PY
 RUN python -c "import ast; ast.parse(open('/usr/local/lib/python3.12/site-packages/openbb_core/api/rest_api.py').read()); print('rest_api CORS patch parses OK')"
+
+# Official OpenBB MCP server (Ep. 6): wraps the Platform FastAPI app
+# in-process and serves MCP over streamable-http. PIP_CONSTRAINT still
+# applies, so it cannot drag shared libs anywhere the stack doesn't tolerate.
+RUN pip install "openbb-mcp-server==1.4.1"
+RUN python -c "import openbb_mcp_server; print('openbb-mcp-server import OK')"
 
 # Pre-compile the static package so the first run is instant, and verify the
 # platform registers at build time.
