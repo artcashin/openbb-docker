@@ -73,5 +73,26 @@ services:
     volumes:
       - openbb-data:/root/.openbb_platform
 
+  # key-maint: the transport-tiered "key status" widget backend (Ep. 3).
+  # One process, two servers: a network server on loopback :8447 (published by
+  # Serve on :10000 — public ONLY if you funnel it, and it enforces the same
+  # Basic auth as the API) and an admin server on a unix socket whose 0700
+  # host directory IS the tier-3 authorization (filesystem access via SSH —
+  # no port, no header).
+  key-maint:
+    build: ./key-maint
+    image: openbb-key-maint:latest
+    container_name: openbb-key-maint
+    restart: unless-stopped
+    network_mode: service:tailscale
+    depends_on:
+      - tailscale
+    volumes:
+      - ./credentials.env:/config/credentials.env:ro
+      - ./api-auth.env:/config/api-auth.env:ro
+      # Admin bind lives here. Create it 0700, owned by the host admin user:
+      #   mkdir -p key-maint-admin && chmod 700 key-maint-admin
+      - ./key-maint-admin:/config/admin
+
 volumes:
   openbb-data:

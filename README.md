@@ -10,8 +10,9 @@ from later chapters is.
 |---|---|---|
 | v1.0.0 | Ep. 1 — Your Own Bloomberg in a Closet | Tailscale sidecar + OpenBB Platform API, Serve-only ingress, provider keys |
 | v2.0.0 | Ep. 2 — The Borrowed Terminal | HTTP Basic auth on the API, Tailscale Funnel (port 443 only) |
+| v3.0.0 | Ep. 3 — (with BDOBB v3.0.0) | key-maint: the transport-tiered key status widget backend |
 
-## What you get (this release: v2.0.0)
+## What you get (this release: v3.0.0)
 
 Two containers, one tailnet node, zero exposed ports:
 
@@ -24,6 +25,14 @@ Two containers, one tailnet node, zero exposed ports:
 **Tailscale Serve is the only way in** — real HTTPS with a Let's Encrypt
 certificate at `https://openbb.<your-tailnet>.ts.net`, reachable from every
 device on your tailnet and invisible to everything else.
+
+**New in v3.0.0 (Ep. 3, with BDOBB v3.0.0):** the **key status widget**
+backend — `key-maint/`, a transport-tiered service where *what you can see
+depends on how you connected*: public sees key status, tailnet adds live
+probes, and the key values themselves are only reachable over a unix socket
+whose 0700 host directory is the authorization. See
+[key-maint/README.md](key-maint/README.md) and
+[docs/key-maint-design.md](docs/key-maint-design.md).
 
 **New in v2.0.0 (Ep. 2):** the API enforces **HTTP Basic auth**
 (`api-auth.env`, required — the stack will not start without it), and port

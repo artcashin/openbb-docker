@@ -1,0 +1,5 @@
+# Exact substrings the scrub gate ignores — known-benign literals only.
+# The CGNAT range constant (how tier detection classifies tailnet clients):
+100.64.0.0/10
+# Synthetic tailnet-range IP used in tests (not a real host):
+100.100.100.100

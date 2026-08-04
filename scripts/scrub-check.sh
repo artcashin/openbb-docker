@@ -22,9 +22,19 @@ EXCLUDES=(--exclude-dir=.git --exclude-dir=node_modules --exclude-dir=dist
           --exclude-dir=target --exclude-dir=.reference-backend
           --exclude='scrub-check.sh' --exclude='scrub-private-patterns.txt')
 
+# Known-benign literals (e.g. the CGNAT range constant itself, synthetic test
+# IPs) — exact strings, one per line, COMMITTED (unlike the private patterns).
+ALLOW=scripts/scrub-allowlist.txt
+
+filter_allowed() {
+  if [[ -f "$ALLOW" ]]; then grep -v -F -f "$ALLOW" || true; else cat; fi
+}
+
 fail=0
 for p in "${PATTERNS[@]}"; do
-  if grep -rInE "${EXCLUDES[@]}" -e "$p" . ; then
+  hits=$( { grep -rInE "${EXCLUDES[@]}" -e "$p" . || true; } | filter_allowed)
+  if [[ -n "$hits" ]]; then
+    echo "$hits"
     echo "SCRUB FAIL: pattern matched: $p" >&2
     fail=1
   fi
