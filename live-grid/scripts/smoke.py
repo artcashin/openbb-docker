@@ -3,7 +3,8 @@
 
 Crypto trades 24/7, so this is runnable at any hour. Usage:
 
-    EODHD_API_KEY=... .venv/bin/python scripts/smoke.py
+    .venv/bin/python scripts/smoke.py                  # public demo ws key
+    EODHD_API_KEY=... .venv/bin/python scripts/smoke.py  # your own key
 """
 import asyncio
 import os
@@ -14,14 +15,17 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from app.feeds import FeedManager  # noqa: E402
 from app.quotes import QuoteTable  # noqa: E402
 
+# EODHD's PUBLIC demo websocket key (from their docs and the official SDK's own
+# demo code — safe to commit). Serves exactly the demo symbol set: AAPL, MSFT,
+# TSLA / BTC-USD, ETH-USD / EURUSD. NOTE: the REST-only "demo" token does NOT
+# work here — the SDK's WebSocketClient rejects it on key-format validation.
+DEMO_WS_KEY = "OeAFFmMliFG5orCUuwAKQ8l4WWFQ67YX"
+
 SYMBOLS = ["BTC-USD", "ETH-USD"]
 
 
 async def main() -> int:
-    key = os.environ.get("EODHD_API_KEY", "").strip()
-    if not key:
-        print("Set EODHD_API_KEY")
-        return 2
+    key = os.environ.get("EODHD_API_KEY", "").strip() or DEMO_WS_KEY
     quotes = QuoteTable()
     manager = FeedManager(key, quotes, rebuild_delay=0.0)
     task = asyncio.create_task(manager.run())
