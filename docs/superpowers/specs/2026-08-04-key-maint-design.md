@@ -32,11 +32,20 @@ One FastAPI app, two uvicorn binds inside the tailscale sidecar's netns:
   `${TS_CERT_DOMAIN}:10000 → http://127.0.0.1:8447`, and `AllowFunnel` gains
   `"${TS_CERT_DOMAIN}:10000": true`. (Funnel supports only 443/8443/10000;
   443 and 8443 are taken.) Requests on this bind are at most tier 2.
-- **`127.0.0.1:8446` — admin bind.** The tailscale service adds
-  `ports: ["127.0.0.1:8446:8446"]`, publishing it to the **NAS host's
-  loopback only** (never the LAN). Reaching it requires
-  `ssh -L 8446:127.0.0.1:8446 nas`, then `http://localhost:8446` in BDOBB or
-  a browser. Arrival on this bind IS tier 3 — the port is the proof.
+- **Unix socket — admin bind.** (Amended 2026-08-04: the original
+  `127.0.0.1:8446` + compose `ports:` publish cannot work — Docker forwards
+  published ports to the container's bridge IP, not its loopback; binding
+  wider would expose the admin API on the tailnet interface.) The admin
+  instance binds a unix socket at `/config/admin/key-maint-admin.sock`,
+  bind-mounted from the NAS host at
+  `/share/Container/openbb/key-maint-admin/` — a directory owned by the NAS
+  admin user with mode 0700. Reaching the socket requires filesystem access
+  to that path, i.e. an SSH session as the NAS admin: tier 3 is literally
+  "allowed to ssh into the server path". Access:
+  `ssh -L 18446:/share/Container/openbb/key-maint-admin/key-maint-admin.sock nas`
+  then `http://localhost:18446`. This is stricter than the TCP variant:
+  sibling containers sharing the netns loopback can no longer reach the
+  admin API at all.
 
 Within the 8447 bind, tier 1 vs 2 is decided by the client address tailscaled
 reports in `X-Forwarded-For`: `100.64.0.0/10` → tailnet (tier 2), anything
