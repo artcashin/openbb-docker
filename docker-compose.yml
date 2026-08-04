@@ -79,6 +79,42 @@ services:
     volumes:
       - openbb-data:/root/.openbb_platform
 
+  # OpenBB MCP server (Ep. 6): wraps the same Platform app as openbb-api,
+  # in-process, and serves MCP over streamable-http for the AI analyst.
+  # Bound to 127.0.0.1; Serve publishes it on :8443 — tailnet-only, NEVER
+  # funneled (it has no auth of its own; do NOT load api-auth.env here —
+  # auth on this in-process wrapper breaks its tool calls).
+  # Endpoint path is /mcp (a request to /mcp/ 307-redirects there).
+  openbb-mcp:
+    build: .
+    image: openbb-local:6.0.0
+    container_name: openbb-mcp
+    restart: unless-stopped
+    network_mode: service:tailscale
+    depends_on:
+      - tailscale
+    # --default-categories + --tool-discovery keep the initial tools/list
+    # small enough for a local model's context slot: all 219 tools cost
+    # ~152k prompt tokens against a 65,536-token slot, which hard-errors
+    # EVERY chat request. Discovery mode exposes ~10 tools (~1.4k tokens)
+    # and lets the agent activate categories on demand. LOAD-BEARING —
+    # removing these flags breaks chat completely (see Ep. 6's gotchas).
+    command: ["openbb-mcp", "--host", "127.0.0.1", "--port", "6901",
+              "--default-categories", "equity", "--tool-discovery"]
+    environment:
+      # Neutralize the unconditionally-registered `install_skill` admin tool:
+      # its only write target is the bundled skills provider, and an agent
+      # reaching this server could otherwise persist files that later agent
+      # sessions read as trusted instructions (prompt-injection persistence).
+      # No flag suppresses the tool itself; removing its write target is the
+      # supported lever.
+      - OPENBB_MCP_DEFAULT_SKILLS_DIR=
+    env_file:
+      - path: ./credentials.env
+        required: false
+    volumes:
+      - openbb-data:/root/.openbb_platform
+
   # key-maint: the transport-tiered "key status" widget backend (Ep. 3).
   # One process, two servers: a network server on loopback :8447 (published by
   # Serve on :10000 — public ONLY if you funnel it, and it enforces the same
