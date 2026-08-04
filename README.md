@@ -9,6 +9,7 @@ from later chapters is.
 | Release | Episode | What it adds |
 |---|---|---|
 | v1.0.0 | Ep. 1 — Your Own Bloomberg in a Closet | Tailscale sidecar + OpenBB Platform API, Serve-only ingress, provider keys |
+| v2.0.0 | Ep. 2 — The Borrowed Terminal | HTTP Basic auth on the API, Tailscale Funnel (port 443 only) |
 
 ## What you get (this release: v2.0.0)
 

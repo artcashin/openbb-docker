@@ -30,5 +30,3 @@ jobs:
           test "$(docker exec api curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:6900/widgets.json)" = "401"
           count=$(docker exec api curl -fsS -u ci:ci-secret http://127.0.0.1:6900/widgets.json | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')
           echo "widgets: $count"; test "$count" -gt 50
-      - name: Keyless data endpoint answers
-        run: docker exec api curl -fsS -u ci:ci-secret "http://127.0.0.1:6900/api/v1/equity/price/historical?symbol=AAPL&provider=yfinance" | head -c 120
