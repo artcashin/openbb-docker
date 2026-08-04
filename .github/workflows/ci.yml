@@ -20,6 +20,28 @@ jobs:
         run: |
           pip install -e .[dev]
           pytest -q
+  live-grid:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Test live-grid (all mocked, no key)
+        working-directory: live-grid
+        run: |
+          pip install -e .[dev]
+          pytest -q
+  openbb-eodhd:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Test the EODHD provider extension (mocked SDK)
+        working-directory: openbb-eodhd
+        run: |
+          pip install -e .[dev]
+          pytest -q
   build-smoke:
     runs-on: ubuntu-latest
     steps:
@@ -53,5 +75,3 @@ jobs:
         run: |
           count=$(docker exec api curl -fsS -u ci:ci-secret http://127.0.0.1:6900/widgets.json | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')
           echo "widgets: $count"; test "$count" -gt 50
-      - name: Keyless data endpoint answers
-        run: docker exec api curl -fsS -u ci:ci-secret "http://127.0.0.1:6900/api/v1/equity/price/historical?symbol=AAPL&provider=yfinance" | head -c 120

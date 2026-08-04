@@ -1,0 +1,12 @@
+# Python build artifacts
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+.DS_Store
+
+# Secrets — never commit real API tokens
+.env
+*.env
+!.env.example

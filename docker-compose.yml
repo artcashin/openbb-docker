@@ -136,5 +136,23 @@ services:
       #   mkdir -p key-maint-admin && chmod 700 key-maint-admin
       - ./key-maint-admin:/config/admin
 
+  # live-grid (Ep. 8): OpenBB Workspace live_grid backend streaming EODHD
+  # websocket prices. Loopback :6903; Serve publishes it on :6903 —
+  # tailnet-only unless you deliberately funnel it (it carries your market-
+  # data key and has no auth of its own, so: don't).
+  live-grid:
+    build: ./live-grid
+    image: openbb-live-grid:latest
+    container_name: openbb-live-grid
+    restart: unless-stopped
+    network_mode: service:tailscale
+    depends_on:
+      - tailscale
+    env_file:
+      # EODHD_API_KEY comes from here (the public demo websocket key covers
+      # the default watchlist for testing).
+      - path: ./credentials.env
+        required: false
+
 volumes:
   openbb-data:

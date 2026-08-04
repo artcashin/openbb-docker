@@ -20,6 +20,10 @@ PATTERNS=(
 
 EXCLUDES=(--exclude-dir=.git --exclude-dir=node_modules --exclude-dir=dist
           --exclude-dir=target --exclude-dir=.reference-backend
+          # Virtualenvs are gitignored build debris, and third-party packages
+          # inside them legitimately contain RFC1918 example IPs and base64
+          # runs that trip the AKIA pattern.
+          --exclude-dir=.venv --exclude-dir=venv --exclude-dir=__pycache__
           --exclude='scrub-check.sh' --exclude='scrub-private-patterns.txt')
 
 # Known-benign literals (e.g. the CGNAT range constant itself, synthetic test
