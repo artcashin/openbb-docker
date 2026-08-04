@@ -40,6 +40,11 @@ services:
       - TS_USERSPACE=false
       - TS_STATE_DIR=/var/lib/tailscale
       - TS_SERVE_CONFIG=/config/serve.json
+    ports:
+      # key-maint admin bind, host loopback ONLY. Reaching it requires an SSH
+      # session to the NAS (ssh -L 8446:127.0.0.1:8446 nas) — that
+      # reachability IS the tier-3 authorization; never widen this bind.
+      - "127.0.0.1:8446:8446"
     volumes:
       - ./ts-state:/var/lib/tailscale
       - ./ts-config:/config
@@ -167,6 +172,20 @@ services:
       - STORES_PORT=6902
       - KX_HOST=127.0.0.1
       - KX_PORT=5000
+
+  # API key maintenance widget. Two binds inside the shared netns: 8446
+  # (admin: values visible; host-loopback published above) and 8447 (network:
+  # Serve proxies :10000 -> here; funneled -> public sees status only).
+  key-maint:
+    build: ./key-maint
+    container_name: openbb-key-maint
+    restart: unless-stopped
+    network_mode: service:tailscale
+    depends_on:
+      - tailscale
+    volumes:
+      - ./credentials.env:/config/credentials.env:ro
+      - ./api-auth.env:/config/api-auth.env:ro
 
 volumes:
   openbb-data:
