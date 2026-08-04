@@ -3,7 +3,7 @@
 ' # comment' after a NON-empty value is stripped; a line whose value is only
 whitespace followed by '#...' yields the '#...' text AS the value (the hazard
 the repo convention now forbids, but the parser must still mirror compose)."""
-from app.credfile import load, parse_text
+from app.credfile import load, load_with_warnings, parse_text
 
 
 class TestParseText:
@@ -44,3 +44,12 @@ class TestLoad:
         p = tmp_path / "c.env"
         p.write_text("A=1\n")
         assert load(str(p)) == {"A": "1"}
+
+
+class TestLoadWithWarnings:
+    def test_malformed_line_reported_and_rest_parsed(self, tmp_path):
+        p = tmp_path / "c.env"
+        p.write_text("A=1\nNOEQUALSSIGN\nB=2\n")
+        values, warnings = load_with_warnings(str(p))
+        assert values == {"A": "1", "B": "2"}
+        assert warnings == ["line 2"]

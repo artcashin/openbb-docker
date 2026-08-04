@@ -129,13 +129,12 @@ New service in `docker-compose.nas.yml`:
     restart: unless-stopped
     network_mode: service:tailscale
     depends_on: [tailscale]
-    command: ["python", "-m", "app.main"]   # starts both binds (8446 admin, 8447 network)
+    command: ["python", "-m", "app.main"]   # unix-socket admin bind + 127.0.0.1:8447 network bind
     volumes:
       - ./credentials.env:/config/credentials.env:ro
       - ./api-auth.env:/config/api-auth.env:ro
+      - ./key-maint-admin:/config/admin
 ```
-
-Plus, on the **tailscale** service: `ports: ["127.0.0.1:8446:8446"]`.
 
 `serve.json` additions: `"TCP": {"10000": {"HTTPS": true}}`,
 `"Web": {"${TS_CERT_DOMAIN}:10000": {"Handlers": {"/": {"Proxy":
@@ -146,8 +145,16 @@ Client setup:
 - BDOBB / Workspace (any device): backend `https://openbb.<tailnet>.ts.net:10000`
   with the standard Authorization header. On-tailnet browsers get tier 2
   automatically; off-tailnet get tier 1.
-- Admin session: `ssh -L 8446:127.0.0.1:8446 nas`, then backend
-  `http://localhost:8446` (same Authorization header).
+- Admin session, primary: `ssh nas "curl -s -u openbb:<password> --unix-socket
+  /share/Container/openbb/key-maint-admin/key-maint-admin.sock
+  http://localhost/keys"` — works over a plain SSH exec session, regardless
+  of the NAS sshd's local-forwarding policy.
+- Admin session, alternative (only if the NAS sshd permits local forwarding —
+  QNAP default denies it via `AllowTcpForwarding`/`streamlocal`):
+  `ssh -L 18446:/share/Container/openbb/key-maint-admin/key-maint-admin.sock
+  nas`, then backend `http://localhost:18446` (same Authorization header).
+  BDOBB and `scripts/smoke_live.py` both need this form, since they make an
+  HTTP request against a URL rather than an SSH exec call.
 
 ## Error handling
 

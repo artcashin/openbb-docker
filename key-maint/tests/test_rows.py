@@ -59,3 +59,15 @@ class TestDegradation:
         assert rows[0]["provider"] == "⚠ credentials.env"
         assert rows[0]["status"] == "unknown"
         assert all(r["status"] == "unknown" for r in rows[1:])
+
+
+class TestMalformed:
+    def test_malformed_entries_produce_trailing_warning_rows(self):
+        rows = build_rows(VALUES, tier=3, tests=None, malformed=["line 7"])
+        assert rows[-1] == {
+            "provider": "⚠ malformed line",
+            "env_var": "line 7",
+            "status": "unknown",
+            "demo": False,
+        }
+        assert "value" not in rows[-1]

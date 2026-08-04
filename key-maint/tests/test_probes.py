@@ -2,7 +2,7 @@ import asyncio
 
 import httpx
 
-from app.probes import TestResult, run_probes
+from app.probes import run_probes
 
 REAL_KEY = "sekret-value-123"
 

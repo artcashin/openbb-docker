@@ -113,3 +113,11 @@ class TestContract:
         cred, auth = files
         with pytest.raises(ValueError):
             create_app(role="bogus", cred_file=cred, auth_file=auth)
+
+    def test_malformed_line_yields_warning_row(self, files, tmp_path):
+        _, auth = files
+        cred = tmp_path / "credentials.env"
+        cred.write_text("EODHD_API_KEY=demo\nNOEQUALSSIGN\n")
+        c = TestClient(create_app(role="admin", cred_file=str(cred), auth_file=auth))
+        rows = keys(c).json()["rows"]
+        assert rows[-1]["provider"] == "⚠ malformed line"

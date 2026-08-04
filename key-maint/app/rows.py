@@ -18,7 +18,11 @@ def _status(values: dict[str, str], env_var: str) -> str:
 
 
 def build_rows(
-    values: dict[str, str] | None, tier: int, tests: dict[str, TestResult] | None
+    values: dict[str, str] | None,
+    tier: int,
+    tests: dict[str, TestResult] | None,
+    *,
+    malformed: list[str] | None = None,
 ) -> list[dict]:
     if values is None:
         banner = {
@@ -63,4 +67,15 @@ def build_rows(
         if tier == 3:
             row["value"] = value
         rows.append(row)
+
+    if malformed:
+        rows.extend(
+            {
+                "provider": "⚠ malformed line",
+                "env_var": entry,
+                "status": "unknown",
+                "demo": False,
+            }
+            for entry in malformed
+        )
     return rows

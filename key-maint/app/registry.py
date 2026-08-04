@@ -7,7 +7,7 @@ reported as test 'skipped'. invalid_markers are substrings of a 2xx body that
 mean the key was rejected anyway (providers that never 401)."""
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Callable
 
 import httpx

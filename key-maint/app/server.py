@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.auth import make_guard
-from app.credfile import load
+from app.credfile import load_with_warnings
 from app.probes import run_probes
 from app.rows import build_rows
 
@@ -77,14 +77,17 @@ def create_app(role: str, cred_file: str, auth_file: str) -> FastAPI:
     @app.get("/keys")
     async def keys(request: Request, run_tests: bool = False) -> Response:
         tier = _tier(role, request)
-        values = load(cred_file)
+        values, malformed = load_with_warnings(cred_file)
         tests = None
         if run_tests and tier >= 2 and values is not None:
             tests = await run_probes(values)
-        return JSONResponse({"tier": tier, "rows": build_rows(values, tier, tests)})
+        rows = build_rows(values, tier, tests, malformed=malformed)
+        return JSONResponse({"tier": tier, "rows": rows})
 
     @app.put("/keys/{env_var}")
     def put_key(env_var: str) -> Response:
+        # Phase 2 TODO: this route must be gated to the admin role (tier 3)
+        # before writes are implemented — see spec's "Phase 2 seam".
         return JSONResponse(
             {"detail": "editing is phase 2; not implemented"}, status_code=501
         )
