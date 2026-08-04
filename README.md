@@ -10,7 +10,7 @@ from later chapters is.
 |---|---|---|
 | v1.0.0 | Ep. 1 — Your Own Bloomberg in a Closet | Tailscale sidecar + OpenBB Platform API, Serve-only ingress, provider keys |
 
-## What you get (this release: v1.0.0)
+## What you get (this release: v2.0.0)
 
 Two containers, one tailnet node, zero exposed ports:
 
@@ -24,6 +24,13 @@ Two containers, one tailnet node, zero exposed ports:
 certificate at `https://openbb.<your-tailnet>.ts.net`, reachable from every
 device on your tailnet and invisible to everything else.
 
+**New in v2.0.0 (Ep. 2):** the API enforces **HTTP Basic auth**
+(`api-auth.env`, required — the stack will not start without it), and port
+443 can optionally be published to the public internet via **Tailscale
+Funnel** — lock first, then door. See [docs/funnel.md](docs/funnel.md) for
+the Funnel walkthrough, the pro.openbb.co connection settings, and the
+gotchas.
+
 ## Quick start
 
 Prereqs: any Docker Compose host (a NAS, a Linux box), a free Tailscale
@@ -35,13 +42,15 @@ console.
 git clone https://github.com/artcashin/openbb-docker
 cd openbb-docker
 cp ts.env.example ts.env            # paste a tagged, reusable auth key; chmod 600 ts.env
+cp api-auth.env.example api-auth.env         # REQUIRED — set a strong password; chmod 600
 cp credentials.env.example credentials.env   # optional — keyless providers work with none
 
 # 2. Build and start
 docker compose up -d --build
 
 # 3. Verify the front door (from any tailnet device)
-curl https://openbb.<your-tailnet>.ts.net/widgets.json
+curl -u openbb:<password> https://openbb.<your-tailnet>.ts.net/widgets.json   # 200
+curl https://openbb.<your-tailnet>.ts.net/widgets.json                        # 401
 
 # 4. Verify the walls (from a SECOND tailnet device)
 scripts/verify-isolation.sh openbb.<your-tailnet>.ts.net

@@ -1,0 +1,89 @@
+# Funnel: publishing the API to the public internet — carefully
+
+Companion doc for *Adventures in OpenBB, Ep. 2*. This is optional: the stack
+is fully functional tailnet-only. Funnel is for reaching your backend from
+devices that cannot run Tailscale (a locked-down work machine, any browser).
+
+**The order of operations is the whole point: the lock goes on before the
+door opens.**
+
+## 1. The lock (already mandatory)
+
+From v2.0.0 the compose file refuses to start the API without
+`api-auth.env` — HTTP Basic auth with your username/password. Verify it
+works tailnet-only *before* touching Funnel:
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' https://openbb.<your-tailnet>.ts.net/widgets.json
+# -> 401
+curl -s -o /dev/null -w '%{http_code}\n' -u openbb:<password> https://openbb.<your-tailnet>.ts.net/widgets.json
+# -> 200
+```
+
+## 2. Permit Funnel in the tailnet policy
+
+Funnel is off until the node is allowed to use it. In the Tailscale admin
+console → Access controls, grant the `funnel` node attribute to the tag (or
+target) your `openbb` node holds:
+
+```jsonc
+"nodeAttrs": [
+  { "target": ["tag:server"], "attr": ["funnel"] }
+]
+```
+
+## 3. The door
+
+Swap the Serve config for the Funnel-enabled one and recreate the sidecar:
+
+```bash
+cp ts-config/serve-funnel.json ts-config/serve.json
+docker compose up -d --force-recreate tailscale
+```
+
+Only port 443 is funneled. Anything else the node ever serves stays
+tailnet-only.
+
+## 4. Verify from OFF the tailnet
+
+From a device that is not on your tailnet (a phone on cellular works):
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' https://openbb.<your-tailnet>.ts.net/widgets.json   # 401
+curl -s -o /dev/null -w '%{http_code}\n' -u openbb:<password> https://openbb.<your-tailnet>.ts.net/widgets.json  # 200
+```
+
+## Connecting OpenBB Workspace (pro.openbb.co)
+
+Connections → Add backend:
+
+| Field | Value |
+|---|---|
+| Endpoint URL | `https://openbb.<your-tailnet>.ts.net/` |
+| Validate widgets | **No** (Yes live-fires every widget and fails on any keyless provider) |
+| Auth Key | `Authorization` |
+| Auth Value | `Basic <base64 of username:password>` |
+| Auth Location | Header |
+
+Generate the value with: `printf 'openbb:<password>' | base64`
+
+## Gotchas (each one earned)
+
+- **Connection test fails with a generic 500** → "Validate widgets" is set to
+  Yes. Set it to No; the validation fires all widgets and any keyless
+  provider sinks it.
+- **Everything 401s** → the Authorization header was removed or the password
+  rotated; re-derive the base64 of `username:password` (the *pair*, colon
+  included).
+- **Connection flips Inactive** → Workspace polled while the API container
+  was restarting; refresh the connection row once it's back.
+- **Blocked only on machines that run Tailscale** ("local address space" /
+  local network permission): MagicDNS resolves the name to its private
+  100.x address, which Chromium gates behind a per-site permission. One-time
+  fix: padlock on pro.openbb.co → Permissions → Local network access →
+  Allow. Devices without Tailscale are unaffected. Misleading symptom:
+  pasting the widgets.json URL in the address bar works while the app's
+  fetches fail (direct navigations are exempt).
+- **An env value mysteriously equals your comment** → compose's dotenv parser
+  takes an inline `# comment` after an empty value as the value. Comments on
+  their own lines, always.
