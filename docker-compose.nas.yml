@@ -7,6 +7,12 @@
 #
 #   https://openbb.tailb9874f.ts.net/    (Serve terminates TLS, real LE cert)
 #
+# Port 443 is ALSO published to the public internet via Tailscale Funnel
+# (serve.json AllowFunnel + the "funnel" nodeAttr on tag:server in the tailnet
+# policy), so https://pro.openbb.co works from devices off the tailnet. Because
+# of that, the API enforces HTTP Basic auth (api-auth.env below). Ports 8443
+# and 8444 (MCP servers, unauthenticated) are NOT funneled -- tailnet only.
+#
 # Why this replaces the Mac's localhost:6900 setup: OpenBB Workspace runs at
 # https://pro.openbb.co, and a browser fetch from there to http://127.0.0.1:6900
 # is a public->private request that Chrome gates behind a Private Network Access
@@ -81,6 +87,13 @@ services:
       # credentials.env so these win, same convention as the Mac stack.
       - path: ./deps.env
         required: false
+      # OPENBB_API_AUTH + username/password (chmod 600, never in git). Funnel
+      # exposes this port to the public internet, so this file is REQUIRED on
+      # purpose: without it the API would come up unauthenticated. Loaded only
+      # here -- openbb-mcp wraps the same app in-process and auth would break
+      # its tool calls.
+      - path: ./api-auth.env
+        required: true
     volumes:
       - openbb-data:/root/.openbb_platform
 
