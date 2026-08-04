@@ -55,8 +55,14 @@ def _tier(role: str, request: Request) -> int:
 
 
 def create_app(role: str, cred_file: str, auth_file: str) -> FastAPI:
-    assert role in ("network", "admin")
-    app = FastAPI(dependencies=[Depends(make_guard(auth_file))])
+    if role not in ("network", "admin"):
+        raise ValueError(f"unknown role: {role}")
+    app = FastAPI(
+        dependencies=[Depends(make_guard(auth_file))],
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
+    )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["https://pro.openbb.co"],

@@ -102,3 +102,14 @@ class TestContract:
         r = keys(c)
         assert r.status_code == 200
         assert r.json()["rows"][0]["status"] == "unknown"
+
+    def test_docs_and_openapi_disabled(self, files):
+        c = client(files, "network")
+        assert c.get("/docs").status_code == 404
+        assert c.get("/openapi.json").status_code == 404
+        assert c.get("/redoc").status_code == 404
+
+    def test_unknown_role_rejected(self, files):
+        cred, auth = files
+        with pytest.raises(ValueError):
+            create_app(role="bogus", cred_file=cred, auth_file=auth)
