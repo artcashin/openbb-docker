@@ -12,6 +12,12 @@
 # policy — see docs/funnel.md). Lock first, then door: auth is REQUIRED
 # before the funnel config exists, by construction.
 #
+# What the lock covers: OpenBB hangs Basic auth off the /api/v1 router, so it
+# guards the data and nothing else. /widgets.json, /apps.json and /openapi.json
+# answer unauthenticated, and funneling port 443 therefore publishes the widget
+# catalogue and its parameter schemas. Deliberate, and spelled out in
+# docs/funnel.md — if that is more than you want public, keep this tailnet-only.
+#
 # Before first start:
 #   cp ts.env.example ts.env                     # Tailscale auth key, chmod 600
 #   cp api-auth.env.example api-auth.env         # REQUIRED: API username/password
