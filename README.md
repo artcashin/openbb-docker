@@ -11,8 +11,9 @@ from later chapters is.
 | v1.0.0 | Ep. 1 — Your Own Bloomberg in a Closet | Tailscale sidecar + OpenBB Platform API, Serve-only ingress, provider keys |
 | v2.0.0 | Ep. 2 — The Borrowed Terminal | HTTP Basic auth on the API, Tailscale Funnel (port 443 only) |
 | v3.0.0 | Ep. 3 — (with BDOBB v3.0.0) | key-maint: the transport-tiered key status widget backend |
+| v6.0.0 | Ep. 6 — The Analyst | OpenBB MCP server (tool-discovery mode), agent deploy configs |
 
-## What you get (this release: v3.0.0)
+## What you get (this release: v6.0.0)
 
 Two containers, one tailnet node, zero exposed ports:
 
@@ -25,6 +26,16 @@ Two containers, one tailnet node, zero exposed ports:
 **Tailscale Serve is the only way in** — real HTTPS with a Let's Encrypt
 certificate at `https://openbb.<your-tailnet>.ts.net`, reachable from every
 device on your tailnet and invisible to everything else.
+
+**New in v6.0.0 (Ep. 6, pairs with BDOBB v6.0.0):** the **OpenBB MCP
+server** — the analyst's hands. Same image, wrapping the same Platform
+in-process, served on :8443 (tailnet-only, never funneled, no api-auth —
+see the compose comments). Launched in **tool-discovery mode**, which is
+load-bearing: the full 219-tool catalogue is ~152k prompt tokens against a
+local model's 65k slot and hard-errors every chat request; discovery mode
+is ~1.4k tokens with categories activated on demand. `install_skill`'s
+write target is neutralized. The agent itself (Agent Rita) deploys from
+BDOBB's `deploy/spark/` runbook.
 
 **New in v3.0.0 (Ep. 3, with BDOBB v3.0.0):** the **key status widget**
 backend — `key-maint/`, a transport-tiered service where *what you can see
