@@ -148,5 +148,33 @@ services:
       - path: ./credentials.env
         required: false
 
+  # rss-ticker (Ep. 9): the news wire — polls RSS feeds, streams new articles
+  # over a websocket, serves a Bloomberg-style news window widget. Source lives
+  # in its own repo; compose builds it from GitHub. Loopback :8088; Serve
+  # publishes it on :8088 — tailnet-only, NEVER funneled (under tailscale_auth
+  # it trusts the identity header Serve injects, and a funneled request
+  # carries none, so it would fail closed — but don't rely on that).
+  #
+  # Before first start:
+  #   cp rss-ticker-config/config.yaml.example rss-ticker-config/config.yaml
+  #   cp rss-ticker.env.example rss-ticker.env       # TICKER_ADMIN_KEY
+  rss-ticker:
+    build: https://github.com/artcashin/rss-ticker.git
+    image: rss-ticker:9.0.0
+    container_name: openbb-rss-ticker
+    restart: unless-stopped
+    network_mode: service:tailscale
+    depends_on:
+      - tailscale
+    env_file:
+      # TICKER_ADMIN_KEY (writes on /api/feeds). Under tailscale_auth no
+      # manifest key or user tokens are needed — identity replaces them.
+      - path: ./rss-ticker.env
+        required: true
+    volumes:
+      - ./rss-ticker-config:/config:ro
+      - rss-ticker-data:/data
+
 volumes:
   openbb-data:
+  rss-ticker-data:
