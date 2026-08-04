@@ -1,0 +1,64 @@
+# OpenBB Platform API behind a Tailscale sidecar — Adventures in OpenBB, Ep. 1.
+#
+# The tailscale container owns the network namespace; the API joins it, so the
+# pair appears on your tailnet as one node named "openbb". NOTHING is published
+# to the LAN and no ports are mapped — Tailscale Serve is the only way in:
+#
+#   https://openbb.<your-tailnet>.ts.net/    (Serve terminates TLS, real LE cert)
+#
+# Before first start:
+#   cp ts.env.example ts.env                 # add your Tailscale auth key, chmod 600
+#   cp credentials.env.example credentials.env   # optional: provider API keys
+#
+# Verify after start (see README):
+#   from any tailnet device:  https://openbb.<your-tailnet>.ts.net/widgets.json
+#   from a SECOND device:     the raw port :6900 must be unreachable
+services:
+  tailscale:
+    image: tailscale/tailscale:v1.98.9
+    container_name: openbb-ts
+    hostname: openbb
+    restart: unless-stopped
+    env_file:
+      - ./ts.env
+    environment:
+      - TS_HOSTNAME=openbb
+      # MANDATORY. The image defaults to userspace networking, where tailscaled
+      # terminates inbound tailnet connections itself and forwards them to
+      # 127.0.0.1 — which would make the API reachable AROUND Serve at
+      # <node-ip>:6900. Kernel mode (this, plus the tun device and NET_ADMIN
+      # below) makes the tailnet IP a real interface, so the 127.0.0.1 socket
+      # below is genuinely unreachable from other peers.
+      - TS_USERSPACE=false
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_SERVE_CONFIG=/config/serve.json
+    volumes:
+      # Persist node identity across restarts (otherwise every restart is a
+      # brand-new machine joining with a possibly-expired key).
+      - ./ts-state:/var/lib/tailscale
+      - ./ts-config:/config
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+
+  # OpenBB Platform REST API. Binds 127.0.0.1 so only Serve can reach it.
+  openbb-api:
+    build: .
+    image: openbb-local:1.0.0
+    container_name: openbb-api
+    restart: unless-stopped
+    network_mode: service:tailscale
+    depends_on:
+      - tailscale
+    command: ["openbb-api", "--host", "127.0.0.1", "--port", "6900"]
+    env_file:
+      # Provider API keys (optional — keyless providers work with none).
+      - path: ./credentials.env
+        required: false
+    volumes:
+      - openbb-data:/root/.openbb_platform
+
+volumes:
+  openbb-data:

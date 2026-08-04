@@ -9,7 +9,21 @@ jobs:
       - uses: actions/checkout@v4
       - name: Scrub gate — no private infrastructure details
         run: bash scripts/scrub-check.sh
-  # Later releases append jobs here:
-  #   v1.0.0: docker build + API smoke test
-  #   v3.0.0: key-maint pytest
-  #   v8.0.0: live-grid pytest
+  build-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the image
+        run: docker build -t openbb-local:ci .
+      - name: Boot the API and hit widgets.json
+        run: |
+          docker run -d --name api openbb-local:ci
+          for i in $(seq 1 60); do
+            docker exec api curl -fsS http://127.0.0.1:6900/widgets.json >/dev/null 2>&1 && break
+            sleep 5
+          done
+          count=$(docker exec api curl -fsS http://127.0.0.1:6900/widgets.json | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')
+          echo "widgets: $count"
+          test "$count" -gt 50
+      - name: Keyless data endpoint answers
+        run: docker exec api curl -fsS "http://127.0.0.1:6900/api/v1/equity/price/historical?symbol=AAPL&provider=yfinance" | head -c 120

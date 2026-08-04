@@ -1,0 +1,5 @@
+# Version ceilings applied to every pip install in the image (PIP_CONSTRAINT).
+# v1.0.0 carries only OpenBB's own web-stack pins; later releases extend this
+# file as provider extensions with native dependencies join the image.
+fastapi<0.129.0,>=0.128.0  # from openbb-core
+uvicorn<0.41.0,>=0.40.0  # from openbb-core
