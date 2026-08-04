@@ -329,8 +329,31 @@ for _fn in (
 
 
 if __name__ == "__main__":
-    mcp.run(
-        transport="http",
+    # CORS is required by browser-based MCP clients (the BDOBB desktop app's
+    # webview discovers tools with window.fetch, which preflights). Without
+    # it, OPTIONS /mcp returned 405 with no Access-Control headers and WebKit
+    # reported "TypeError: Load failed" — while curl, Rita (server-side), and
+    # node test clients all worked, since none of them preflight. Mirrors the
+    # openbb-mcp-server (:8443) CORS posture; mcp-session-id must be exposed
+    # or streamable-http clients cannot read their session handle.
+    import uvicorn
+    from starlette.middleware import Middleware
+    from starlette.middleware.cors import CORSMiddleware
+
+    app = mcp.http_app(
+        middleware=[
+            Middleware(
+                CORSMiddleware,
+                allow_origins=["*"],
+                allow_credentials=True,
+                allow_methods=["*"],
+                allow_headers=["*"],
+                expose_headers=["mcp-session-id", "mcp-protocol-version"],
+            )
+        ]
+    )
+    uvicorn.run(
+        app,
         host=os.environ.get("STORES_HOST", "127.0.0.1"),
         port=int(os.environ.get("STORES_PORT", "6902")),
     )
