@@ -59,12 +59,34 @@ The `.arcticdb` accessor (on any OBBject) mirrors the write side:
 ## Configuration
 
 No OpenBB credentials are required. The connection is resolved with this
-precedence: **per-call query param > `ARCTICDB_URI`/`ARCTICDB_LIBRARY` env vars >
-default**.
+precedence: **per-call query param > OpenBB credential > `ARCTICDB_URI` >
+`ARCTICDB_S3_*` (assembled) > LMDB default**.
 
 - `ARCTICDB_URI`     — e.g. `lmdb:///root/.openbb_platform/arcticdb` (local file
-  store, default) or `s3://endpoint:bucket?...` / `azure://...`
+  store, default) or an S3/Azure URI, e.g.:
+  ```
+  s3s://minio.example.ts.net:openbb?port=9000&access=<key>&secret=<secret>&use_virtual_addressing=false
+  ```
+  Note the shape: host and bucket are joined with `:`, and `port` is a query
+  parameter — `host:port:bucket` is not valid ArcticDB syntax. Use `s3s://`
+  for TLS, `s3://` for plain HTTP.
 - `ARCTICDB_LIBRARY` — defaults to `openbb`
+
+If `ARCTICDB_URI` isn't set, the extension will assemble an S3 URI from these
+parts instead — handy for pointing both the container and a laptop-side CLI
+at the same MinIO from one credentials file:
+
+- `ARCTICDB_S3_ENDPOINT` — host (no scheme), e.g. `minio.example.ts.net`
+- `ARCTICDB_S3_BUCKET`   — bucket name
+- `ARCTICDB_S3_ACCESS`   — access key
+- `ARCTICDB_S3_SECRET`   — secret key
+- `ARCTICDB_S3_PORT`     — optional, defaults to `9000`
+- `ARCTICDB_S3_SECURE`   — optional, `true` (default, → `s3s://`) or `false`
+  (→ `s3://`)
+
+All four required parts must be set or the assembly is skipped entirely
+(falls through to the LMDB default) rather than producing a URI that would
+fail deep inside ArcticDB. Credentials are URL-encoded automatically.
 
 The default LMDB store lives under `OPENBB_HOME`, so in the container it sits on
 the persistent `openbb-data` volume automatically.

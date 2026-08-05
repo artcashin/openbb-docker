@@ -11,6 +11,51 @@ def default_uri() -> str:
     return f"lmdb://{os.path.join(home, 'arcticdb')}"
 
 
+_S3_REQUIRED = (
+    "ARCTICDB_S3_ENDPOINT",
+    "ARCTICDB_S3_BUCKET",
+    "ARCTICDB_S3_ACCESS",
+    "ARCTICDB_S3_SECRET",
+)
+
+
+def s3_uri_from_env(env: Any = None) -> str | None:
+    """Assemble an ArcticDB S3 URI from ARCTICDB_S3_* parts.
+
+    Returns None unless every required part is present, so a partially
+    configured environment falls through to the LMDB default rather than
+    producing a URI that fails deep inside ArcticDB later.
+
+    Shape matters: host and bucket are separated by ':' and the port is a
+    QUERY parameter. 'host:port:bucket' is not valid ArcticDB syntax.
+    """
+    # pylint: disable=import-outside-toplevel
+    from urllib.parse import quote
+
+    e = os.environ if env is None else env
+    if any(not e.get(k) for k in _S3_REQUIRED):
+        return None
+
+    port_raw = str(e.get("ARCTICDB_S3_PORT") or "9000").strip()
+    if not port_raw.isdigit():
+        raise ValueError(f"ARCTICDB_S3_PORT must be a number, got {port_raw!r}")
+
+    secure_raw = str(e.get("ARCTICDB_S3_SECURE") or "true").strip().lower()
+    if secure_raw not in ("true", "false"):
+        raise ValueError(
+            f"ARCTICDB_S3_SECURE must be 'true' or 'false', got {secure_raw!r}"
+        )
+
+    scheme = "s3s" if secure_raw == "true" else "s3"
+    return (
+        f"{scheme}://{e['ARCTICDB_S3_ENDPOINT']}:{e['ARCTICDB_S3_BUCKET']}"
+        f"?port={port_raw}"
+        f"&access={quote(e['ARCTICDB_S3_ACCESS'], safe='')}"
+        f"&secret={quote(e['ARCTICDB_S3_SECRET'], safe='')}"
+        f"&use_virtual_addressing=false"
+    )
+
+
 def resolve_config(
     uri: str | None = None,
     library: str | None = None,
@@ -18,13 +63,15 @@ def resolve_config(
 ) -> tuple[str, str]:
     """Resolve the ArcticDB URI and library name.
 
-    Precedence: explicit arg > OpenBB credential > environment variable > default.
+    Precedence: explicit arg > OpenBB credential > ARCTICDB_URI env var >
+    ARCTICDB_S3_* parts > default.
     """
     creds = credentials or {}
     uri = (
         uri
         or creds.get("arcticdb_uri")
         or os.getenv("ARCTICDB_URI")
+        or s3_uri_from_env()
         or default_uri()
     )
     library = (
