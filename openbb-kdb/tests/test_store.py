@@ -1,10 +1,9 @@
 """Store: q statement construction and eviction policy, against a fake connection."""
 
+import re
 from datetime import datetime
 
-import pytest
-
-from openbb_kdb.store import KdbStore
+from openbb_kdb.store import _INIT_SCHEMA, KdbStore
 
 D = lambda s: datetime.fromisoformat(s)  # noqa: E731
 
@@ -120,3 +119,52 @@ def test_drop_removes_table_and_coverage():
     joined = " ".join(conn.queries)
     assert "bars_AAPL_1d" in joined
     assert ".cache.cov" in joined
+
+
+def test_schema_init_runs_before_first_coverage_read():
+    """.cache.cov/.cache.lru must exist before anything queries or writes them."""
+    s, conn = store_with({".cache.cov": []})
+    s.read_coverage("AAPL", "1d")
+    assert conn.queries[0] == _INIT_SCHEMA
+    assert "select s, e from .cache.cov" in conn.queries[1]
+
+
+def test_schema_init_runs_before_first_write():
+    s, conn = store_with()
+    s.touch("AAPL", "1d")
+    assert conn.queries[0] == _INIT_SCHEMA
+    assert ".cache.lru" in conn.queries[1]
+
+
+def test_schema_init_reruns_on_new_connection_but_not_redundantly():
+    """A respawned q is empty -- init must re-run for a new connection object,
+    but not on every call against the connection already initialised."""
+    conn1 = FakeConn()
+    session = FakeSession(conn1)
+    s = KdbStore(session)
+
+    s.touch("AAPL", "1d")
+    s.touch("AAPL", "1d")
+    assert conn1.queries.count(_INIT_SCHEMA) == 1  # no redundant re-init
+
+    conn2 = FakeConn()
+    session._conn = conn2  # simulate session.connection() handing back a respawned q
+    s.touch("AAPL", "1d")
+    assert conn2.queries.count(_INIT_SCHEMA) == 1  # re-ran for the new connection
+    assert conn1.queries.count(_INIT_SCHEMA) == 1  # old connection's log untouched
+
+
+def test_no_statement_uses_a_leading_underscore_identifier():
+    """`_incoming` was a q parse error (`_` is the drop/cut operator); guard
+    against any recorded statement reintroducing an identifier like it."""
+    s, conn = store_with({".cache.cov": [], ".cache.lru": []})
+    s.write_bars("AAPL", "1d", object())
+    s.read_bars("AAPL", "1d", D("2024-01-01"), D("2024-01-02"))
+    s.read_coverage("AAPL", "1d")
+    s.record_coverage("AAPL", "1d", (D("2024-01-01"), D("2024-01-02")))
+    s.touch("AAPL", "1d")
+    s.drop("AAPL", "1d")
+
+    leading_underscore_ident = re.compile(r"(?<![\w.])_[A-Za-z]")
+    for q in conn.queries:
+        assert not leading_underscore_ident.search(q), q

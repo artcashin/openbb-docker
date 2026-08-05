@@ -12,9 +12,22 @@ Two measured facts shape this file:
 import re
 from datetime import datetime
 
-Range = tuple[datetime, datetime]
+from openbb_kdb.ranges import Range
 
 _SAFE = re.compile(r"[^A-Za-z0-9_]")
+
+# `.cache.cov` / `.cache.lru` don't exist on a fresh q process, and a q that
+# crosses its -w gets silently respawned empty (see session.py) -- so this
+# can't be a one-time Python-side flag. `if[not X in key `.cache; ...]` is
+# idempotent on the q side (a no-op, not a wipe, if the tables already
+# exist), and _conn() re-issues it whenever the session hands back a
+# connection object we haven't initialised yet.
+_INIT_SCHEMA = (
+    "if[not `cov in key `.cache; .cache.cov: "
+    "([] sym:`symbol$(); iv:`symbol$(); s:`timestamp$(); e:`timestamp$())]; "
+    "if[not `lru in key `.cache; .cache.lru: "
+    "([] sym:`symbol$(); iv:`symbol$(); atime:`timestamp$())]"
+)
 
 
 class KdbStore:
@@ -22,9 +35,14 @@ class KdbStore:
 
     def __init__(self, session):
         self.session = session
+        self._schema_conn = None  # the connection object last initialised
 
     def _conn(self):
-        return self.session.connection()
+        conn = self.session.connection()
+        if conn is not self._schema_conn:
+            conn(_INIT_SCHEMA)
+            self._schema_conn = conn
+        return conn
 
     @staticmethod
     def table_name(symbol: str, interval: str) -> str:
@@ -56,9 +74,15 @@ class KdbStore:
         """Upsert bars, keeping the table sorted and free of duplicate stamps."""
         name = self.table_name(symbol, interval)
         conn = self._conn()
-        conn[f"_incoming"] = df
-        conn(f"{name}: `t xasc 0!(`t xkey $[`{name} in key `.; {name}; 0#_incoming]) upsert _incoming")
-        conn("delete _incoming from `.")
+        # A leading underscore is q's drop/cut operator, not a valid
+        # identifier start -- `incoming_bars` can't collide with a
+        # `bars_<SYMBOL>_<INTERVAL>` cache table.
+        conn["incoming_bars"] = df
+        conn(
+            f"{name}: `t xasc 0!(`t xkey $[`{name} in key `.; {name}; 0#incoming_bars]) "
+            "upsert incoming_bars"
+        )
+        conn("delete incoming_bars from `.")
 
     def read_coverage(self, symbol: str, interval: str) -> list[Range]:
         """Ranges already fetched for this (symbol, interval)."""
