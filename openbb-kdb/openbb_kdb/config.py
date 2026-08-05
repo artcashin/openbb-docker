@@ -1,6 +1,17 @@
 """Connection and cache configuration.
 
-Precedence: OpenBB credential > environment variable > default.
+Precedence for most settings: OpenBB credential > environment variable >
+default.
+
+Two settings are deliberately outside that chain and take NO credential:
+
+- ``qhome`` is read from ``QHOME`` (else ``/opt/kx``) exactly once per process,
+  before ``import pykx`` can rewrite the variable -- see ``_resolve_qhome``. A
+  per-request credential could not be honoured without reintroducing the
+  ambiguity that resolution exists to remove.
+- ``qlic`` is read from ``QLIC``, falling back to ``qhome``. It points at the
+  operator's bring-your-own licence mount, which is a property of the container
+  rather than of any caller's credentials.
 """
 
 import os

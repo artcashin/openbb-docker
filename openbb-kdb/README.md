@@ -26,12 +26,17 @@ cached) or `bypass` (kdb unavailable — served straight from upstream).
 
 | Env var | Default | Meaning |
 |---|---|---|
-| `KDB_EMBEDDED` | `true` | Spawn q inside this container |
-| `KDB_HOST` | `127.0.0.1` | Point at your own kdb+ server (disables spawning) |
+| `KDB_EMBEDDED` | *derived* | Spawn q inside this container. Unset, it follows `KDB_HOST`: true for a loopback host, false for anything else. Set it explicitly to override |
+| `KDB_HOST` | `127.0.0.1` | Point at your own kdb+ server (which also disables spawning) |
 | `KDB_PORT` | `5000` | |
 | `KDB_MEMORY_MB` | `8192` | Cache budget; q gets `-w` 25% above it |
 | `KDB_CACHE_WATERMARK` | `0.75` | Heap fraction that triggers LRU eviction |
 | `KDB_UPSTREAM` | `eodhd` | Provider used for cache misses — any installed provider |
+| `QHOME` | `/opt/kx` | kdb-x install q is launched from. Read once per process, *before* `import pykx` rewrites it to PyKX's own bundled q |
+| `QLIC` | *`QHOME`* | Directory q looks in for `kc.lic`. Point it at your licence mount — if it points anywhere else the mount is silently inert |
+
+Everything except `QHOME` and `QLIC` also accepts an OpenBB credential
+(`kdb_host`, `kdb_port`, …), which takes precedence over the environment.
 
 ## Requirements
 
@@ -48,6 +53,26 @@ cached) or `bypass` (kdb unavailable — served straight from upstream).
   whatever the first call resolved. Restart the process to pick up new
   credentials.
 - **The cache is memory-only.** A restart means a cold cache. It is a cache.
+- **Coverage records what was *asked for*, not what came back.** That is what
+  lets an empty range — a market holiday, the pre-IPO prefix of a zoomed-out
+  chart — be remembered instead of refetched forever. The trade-off is trusting
+  the provider not to truncate: a response shorter than the range requested
+  leaves that hole marked covered and it is served as an empty hit.
+- **The corporate-action backstop does not fire for intraday intervals.** The
+  tail refetch is overlapped with a few cached bars and their closes compared,
+  which catches a split rewriting adjusted history. But the overlap window is
+  wall-clock, so on `1m`/`5m`/`1h` it falls inside the overnight gap and
+  contains no bars. Splits are caught on the daily series.
+- **A failed *first* connect latches for the process lifetime.** If q cannot be
+  reached on the first attempt — usually a missing licence — the session gives
+  up permanently and every later request goes straight to pass-through, rather
+  than paying a doomed spawn and connect timeout on each one. Recovering from
+  that state needs a container restart; mounting a licence into a running
+  container will not re-arm the cache.
+- **PyKX is single-threaded, hard.** It aborts the process with
+  `free(): invalid size` when used from a second thread even with no
+  concurrency at all, so a lock cannot fix it. Every PyKX call is marshalled
+  onto one owner thread that lives for the process lifetime.
 - **q binds `127.0.0.1`.** Every service in this stack shares one network
   namespace, so a `0.0.0.0` bind would publish an unauthenticated q — which
   executes arbitrary q — to every peer on the tailnet.

@@ -38,10 +38,14 @@ date ranges it's missing. Verified live: a one-year chart, then the same
 request again, then widened to three years, came back `miss` → `hit` →
 `partial` with exactly one gap fetched. The cache is **memory-only**, on
 purpose — a restart means a cold cache, not a lost dataset. The published
-image carries the q runtime but no licence; bring your own `kc.lic` (drop it
-in `kdb-license/`, git-ignored) — without one, or without a reachable q, the
-provider passes straight through to the upstream and reports
-`cache: "bypass"`, so the stack still works, just uncached. q runs as a child
+image carries the q runtime but no licence — deleted in the **builder stage**,
+so it is absent from every layer and not merely whited-out of the flattened
+filesystem, which is what `docker save` would still hand a puller. Bring your
+own `kc.lic` (drop it in `kdb-license/`, git-ignored, and point `QLIC` at the
+mount) — without one, or without a reachable q, the provider passes straight
+through to the upstream and reports `cache: "bypass"`, so the stack still
+works, just uncached (that pass-through latches for the process, so add a
+licence and restart the container). q runs as a child
 of the API container bound to **`127.0.0.1:5000`**, never `0.0.0.0` — every
 service here shares the tailscale network namespace, so a loopback bind
 reaches its siblings and no tailnet peer, while `0.0.0.0` would publish an

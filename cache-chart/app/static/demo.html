@@ -37,9 +37,10 @@
 const chart = document.getElementById("chart");
 let loadedStart = null, loadedEnd = null, bars = [], inflight = false;
 
-// Bumped every time the user switches symbol/provider. A fetch that resolves
-// after its generation has been superseded is discarded instead of being
-// applied to the (now wrong) chart -- see Finding 7.
+// Bumped every time the user switches symbol/provider. Requests are async and
+// can finish out of order, so a fetch that resolves after its generation has
+// been superseded is discarded rather than applied to the chart it no longer
+// describes (AAPL bars landing on a chart now showing MSFT).
 let requestGen = 0;
 
 const iso = d => d.toISOString().slice(0, 10);
@@ -52,8 +53,9 @@ const esc = s => String(s).replace(/[&<>"]/g, c =>
 // Plotly's "xaxis.range[0]" is "YYYY-MM-DD[ HH:MM:SS]" with no zone, which
 // `new Date(...)` parses as LOCAL time. loadedStart/loadedEnd are plain
 // "YYYY-MM-DD" strings, which `new Date(...)` parses as UTC. Mixing the two
-// shifts the computed gap boundary near local midnight (Finding 6) -- so
-// parse everything through these two helpers instead of `new Date(string)`.
+// shifts the computed gap boundary by a day near local midnight, which asks
+// the backend for the wrong prefix -- so parse everything through these two
+// helpers instead of `new Date(string)`.
 function parseIsoDateUtc(s) {
   const [y, m, d] = s.split("-").map(Number);
   return new Date(Date.UTC(y, m - 1, d));
@@ -66,19 +68,22 @@ function parseRangeDateUtc(s) {
   return new Date(Date.UTC(y, m - 1, d, hh || 0, mm || 0, Math.floor(ss || 0)));
 }
 
-// Cumulative, honest telemetry (Finding 1). Every response -- hit, partial,
-// or miss -- travels the browser<->service link; a "hit" only means the
-// *backend* skipped the upstream vendor. So the headline metric is rows
-// actually served from the kdb+ cache without the vendor being asked, not
-// bytes "saved" over the network (none are).
+// Cumulative telemetry, counted in ROWS rather than bytes. A "bytes saved"
+// counter would be dishonest here: every response -- hit, partial or miss --
+// travels the browser<->service link in full, so no bytes are saved on the
+// wire the user can see. A "hit" means only that the *backend* did not ask
+// the upstream vendor. The honest headline metric is therefore the number of
+// rows served out of the kdb+ cache without the vendor being called.
 let cumRowsFromCache = 0;
 let cumUpstreamMs = 0;
 const requestCounts = {};
 
-// load() always resolves to a discriminated result so callers can tell
-// "busy, try again" apart from "fetched nothing" (Finding 2) and from a
-// failed request (Finding 3), instead of a bare `undefined` that collapses
-// all three into "nothing happened".
+// load() always resolves to a discriminated result -- {busy}, {bars}, or
+// {error} -- so callers can tell "another request is in flight, try again"
+// apart from "the request succeeded and returned no bars" and from "the
+// request failed". A bare `undefined` return would collapse all three into
+// "nothing happened", and the caller would then either drop a request that
+// should have been retried or adopt a window it never actually loaded.
 async function load(start, end) {
   if (inflight) return { busy: true };
   inflight = true;
@@ -196,8 +201,9 @@ async function attemptGapFetch(rangeStart) {
   draw();
 }
 
-// Retries on "busy" instead of dropping the request, and bails out early if
-// a later selection change supersedes this one (Finding 7).
+// Retries on "busy" instead of dropping the request, and bails out early if a
+// later symbol/provider change supersedes this one -- otherwise the retry loop
+// would keep re-requesting a window nobody is looking at any more.
 async function loadWithRetry(start, end, gen) {
   let result = await load(start, end);
   while (result.busy && gen === requestGen) {
@@ -234,8 +240,9 @@ async function reload() {
 }
 
 (async function boot() {
-  // The plotly_relayout listener is bound inside draw(), after the first
-  // plot exists -- see listenerBound above (Finding 5 regression fix).
+  // The plotly_relayout listener is deliberately NOT bound here: chart.on
+  // does not exist until Plotly has plotted the div, so it is bound inside
+  // draw() instead -- once, guarded by listenerBound (see above).
   document.getElementById("symbol").onchange =
   document.getElementById("provider").onchange = reload;
   await reload();

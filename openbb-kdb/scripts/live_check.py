@@ -1,10 +1,14 @@
 """Live check: real q, real PyKX, real store. Requires a license; not in CI.
 
-Run inside the container:
-    docker compose run --rm openbb python /tmp/live_check.py
+This file is not shipped inside the image (the Dockerfile deletes the source
+tree after `pip install`), so feed it to the running container's interpreter
+on stdin. From the repo root:
+
+    docker compose exec -T openbb-api python - < openbb-kdb/scripts/live_check.py
 """
 
 import sys
+import threading
 from datetime import datetime, timedelta
 
 import pandas as pd
@@ -104,8 +108,7 @@ check("drop clears coverage", store.read_coverage("LIVECHK", "1d") == [])
 # q reached from several threads at once (spec risk 3). PyKX is unusable from
 # more than one thread, so the session marshals every call onto its owner
 # thread; what is under test is that the marshalling holds and replies never
-# cross between callers.
-import threading
+# cross between callers. (`threading` is imported at the top of the file.)
 
 results = {}
 

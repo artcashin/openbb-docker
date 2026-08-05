@@ -16,9 +16,10 @@ year of daily bars. **Scroll out** and the page requests only the range it does
 not already have; the HUD shows rows served from cache versus fetched
 upstream.
 
-Scroll back in and out again over the same range: `hit`, zero rows upstream,
-no network traffic. The provider toggle runs the same gesture with the cache
-off, for comparison.
+Scroll back **in** and nothing is requested at all — the window is inside what
+is already loaded, and only a gap *outside* it is ever fetched. Scroll out
+again over the same range and nothing is fetched from the vendor. The provider
+toggle runs the same gesture with the cache off, for comparison.
 
 One honest caveat: any window that reaches today always refetches that day's
 still-forming bar, so it reports `partial` rather than `hit` even on a repeat.

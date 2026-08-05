@@ -35,6 +35,24 @@ filter_allowed() {
 }
 
 fail=0
+
+# Filename gate. The content patterns above are `grep -rInE`, and -I skips
+# binary files -- so a committed kdb+ licence blob would sail straight through
+# them. A licence is caught by its NAME, not its bytes. The operator's own
+# kdb-license/ directory is git-ignored and is the one place a kc.lic belongs.
+lic_hits=$(find . \
+    -path ./.git -prune -o \
+    -path ./kdb-license -prune -o \
+    -path ./node_modules -prune -o \
+    -path ./.venv -prune -o \
+    -path ./venv -prune -o \
+    -name '*.lic' -print | filter_allowed)
+if [[ -n "$lic_hits" ]]; then
+  echo "$lic_hits"
+  echo "SCRUB FAIL: licence file in the tree (a kc.lic may not be redistributed)" >&2
+  fail=1
+fi
+
 for p in "${PATTERNS[@]}"; do
   hits=$( { grep -rInE "${EXCLUDES[@]}" -e "$p" . || true; } | filter_allowed)
   if [[ -n "$hits" ]]; then

@@ -7,10 +7,17 @@
 # with their episodes.
 
 # --- kdb-x runtime (Ep. 10) -------------------------------------------------
-# The q SERVER binary only. kc.lic is deliberately NOT copied: this image is
+# The q SERVER binary only. kc.lic is deliberately NOT shipped: this image is
 # published, and a personal-edition license may not be redistributed. Readers
 # mount their own at /opt/kx-license (see docker-compose.yml).
+#
+# The licence is deleted HERE, in the builder, before anything is copied out.
+# Deleting it after the COPY in the final stage is not enough: layers are
+# additive, so the COPY layer would still hold an intact kc.lic that anyone
+# who pulls the image can extract with `docker save`, even though the
+# flattened filesystem looks clean.
 FROM ghcr.io/artcashin/kdb-x:latest AS kdbx
+RUN rm -f /root/.kx/kc.lic
 
 FROM python:3.12-slim
 
@@ -81,9 +88,9 @@ RUN python -c "import ast; ast.parse(open('/usr/local/lib/python3.12/site-packag
 COPY openbb-eodhd/ /opt/openbb-eodhd/
 RUN pip install /opt/openbb-eodhd
 
-# q runtime, minus the license.
+# q runtime, minus the license (already removed in the kdbx stage above, so
+# nothing here can carry it).
 COPY --from=kdbx /root/.kx /opt/kx
-RUN rm -f /opt/kx/kc.lic
 
 # kdb read-through cache provider (Ep. 10).
 COPY openbb-kdb /tmp/openbb-kdb

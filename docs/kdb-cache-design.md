@@ -56,12 +56,19 @@ that refills on demand. This is a cache; it is allowed to be empty.
 
 | Var | Default | Meaning |
 |---|---|---|
-| `KDB_EMBEDDED` | `true` | Spawn q inside the container. `false` skips spawning. |
+| `KDB_EMBEDDED` | *derived* | Spawn q inside the container. With no explicit value it is derived from `KDB_HOST`: true when the host is loopback (`127.0.0.1`, `localhost`, `::1`), false otherwise — spawning only makes sense for a q we own. Set it explicitly to override. |
 | `KDB_HOST` | `127.0.0.1` | Point at an **existing kdb+ server** instead of the spawned one. |
 | `KDB_PORT` | `5000` | As above. |
 | `KDB_MEMORY_MB` | `8192` | Cache budget. q is launched with `-w` = this × 1.25 as containment. |
 | `KDB_CACHE_WATERMARK` | `0.75` | Fraction of budget (measured on `.Q.w[]` `heap`) that triggers LRU eviction. |
 | `KDB_UPSTREAM` | `eodhd` | Provider used for cache misses. Any registered provider. |
+| `QHOME` | `/opt/kx` | The kdb-x install q is launched from. Read **once per process, before `import pykx`** — importing PyKX rewrites `QHOME` in place to point at its own bundled q, so a second read would silently answer with PyKX's lib instead of the operator's install. |
+| `QLIC` | *`QHOME`* | Directory q looks in for `kc.lic`. Load-bearing: the bring-your-own-licence mount is inert unless this points at the directory the licence is actually mounted into. It is separate from `QHOME` precisely so a licence need not be placed inside the (deliberately licence-free) `/opt/kx`. |
+
+`KDB_EMBEDDED`, `KDB_HOST`, `KDB_PORT`, `KDB_MEMORY_MB`, `KDB_CACHE_WATERMARK`
+and `KDB_UPSTREAM` also accept an OpenBB credential (`kdb_host`, `kdb_port`, …)
+which takes precedence over the environment. `QHOME` and `QLIC` do not: they
+are properties of the container, not of a caller.
 
 Spawned-local and bring-your-own-server are the **same code path** — an IPC
 connection to a host and port. Only the "do we start q ourselves" step differs.
@@ -73,10 +80,21 @@ the `q` binary and its libs) into the OpenBB image, **excluding `kc.lic`**, and
 adds PyKX to the Python environment. The published image therefore carries the
 runtime but no license.
 
+**The licence is deleted in the builder stage, before the copy — not after
+it.** Docker layers are additive: `COPY` the runtime and then `RUN rm` the
+licence in the final stage and the flattened filesystem looks clean, but the
+`COPY` layer still holds the intact blob and the `rm` only adds a whiteout on
+top. Anyone who pulls the image can extract the licence with `docker save`.
+Checking `ls /opt/kx/kc.lic` inside a running container does **not** test this;
+the test is that no layer tar in `docker save` contains a `kc.lic` entry.
+
 The reader supplies their own kdb-x license, mounted from a git-ignored path
-(the `ts.env` / `api-auth.env` pattern) and pointed at by `QLIC`. No license
-blob enters this repository or any image published from it — the existing
-`kdb-x` images have one baked in and must not be republished as-is.
+(the `ts.env` / `api-auth.env` pattern) and pointed at by `QLIC` — which must
+name the directory the licence is actually mounted into, or the mount is
+silently inert. No license blob enters this repository or any image published
+from it — the existing `kdb-x` images have one baked in and must not be
+republished as-is. `scripts/scrub-check.sh` gates the repository side by
+filename, because its content patterns skip binary files.
 
 With no license, no q, or an unreachable server, `provider="kdb"` **passes
 through to the upstream provider**. The stack runs uncached rather than
@@ -89,13 +107,29 @@ possible.
 
 | Structure | Contents |
 |---|---|
-| `.cache.bars` | One OHLCV table per `(symbol, interval)`, timestamp-keyed |
-| `.cache.cov` | Coverage ranges: `(sym; iv; start; end)` — the windows actually fetched |
+| `bars_<SYMBOL>_<INTERVAL>` | One OHLCV table per `(symbol, interval)`, in the **root namespace** — `t`-sorted and **unkeyed** |
+| `.cache.cov` | Coverage ranges: `(sym; iv; start; end)` — the windows actually asked for |
 | `.cache.lru` | Last-access time per `(symbol, interval)` |
+
+Bars live at root rather than under `.cache` because eviction drops whole
+tables by name and `.Q.gc[]` reclaims their heap; a per-table root name keeps
+that a one-liner. Deduplication is done on write by keying on `t`, upserting,
+then unkeying again (`` `t xasc 0!(`t xkey …) ``), so the stored table is
+sorted and unkeyed at rest — which is what range selects want.
 
 `.cache.cov` is the load-bearing structure. Without it there is no way to
 distinguish "the provider has no data in that window" from "we never asked",
 and the cache degenerates into whole-window memoization.
+
+Coverage records what was **asked for**, not what came back. That is the
+deliberate choice that lets an empty range — a market holiday, or the pre-IPO
+prefix of a zoomed-out chart — be remembered instead of refetched forever. The
+price is trusting the provider not to truncate: a response shorter than the
+range it was asked for leaves that hole permanently marked covered and it will
+be served as an empty hit. Recording only up to the newest bar returned would
+trade this for the worse bug — sparse symbols would become uncacheable — so a
+truncated response is treated as the provider-contract violation it is. The
+cache is memory-only and process-lifetime, which bounds the damage.
 
 ### Serving a request for `(symbol, interval, start, end)`
 
@@ -122,6 +156,12 @@ Because step 2 refetches the tail regardless, the refetch is overlapped with a
 few already-cached bars and the closes are compared. A mismatch means the
 adjusted series was rewritten → drop that `(symbol, interval)` entirely and
 refetch. The check costs no extra network traffic.
+
+**Known limit: this does not fire for intraday intervals.** The overlap is
+three bars' worth of *wall clock*, so for `1m`/`5m`/`1h` that window lands
+inside the overnight gap and contains no bars at all — there is nothing to
+compare and the check quietly passes. Splits are caught on the daily series
+instead, which is where the adjustment that matters is visible.
 
 ### Eviction and the memory ceiling
 
@@ -153,10 +193,27 @@ process (`KDB_EMBEDDED=true`), reconnects, and serves the request by
 pass-through in the meantime. A cold cache after a death is correct behaviour —
 the cache was never persisted anyway.
 
+**With one deliberate exception: a failed *initial* connect latches.** If the
+first attempt to reach q fails — the overwhelmingly common cause being no
+licence — the session sets a `_given_up` flag and never tries again for the
+lifetime of the process; every subsequent request goes straight to
+pass-through. The alternative is paying a doomed process spawn and a five-
+second connect budget on *every* request for a reader who simply has no
+licence, which is the configuration the stack is explicitly designed to
+tolerate. The cost is that recovery from that state needs a container restart:
+mounting a licence into a running container does not re-arm the cache.
+
 ### Concurrency
 
-A per-`(symbol, interval)` asyncio lock, so two widgets loading the same symbol
-produce one upstream fetch rather than two.
+Two separate mechanisms, for two separate problems.
+
+A per-`(symbol, interval)` asyncio lock deduplicates *work*: two widgets
+loading the same symbol produce one upstream fetch rather than two.
+
+Thread affinity keeps PyKX alive: every call into q is marshalled onto the
+session's single owner thread (see risk 3 below). This is not an optimisation
+and not a lock — PyKX aborts the process when touched from a second thread even
+with no concurrency at all.
 
 ### Telemetry
 
@@ -207,12 +264,25 @@ clamp.
 
 The HUD reports, per request: window requested, rows from cache, rows from
 upstream, `upstream_ms`, `kdb_ms`, bytes over the wire — plus a cumulative
-saved-bytes counter. A provider toggle (`kdb` ↔ `eodhd`) runs the identical
-gesture with the cache off.
+count of **rows served from cache**.
+
+A cumulative *saved-bytes* counter was built first and then removed as
+dishonest. Every response — `hit`, `partial` or `miss` alike — crosses the
+browser↔service link in full, so nothing is saved on the wire the reader can
+actually see; a `hit` means only that the **backend** skipped the vendor. Rows
+served from cache without the vendor being called is the claim the cache
+genuinely supports, so that is what the HUD counts.
 
 The demonstration is the **second** gesture. Scrolling 1y→3y the first time
-reports `partial` with ~2 years fetched. Scrolling back in and out again
-reports `hit`: zero rows upstream, no network traffic.
+reports `partial` with ~2 years fetched. Scrolling back **in** issues no
+request at all — the window is inside what is already loaded, and only a gap
+*outside* `[loadedStart, loadedEnd]` is ever fetched. Scrolling out again over
+the same range fetches nothing from the vendor.
+
+One honest caveat, stated the same way in `cache-chart/README.md`: any window
+that reaches today always refetches that day's still-forming bar, so it reports
+`partial`, not `hit`, even on an exact repeat. A clean `hit` needs a window
+that ends in the past.
 
 ### Why there are two deliverables
 
@@ -247,10 +317,26 @@ an EODHD key.**
    `-w` sits above the budget, and why respawn + pass-through are required
    rather than optional. The pass-through path must catch dead-connection
    errors (`RuntimeError`, `PyKXException`), not only connection-refused.
-3. **PyKX connection sharing.** Verified that one `SyncQConnection` round-trips
-   bars correctly; sharing a single connection across concurrent async tasks is
-   still unproven and is settled by a dedicated task before anything depends
-   on it.
+3. **PyKX connection sharing — settled, and it is the episode's headline
+   finding.** The risk was written as "sharing one connection across concurrent
+   tasks is unproven". What the investigation found is worse and more
+   interesting than a concurrency bug: **PyKX cannot be used across threads at
+   all — not merely concurrently.** Four *strictly sequential* write/read
+   rounds, no overlap whatsoever, survive when they run on one thread and abort
+   the whole process with `free(): invalid size` when each round runs on a
+   fresh thread. A mutex cannot fix that; there is nothing to serialise, and
+   serialising the calls leaves the same heap corruption while hiding its
+   visible symptom.
+
+   The resolution is **thread affinity**, not locking. `session.py` owns a
+   single-worker `ThreadPoolExecutor(max_workers=1)` and marshals *every* PyKX
+   interaction through it — spawning q, opening the connection, every query,
+   every K-object conversion — onto that one owner thread for the process
+   lifetime. Callers hand work in via `KdbSession.run()`. Affinity that begins
+   after the connection was opened on some other thread is not affinity, so the
+   connection is created on the owner thread too. A call already *on* the owner
+   thread runs inline, because a one-worker pool would otherwise deadlock
+   against itself.
 4. **Adjusted-price drift.** Handled by the tail-overlap check; tested
    explicitly because it is the failure that would otherwise be silent.
 5. **Container memory.** `mem_limit` on openbb-api must exceed
