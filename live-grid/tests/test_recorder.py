@@ -66,6 +66,16 @@ def test_buffer_is_bounded_and_drops_oldest():
     assert list(frame["price"]) == [2.0, 3.0, 4.0]
 
 
+def test_a_failed_flush_clears_the_buffer_immediately():
+    """Pins the discard itself: checked before any record() call can mask it
+    through ordinary maxlen eviction."""
+    rec, _ = make(fail=True, max_buffer=3)
+    for i in range(3):
+        rec.record("AAPL", float(i), 1.0, D("2025-06-10T14:00:00"))
+    assert rec.flush() == 0
+    assert rec.buffered == 0
+
+
 def test_a_failed_flush_does_not_grow_the_buffer_without_bound():
     rec, _ = make(fail=True, max_buffer=3)
     for i in range(3):
@@ -74,6 +84,15 @@ def test_a_failed_flush_does_not_grow_the_buffer_without_bound():
     for i in range(3):
         rec.record("AAPL", float(i), 1.0, D("2025-06-10T14:00:00"))
     assert rec.buffered <= 3
+
+
+def test_a_failed_flush_counts_the_whole_batch_as_dropped():
+    rec, _ = make(fail=True, max_buffer=10)
+    for i in range(3):
+        rec.record("AAPL", float(i), 1.0, D("2025-06-10T14:00:00"))
+    assert rec.dropped == 0
+    rec.flush()
+    assert rec.dropped == 3
 
 
 def test_missing_size_records_zero():

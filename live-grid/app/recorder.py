@@ -48,6 +48,7 @@ class TickRecorder:
             written = self.store.write_ticks(frame)
         except Exception as exc:  # noqa: BLE001 - a cache write must not kill the feed
             log.warning("tick flush failed, dropping %d buffered ticks: %s", len(frame), exc)
+            self.dropped += len(frame)
             self._buf.clear()
             return 0
         self._buf.clear()
