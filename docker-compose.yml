@@ -137,6 +137,15 @@ services:
     env_file:
       - path: ./credentials.env
         required: false
+      # Ep. 11: ARCTICDB_S3_* -- this server wraps the same Platform app as
+      # openbb-api in-process, so its equity/etf/crypto/currency/index
+      # historical-price tools accept provider="arcticdb" too. Without this,
+      # ARCTICDB_S3_* is unset here and the provider falls back silently to a
+      # local LMDB store instead of the shared MinIO bucket (see
+      # openbb_arcticdb.utils.resolve_config) -- same store, no auth of its
+      # own either way, so it's safe to share the file.
+      - path: ./minio.env
+        required: false
     volumes:
       - openbb-data:/root/.openbb_platform
 
