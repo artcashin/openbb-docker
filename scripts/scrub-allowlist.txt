@@ -3,3 +3,16 @@
 100.64.0.0/10
 # Synthetic tailnet-range IP used in tests (not a real host):
 100.100.100.100
+# --- .env.example non-empty-value gate: legitimate non-secret defaults ---
+# EODHD's published demo websocket key (from their docs and SDK demo code —
+# documented safe to commit; scoped to AAPL/MSFT/TSLA/BTC-USD/ETH-USD/EURUSD
+# only). Appears in credentials.env.example and live-grid/.env.example:
+EODHD_API_KEY=OeAFFmMliFG5orCUuwAKQ8l4WWFQ67YX
+# Placeholder text, not a real key (openbb-eodhd/.env.example):
+EODHD_API_KEY=your_api_key_here
+# A boolean flag, not a credential (api-auth.env.example):
+OPENBB_API_AUTH=true
+# A suggested default username, not a credential (api-auth.env.example):
+OPENBB_API_USERNAME=openbb
+# A port number, not a credential (credentials.env.example, Ep. 10):
+KDB_PORT=5000

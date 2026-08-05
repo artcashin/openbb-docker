@@ -1,10 +1,19 @@
 # OpenBB Platform API + MCP server, containerized. Companion image for the
-# Adventures in OpenBB series (v8.0.0).
+# Adventures in OpenBB series (v9.0.0).
 #
-# Scope (v8.0.0): the Platform REST API with OpenBB's standard providers,
+# Scope (v9.0.0): the Platform REST API with OpenBB's standard providers,
 # the analysis extensions, the official MCP server for AI agents, and the
 # EODHD provider extension. No CLI/Terminal; other custom providers arrive
 # with their episodes.
+
+# --- kdb-x runtime (Ep. 10) -------------------------------------------------
+# This image ships NO kdb+/kdb-x software. KX's licence does not permit this
+# repo's owner to redistribute their binary -- not even the unlicensed q
+# server -- so there is nothing to COPY in here. The operator supplies their
+# own q, either by mounting it at /kdb (see kdb/README.md) or by running
+# their own kdb container and pointing KDB_HOST at it. Either way, the image
+# built from this Dockerfile contains no KX code at all.
+
 FROM python:3.12-slim
 
 # OpenBB version. Override with --build-arg to track a newer release.
@@ -68,11 +77,23 @@ p.write_text(src.replace(anchor, anchor.replace("\n)", "\n    allow_private_netw
 PY
 RUN python -c "import ast; ast.parse(open('/usr/local/lib/python3.12/site-packages/openbb_core/api/rest_api.py').read()); print('rest_api CORS patch parses OK')"
 
-# Custom EODHD provider extension (Ep. 8): equity/ETF/crypto/forex historical
+# Custom EODHD provider extension (Ep. 9): equity/ETF/crypto/forex historical
 # (EOD + intraday) and fundamentals via the official SDK, pinned to a GitHub
 # commit (the PyPI release predates the SDK's typed errors and timeouts).
 COPY openbb-eodhd/ /opt/openbb-eodhd/
 RUN pip install /opt/openbb-eodhd
+
+# Shared kdb+ session/store plumbing (Ep. 10): openbb-kdb and live-grid both
+# depend on the "kdb-store" distribution now, and it is not published to
+# PyPI, so it must be installed from this checkout before openbb-kdb (whose
+# own pyproject.toml lists it as a dependency) or pip has nothing to resolve
+# "kdb-store" against.
+COPY kdb-store /tmp/kdb-store
+RUN pip install --no-cache-dir /tmp/kdb-store && rm -rf /tmp/kdb-store
+
+# kdb read-through cache provider (Ep. 10).
+COPY openbb-kdb /tmp/openbb-kdb
+RUN pip install --no-cache-dir /tmp/openbb-kdb && rm -rf /tmp/openbb-kdb
 
 # Official OpenBB MCP server (Ep. 6): wraps the Platform FastAPI app
 # in-process and serves MCP over streamable-http. PIP_CONSTRAINT still
@@ -84,7 +105,8 @@ RUN python -c "import openbb_mcp_server; print('openbb-mcp-server import OK')"
 # platform registers at build time.
 RUN python -c "import openbb; openbb.build(); from openbb import obb; \
 assert 'eodhd' in obb.coverage.providers, 'eodhd provider not registered'; \
-print('OpenBB Platform OK:', len(obb.coverage.providers), 'providers (incl. eodhd)')"
+assert 'kdb' in obb.coverage.providers, 'kdb provider not registered'; \
+print('OpenBB Platform OK:', len(obb.coverage.providers), 'providers (incl. eodhd, kdb)')"
 
 WORKDIR /workspace
 

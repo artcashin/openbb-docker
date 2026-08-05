@@ -1,4 +1,4 @@
-# rss-ticker config for the openbb-docker stack (Adventures in OpenBB, Ep. 9).
+# rss-ticker config for the openbb-docker stack (Adventures in OpenBB, Ep. 8).
 #
 # The ticker joins the same Tailscale sidecar as everything else, so it runs
 # in tailscale_auth mode: Serve injects the caller's verified identity on

@@ -35,5 +35,24 @@
       }
     ],
     "source": ["EODHD"]
+  },
+  "kdb_cache_chart": {
+    "name": "Cached Price Chart",
+    "description": "Historical prices served through the kdb+ read-through cache, joined to live tick-derived bars",
+    "category": "Equity",
+    "type": "chart",
+    "endpoint": "chart",
+    "gridData": { "w": 20, "h": 12 },
+    "params": [
+      { "paramName": "symbol", "value": "AAPL", "label": "Symbol", "type": "text" },
+      {
+        "paramName": "interval", "value": "1d", "label": "Interval", "type": "text",
+        "options": [
+          { "label": "1 day", "value": "1d" },
+          { "label": "1 hour", "value": "1h" },
+          { "label": "5 min", "value": "5m" }
+        ]
+      }
+    ]
   }
 }

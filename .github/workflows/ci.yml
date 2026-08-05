@@ -26,7 +26,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
-      - name: Test live-grid (all mocked, no key)
+      - name: Install kdb-store (live-grid's tick recorder depends on it)
+        run: pip install -e ./kdb-store
+      - name: Test live-grid (all mocked, no key or kdb+ needed)
         working-directory: live-grid
         run: |
           pip install -e .[dev]
@@ -42,6 +44,36 @@ jobs:
         run: |
           pip install -e .[dev]
           pytest -q
+  openbb-kdb:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Install kdb-store (openbb-kdb depends on it)
+        run: pip install -e ./kdb-store
+      - name: Test the kdb+ read-through cache provider (fake q connection, no license)
+        working-directory: openbb-kdb
+        run: |
+          pip install -e .[dev]
+          pytest -q
+  kdb-store:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Test kdb-store (fake q connection, no license, no network)
+        working-directory: kdb-store
+        run: |
+          pip install -e .[dev]
+          pytest -q
+  # The image ships no KX software: the Dockerfile builds from
+  # python:3.12-slim and public PyPI packages only. KX's licence does not
+  # permit this repo's owner to redistribute their q binary, so the operator
+  # supplies their own at runtime (mounted, or via an external kdb host) --
+  # see kdb/README.md. Nothing private is needed to build this image, so
+  # build-smoke runs unconditionally like every other job.
   build-smoke:
     runs-on: ubuntu-latest
     steps:

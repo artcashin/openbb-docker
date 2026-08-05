@@ -2,7 +2,9 @@
 
 import asyncio
 import json
+from unittest.mock import MagicMock
 
+import app.feeds as feeds_mod
 from app.feeds import FeedManager
 from app.quotes import QuoteTable
 
@@ -91,6 +93,83 @@ class TestDrain:
         us.data_list.extend(["not json", json.dumps({"status": "ok"})])
         m._drain_all()  # must not raise
         assert m.pop_dirty("c1") == set()
+
+
+async def _run_briefly(manager: FeedManager, seconds: float = 0.05) -> None:
+    """Start manager.run(), let it cycle for a bit, then cancel it cleanly."""
+    task = asyncio.create_task(manager.run())
+    await asyncio.sleep(seconds)
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+
+class TestRecorderIntegration:
+    def test_flush_runs_every_drain_cycle_when_a_recorder_is_present(self, fake_ws_client_factory):
+        recorder = MagicMock()
+        m = FeedManager(
+            "k", QuoteTable(), client_factory=fake_ws_client_factory,
+            drain_interval=0.01, rebuild_delay=0.0, recorder=recorder,
+        )
+        asyncio.run(_run_briefly(m))
+        assert recorder.flush.called
+
+    def test_no_recorder_means_no_flush_calls(self, fake_ws_client_factory):
+        m = make_manager(fake_ws_client_factory)  # recorder=None by default
+        asyncio.run(_run_briefly(m, seconds=0.03))  # must not raise
+
+    def test_prune_only_fires_once_per_interval(self, fake_ws_client_factory):
+        # loop.time() is a monotonic clock with an arbitrary (non-zero) origin,
+        # so with _last_prune initialised to 0.0 the very first drain cycle
+        # always clears "now - 0.0 >= PRUNE_INTERVAL" -- the first prune is
+        # effectively "on startup". What the interval must still guarantee is
+        # that it does NOT re-fire on every one of the several cycles that fit
+        # inside this test's short run (default PRUNE_INTERVAL is 60s).
+        recorder = MagicMock()
+        m = FeedManager(
+            "k", QuoteTable(), client_factory=fake_ws_client_factory,
+            drain_interval=0.01, rebuild_delay=0.0, recorder=recorder,
+        )
+        asyncio.run(_run_briefly(m, seconds=0.08))
+        assert recorder.flush.called
+        assert recorder.prune.call_count == 1
+
+    def test_prune_runs_once_the_interval_elapses(self, fake_ws_client_factory, monkeypatch):
+        monkeypatch.setattr(feeds_mod, "PRUNE_INTERVAL", 0.0)
+        recorder = MagicMock()
+        m = FeedManager(
+            "k", QuoteTable(), client_factory=fake_ws_client_factory,
+            drain_interval=0.01, rebuild_delay=0.0, recorder=recorder,
+        )
+        asyncio.run(_run_briefly(m))
+        assert recorder.prune.called
+
+    def test_a_failing_recorder_never_breaks_the_feed_loop(self, fake_ws_client_factory):
+        """Episode 8's feature must survive anything the cache does."""
+        recorder = MagicMock()
+        recorder.flush.side_effect = RuntimeError("kdb exploded")
+        m = FeedManager(
+            "k", QuoteTable(), client_factory=fake_ws_client_factory,
+            drain_interval=0.01, rebuild_delay=0.0, recorder=recorder,
+        )
+        m.register("c1", ["AAPL"])
+
+        async def go():
+            task = asyncio.create_task(m.run())
+            await asyncio.sleep(0.05)
+            us = next(c for c in fake_ws_client_factory.built if c.feed == "us")
+            us.data_list.append(json.dumps({"s": "AAPL", "p": 190.5, "q": 10}))
+            await asyncio.sleep(0.05)
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+        asyncio.run(go())
+        assert m.quotes.rows["AAPL"]["price"] == 190.5
 
 
 class TestLifecycle:

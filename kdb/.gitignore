@@ -1,0 +1,6 @@
+# The operator's own q lives here. It must never be committed: the licence
+# does not permit redistributing KX's software, and a licence file is a
+# credential.
+*
+!.gitignore
+!README.md

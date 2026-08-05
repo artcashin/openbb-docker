@@ -1,0 +1,250 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>kdb+ read-through cache</title>
+<script src="/static/plotly.min.js"></script>
+<style>
+  body { background:#111; color:#ddd; font:14px/1.5 ui-monospace, monospace; margin:0; padding:16px; }
+  #chart { height:60vh; }
+  table { border-collapse:collapse; margin-top:12px; width:100%; }
+  th, td { text-align:left; padding:4px 10px; border-bottom:1px solid #333; }
+  .hit { color:#4ade80; } .partial { color:#fbbf24; }
+  .miss, .bypass, .error { color:#f87171; }
+  header { display:flex; gap:16px; align-items:center; flex-wrap:wrap; }
+  select, input { background:#222; color:#ddd; border:1px solid #444; padding:4px; }
+</style>
+
+<header>
+  <strong>kdb+ read-through cache</strong>
+  <label>symbol <input id="symbol" value="AAPL" size="6"></label>
+  <label>provider
+    <select id="provider">
+      <option value="kdb">kdb (cached)</option>
+      <option value="eodhd">eodhd (no cache)</option>
+    </select>
+  </label>
+  <span>scroll to zoom out — only the missing range is fetched</span>
+</header>
+
+<div id="chart"></div>
+<table id="hud">
+  <thead><tr><th>window</th><th>cache</th><th>from cache</th><th>from upstream</th>
+  <th>upstream ms</th><th>kdb ms</th><th>bytes</th><th>round trip ms</th></tr></thead>
+  <tbody></tbody>
+</table>
+<p id="total"></p>
+
+<script>
+const chart = document.getElementById("chart");
+let loadedStart = null, loadedEnd = null, bars = [], inflight = false;
+
+// Bumped every time the user switches symbol/provider. Requests are async and
+// can finish out of order, so a fetch that resolves after its generation has
+// been superseded is discarded rather than applied to the chart it no longer
+// describes (AAPL bars landing on a chart now showing MSFT).
+let requestGen = 0;
+
+const iso = d => d.toISOString().slice(0, 10);
+const symbol = () => document.getElementById("symbol").value.trim().toUpperCase();
+const provider = () => document.getElementById("provider").value;
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const esc = s => String(s).replace(/[&<>"]/g, c =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+// Plotly's "xaxis.range[0]" is "YYYY-MM-DD[ HH:MM:SS]" with no zone, which
+// `new Date(...)` parses as LOCAL time. loadedStart/loadedEnd are plain
+// "YYYY-MM-DD" strings, which `new Date(...)` parses as UTC. Mixing the two
+// shifts the computed gap boundary by a day near local midnight, which asks
+// the backend for the wrong prefix -- so parse everything through these two
+// helpers instead of `new Date(string)`.
+function parseIsoDateUtc(s) {
+  const [y, m, d] = s.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d));
+}
+function parseRangeDateUtc(s) {
+  const [datePart, timePart] = s.replace("T", " ").split(" ");
+  const [y, m, d] = datePart.split("-").map(Number);
+  if (!timePart) return new Date(Date.UTC(y, m - 1, d));
+  const [hh, mm, ss] = timePart.split(":").map(Number);
+  return new Date(Date.UTC(y, m - 1, d, hh || 0, mm || 0, Math.floor(ss || 0)));
+}
+
+// Cumulative telemetry, counted in ROWS rather than bytes. A "bytes saved"
+// counter would be dishonest here: every response -- hit, partial or miss --
+// travels the browser<->service link in full, so no bytes are saved on the
+// wire the user can see. A "hit" means only that the *backend* did not ask
+// the upstream vendor. The honest headline metric is therefore the number of
+// rows served out of the kdb+ cache without the vendor being called.
+let cumRowsFromCache = 0;
+let cumUpstreamMs = 0;
+const requestCounts = {};
+
+// load() always resolves to a discriminated result -- {busy}, {bars}, or
+// {error} -- so callers can tell "another request is in flight, try again"
+// apart from "the request succeeded and returned no bars" and from "the
+// request failed". A bare `undefined` return would collapse all three into
+// "nothing happened", and the caller would then either drop a request that
+// should have been retried or adopt a window it never actually loaded.
+async function load(start, end) {
+  if (inflight) return { busy: true };
+  inflight = true;
+  const t0 = performance.now();
+  const url = `/series?symbol=${symbol()}&start=${start}&end=${end}&provider=${provider()}`;
+  let res, text;
+  try {
+    res = await fetch(url);
+    text = await res.text();
+  } catch (err) {
+    inflight = false;
+    const cache = { cache: "error", error: `network error: ${err}` };
+    hud(start, end, cache, 0, performance.now() - t0);
+    return { busy: false, error: cache.error };
+  }
+  inflight = false;
+
+  let body = null;
+  try { body = JSON.parse(text); } catch { /* handled below via fallback cache */ }
+
+  const cache = (body && body.cache) || {
+    cache: "error", error: `bad response (HTTP ${res.status}): ${text.slice(0, 200)}`,
+  };
+  hud(start, end, cache, new Blob([text]).size, performance.now() - t0);
+
+  if (!res.ok || cache.cache === "error") {
+    return { busy: false, error: cache.error || `HTTP ${res.status}` };
+  }
+  return { busy: false, bars: body.bars || [] };
+}
+
+function hud(start, end, cache, bytes, roundTripMs) {
+  const kind = cache.cache || "unknown";
+  requestCounts[kind] = (requestCounts[kind] || 0) + 1;
+  cumRowsFromCache += cache.rows_from_cache ?? 0;
+  cumUpstreamMs += cache.upstream_ms ?? 0;
+
+  const row = document.createElement("tr");
+  row.innerHTML = `<td>${start} → ${end}</td>
+    <td class="${kind}">${kind}${cache.error ? `: ${esc(cache.error)}` : ""}</td>
+    <td>${cache.rows_from_cache ?? 0}</td>
+    <td>${cache.rows_from_upstream ?? 0}</td>
+    <td>${(cache.upstream_ms ?? 0).toFixed(1)}</td>
+    <td>${(cache.kdb_ms ?? 0).toFixed(1)}</td>
+    <td>${bytes}</td>
+    <td>${roundTripMs.toFixed(1)}</td>`;
+  document.querySelector("#hud tbody").prepend(row);
+
+  const counts = Object.entries(requestCounts).map(([k, n]) => `${n} ${k}`).join(", ");
+  document.getElementById("total").textContent =
+    `${cumRowsFromCache} rows served from cache, without asking the data vendor ` +
+    `(requests so far: ${counts}; ${cumUpstreamMs.toFixed(1)}ms cumulative upstream time)`;
+}
+
+// Plotly only attaches its `.on` event-emitter to the chart div once that
+// div has actually been plotted (Plotly.newPlot/react) -- on a bare <div>
+// `.on` does not exist yet. So the relayout handler can only be bound AFTER
+// the first draw(), and -- to avoid the listener-accumulation bug this once
+// regressed -- exactly once no matter how many times draw() runs after that.
+let listenerBound = false;
+
+function draw() {
+  Plotly.react(chart, [{
+    type: "candlestick", name: symbol(),
+    x: bars.map(b => b.date), open: bars.map(b => b.open),
+    high: bars.map(b => b.high), low: bars.map(b => b.low),
+    close: bars.map(b => b.close),
+  }], {
+    title: { text: `${symbol()} — scroll to extend` },
+    xaxis: { rangeslider: { visible: false } },
+    template: "plotly_dark", paper_bgcolor: "#111", plot_bgcolor: "#111",
+    font: { color: "#ddd" }, margin: { l: 40, r: 20, t: 40, b: 40 },
+  }, { scrollZoom: true, displayModeBar: false });
+
+  if (!listenerBound) {
+    chart.on("plotly_relayout", onRelayout);
+    listenerBound = true;
+  }
+}
+
+// A continuous scroll fires many relayout events; debounce so ONE request
+// goes out when the gesture settles.
+let timer = null;
+let retryTimer = null;
+
+function onRelayout(ev) {
+  const start = ev["xaxis.range[0]"];
+  if (!start) return;
+  clearTimeout(timer);
+  timer = setTimeout(() => attemptGapFetch(start), 150);
+}
+
+async function attemptGapFetch(rangeStart) {
+  const myGen = requestGen;
+  const wanted = parseRangeDateUtc(rangeStart);
+  const floor = parseIsoDateUtc(loadedEnd);
+  floor.setUTCFullYear(floor.getUTCFullYear() - 10);          // clamp
+  const from = wanted < floor ? floor : wanted;
+  if (from >= parseIsoDateUtc(loadedStart)) return;            // already loaded
+  const gapEnd = parseIsoDateUtc(loadedStart);
+  gapEnd.setUTCDate(gapEnd.getUTCDate() - 1);
+
+  const result = await load(iso(from), iso(gapEnd));
+  if (myGen !== requestGen) return;                             // superseded
+
+  if (result.busy) {
+    clearTimeout(retryTimer);
+    retryTimer = setTimeout(() => attemptGapFetch(rangeStart), 150);
+    return;
+  }
+  if (result.error) return;                                    // surfaced in HUD already
+
+  bars = result.bars.concat(bars);
+  loadedStart = iso(from);
+  draw();
+}
+
+// Retries on "busy" instead of dropping the request, and bails out early if a
+// later symbol/provider change supersedes this one -- otherwise the retry loop
+// would keep re-requesting a window nobody is looking at any more.
+async function loadWithRetry(start, end, gen) {
+  let result = await load(start, end);
+  while (result.busy && gen === requestGen) {
+    await sleep(150);
+    result = await load(start, end);
+  }
+  return result;
+}
+
+async function reload() {
+  const myGen = ++requestGen;
+  clearTimeout(timer);
+  clearTimeout(retryTimer);
+
+  const end = new Date();
+  const start = new Date(end);
+  start.setUTCFullYear(start.getUTCFullYear() - 1);
+  const newStart = iso(start), newEnd = iso(end);
+
+  const result = await loadWithRetry(newStart, newEnd, myGen);
+  if (myGen !== requestGen) return;                             // superseded meanwhile
+  if (result.error) return;             // surfaced in HUD already; don't adopt
+                                         // this window as loaded, or scrolling
+                                         // could never re-fetch it (only a gap
+                                         // OUTSIDE [loadedStart, loadedEnd] is
+                                         // ever fetched) -- mirrors attemptGapFetch.
+
+  // Reset the loaded-window state on every switch so a stale, wider window
+  // from a previous symbol's zoom can't be reused for the new one.
+  loadedStart = newStart;
+  loadedEnd = newEnd;
+  bars = result.bars || [];
+  draw();
+}
+
+(async function boot() {
+  // The plotly_relayout listener is deliberately NOT bound here: chart.on
+  // does not exist until Plotly has plotted the div, so it is bound inside
+  // draw() instead -- once, guarded by listenerBound (see above).
+  document.getElementById("symbol").onchange =
+  document.getElementById("provider").onchange = reload;
+  await reload();
+})();
+</script>

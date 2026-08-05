@@ -2,6 +2,7 @@
 credentials.env
 api-auth.env
 ts.env
+rss-ticker.env
 deps.env
 .env
 .env.*
@@ -11,6 +12,14 @@ scripts/scrub-private-patterns.txt
 ts-state/
 kdb-data/
 *.log
+
+# kdb+ license -- bring your own; never commit it.
+kdb-license/*
+!kdb-license/.gitkeep
+
+# The operator's own q binary -- bring your own; never commit it.
+# Enforced by kdb/.gitignore itself (belt and suspenders: this directory
+# must be structurally impossible to commit a binary into).
 
 # python
 __pycache__/

@@ -10,6 +10,8 @@ from app.quotes import QuoteTable
 
 log = logging.getLogger("live-grid")
 
+PRUNE_INTERVAL = 60.0  # seconds between rolling-window prunes of the tick cache
+
 
 def _build_client(api_key: str, feed: str, symbols: list[str]):
     """Construct the official WebSocketClient without clobbering signal handlers.
@@ -51,18 +53,21 @@ class FeedManager:
         client_factory=_build_client,
         drain_interval: float = 0.2,
         rebuild_delay: float = 1.0,
+        recorder=None,
     ) -> None:
         self._api_key = api_key
         self.quotes = quotes
         self._client_factory = client_factory
         self._drain_interval = drain_interval
         self._rebuild_delay = rebuild_delay
+        self.recorder = recorder
         self._conns: dict[str, dict[str, set[str]]] = {}  # conn_id -> feed -> symbols
         self._dirty: dict[str, set[str]] = {}  # conn_id -> symbols with fresh ticks
         self._clients: dict[str, object] = {}  # feed -> SDK WebSocketClient
         self._active: dict[str, frozenset[str]] = {}  # feed -> subscribed set
         self._rebuild_pending = False
         self._last_rebuild = float("-inf")
+        self._last_prune = 0.0
 
     # -- subscription tracking ------------------------------------------------
     def register(self, conn_id: str, symbols: list[str]) -> None:
@@ -165,5 +170,16 @@ class FeedManager:
                         self._last_rebuild = now
                         await self._sync_feeds()
                 self._drain_all()
+                if self.recorder is not None:
+                    try:
+                        # to_thread keeps the event loop free; the recorder's store
+                        # marshals the actual PyKX call onto its own owner thread.
+                        await asyncio.to_thread(self.recorder.flush)
+                        now = asyncio.get_running_loop().time()
+                        if now - self._last_prune >= PRUNE_INTERVAL:
+                            self._last_prune = now
+                            await asyncio.to_thread(self.recorder.prune)
+                    except Exception:  # noqa: BLE001 - recording must never break the feed
+                        log.debug("tick recorder flush/prune failed", exc_info=True)
         finally:
             await self.stop_all()
