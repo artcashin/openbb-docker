@@ -284,7 +284,17 @@ def _conform_dtypes(df, prototype):
                 # q casts a float null to the integer null of that width;
                 # pandas raises instead, so the mapping is made explicit.
                 values = values.fillna(np.iinfo(want.type).min)
-            converted = values.astype(want)
+                converted = values.astype(want)
+            else:
+                converted = values.astype(want)
+                if want.kind == "i" and not (converted == values).all():
+                    # astype silently TRUNCATES float->int (133610200.7 ->
+                    # 133610200) rather than raising, so the except clause
+                    # below never sees it. Checking the round-trip makes the
+                    # loss explicit and falls through to the same bypass path
+                    # as any other unconvertible column, instead of writing a
+                    # value the provider never sent.
+                    continue
         except (TypeError, ValueError, OverflowError) as exc:
             logger.debug("cannot conform column %r to %s: %s", column, want, exc)
             continue

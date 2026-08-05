@@ -247,6 +247,26 @@ def test_write_bars_leaves_an_unconvertible_column_alone():
         }))
 
 
+def test_write_bars_never_truncates_a_fractional_value_into_a_stored_int_column():
+    """`astype` silently truncates float->int (133610200.7 -> 133610200)
+    without raising, so a naive cast would corrupt data with no error
+    anywhere. A column that cannot be cast exactly must fall through to the
+    same bypass path as any other unconvertible column instead."""
+    conn = QTypedConn()
+    store = KdbStore(OwnerThreadSession(conn))
+    store.write_bars("NVDA", "1d", pd.DataFrame({
+        "t": pd.to_datetime(["2026-08-03"]), "volume": [128406900],
+    }))
+    with pytest.raises(QTypeError):
+        store.write_bars("NVDA", "1d", pd.DataFrame({
+            "t": pd.to_datetime(["2026-08-04"]), "volume": [133610200.7],
+        }))
+    # The bypass means nothing was ever appended; the stored column is
+    # untouched and definitely never holds a truncated value.
+    stored = conn.tables["bars_NVDA_1d"]
+    assert list(stored["volume"]) == [128406900]
+
+
 def _yfinance_shaped(days, dividends_as_none, forming=None):
     """Rows shaped like a provider response, with per-batch dtype drift.
 

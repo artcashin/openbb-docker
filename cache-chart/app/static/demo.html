@@ -219,6 +219,11 @@ async function reload() {
 
   const result = await loadWithRetry(newStart, newEnd, myGen);
   if (myGen !== requestGen) return;                             // superseded meanwhile
+  if (result.error) return;             // surfaced in HUD already; don't adopt
+                                         // this window as loaded, or scrolling
+                                         // could never re-fetch it (only a gap
+                                         // OUTSIDE [loadedStart, loadedEnd] is
+                                         // ever fetched) -- mirrors attemptGapFetch.
 
   // Reset the loaded-window state on every switch so a stale, wider window
   // from a previous symbol's zoom can't be reused for the new one.
