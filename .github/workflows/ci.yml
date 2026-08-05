@@ -42,6 +42,28 @@ jobs:
         run: |
           pip install -e .[dev]
           pytest -q
+  openbb-kdb:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Test the kdb+ read-through cache provider (fake q connection, no license)
+        working-directory: openbb-kdb
+        run: |
+          pip install -e .[dev]
+          pytest -q
+  cache-chart:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Test cache-chart (mocked HTTP, no key)
+        working-directory: cache-chart
+        run: |
+          pip install -e .[dev]
+          pytest -q
   build-smoke:
     runs-on: ubuntu-latest
     steps:
