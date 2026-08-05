@@ -59,8 +59,8 @@ that refills on demand. This is a cache; it is allowed to be empty.
 | `KDB_EMBEDDED` | `true` | Spawn q inside the container. `false` skips spawning. |
 | `KDB_HOST` | `127.0.0.1` | Point at an **existing kdb+ server** instead of the spawned one. |
 | `KDB_PORT` | `5000` | As above. |
-| `KDB_MEMORY_MB` | `8192` | q workspace cap, passed as `-w`. |
-| `KDB_CACHE_WATERMARK` | `0.75` | Fraction of budget that triggers LRU eviction. |
+| `KDB_MEMORY_MB` | `8192` | Cache budget. q is launched with `-w` = this × 1.25 as containment. |
+| `KDB_CACHE_WATERMARK` | `0.75` | Fraction of budget (measured on `.Q.w[]` `heap`) that triggers LRU eviction. |
 | `KDB_UPSTREAM` | `eodhd` | Provider used for cache misses. Any registered provider. |
 
 Spawned-local and bring-your-own-server are the **same code path** — an IPC
@@ -123,14 +123,35 @@ few already-cached bars and the closes are compared. A mismatch means the
 adjusted series was rewritten → drop that `(symbol, interval)` entirely and
 refetch. The check costs no extra network traffic.
 
-### Eviction
+### Eviction and the memory ceiling
 
-`-w` is a **hard ceiling that raises `'wsfull`** — it does not evict. Left
-alone, an 8 GB cap turns a busy cache into a hard failure.
+**Measured, not assumed** (probes against `kdb-x` `.z.K=5`, `-w 512`):
 
-At `.Q.w[]` used > `KDB_CACHE_WATERMARK` × budget, whole `(symbol, interval)`
-tables are dropped oldest-first, followed by `.Q.gc[]` — q's `delete` alone
-does not return memory to the OS.
+- Exceeding `-w` **kills the q process outright**. There is no catchable
+  `'wsfull` — the IPC handle dies, the process exits, and reconnect fails.
+  This happens on ordinary gradual growth, not just on one huge allocation:
+  q died on the allocation after `heap` reached `wmax`.
+- `heap`, not `used`, is what approaches `wmax`. `heap` grows in large steps
+  (67 MB at a 512 MB cap) and ran ~33 MB ahead of `used`.
+- `delete` alone frees `used` but **not** `heap`. `.Q.gc[]` returns heap fully
+  to baseline (335 MB → 67 MB in the probe).
+
+Therefore `-w` is **containment, not cache policy**. Its job is to protect the
+rest of the container: without it, a runaway cache grows until the OOM killer
+takes down openbb-api along with q. q is launched with
+`-w` = `KDB_MEMORY_MB` × 1.25 so that normal operation never approaches it.
+
+The real budget is enforced by the extension: when `.Q.w[]``heap` exceeds
+`KDB_CACHE_WATERMARK` × `KDB_MEMORY_MB`, whole `(symbol, interval)` tables are
+dropped oldest-first, each followed by `.Q.gc[]`.
+
+### Surviving a dead q
+
+Because q *can* die, the extension treats a dead connection as a normal state,
+not an exception: it detects the closed handle, respawns q if it owns the
+process (`KDB_EMBEDDED=true`), reconnects, and serves the request by
+pass-through in the meantime. A cold cache after a death is correct behaviour —
+the cache was never persisted anyway.
 
 ### Concurrency
 
@@ -220,11 +241,16 @@ an EODHD key.**
    unauthenticated q — and q IPC executes arbitrary q — to every tailnet peer.
    Verified directly: a sibling container reaches `KX_PORT=5000` and cannot
    reach `KX_PORT=127.0.0.1:5000`. `verify-isolation.sh` gains a check for it.
-2. **`-w` errors rather than evicting.** A bug in eviction does not degrade the
-   cache, it starts raising `'wsfull`. The pass-through path must catch q
-   errors, not only connection errors.
-3. **PyKX thread affinity.** A single IPC connection shared across async tasks
-   needs verification before the implementation depends on it.
+2. **A bug in eviction kills q, it does not merely error.** Verified: crossing
+   `-w` terminates the process, so the failure mode is "the cache tier
+   vanished", not "a query failed". This is why eviction is preventive, why
+   `-w` sits above the budget, and why respawn + pass-through are required
+   rather than optional. The pass-through path must catch dead-connection
+   errors (`RuntimeError`, `PyKXException`), not only connection-refused.
+3. **PyKX connection sharing.** Verified that one `SyncQConnection` round-trips
+   bars correctly; sharing a single connection across concurrent async tasks is
+   still unproven and is settled by a dedicated task before anything depends
+   on it.
 4. **Adjusted-price drift.** Handled by the tail-overlap check; tested
    explicitly because it is the failure that would otherwise be silent.
 5. **Container memory.** `mem_limit` on openbb-api must exceed
