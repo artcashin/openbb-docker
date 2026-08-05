@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-05
 **Status:** Shipped
-**Ships as:** v11.0.0 — *Adventures in OpenBB, Ep. 11*
+**Ships as:** v11.0.0 through v11.1.1 — *Adventures in OpenBB, Ep. 11*
 
 ## Purpose
 
@@ -74,9 +74,11 @@ changed — a failed renewal never overwrites a working certificate.
 The reason the loop lives in *this* container, signalling *its own child*,
 is a measured fact, not a guess: **MinIO does not notice a certificate
 rewritten on disk out from under it — verified unchanged 36 seconds after
-the file changed — but it reloads cleanly on `SIGHUP`, with the certificate
-serial updated and container uptime untouched.** No dropped connections, no
-restart. That result is what makes the whole design work: renewal can be a
+the file changed — but it reloads on `SIGHUP`: the certificate serial
+updates and container uptime stays untouched, i.e. no restart.** That's
+what was measured; connections in flight during the signal were never
+observed, so this is not a claim about zero dropped connections. That
+result is what makes the whole design work: renewal can be a
 dumb shell loop instead of a supervised restart cycle. The alternative —
 signalling MinIO from a sibling container — would need the Docker socket
 mounted into that sibling so it could reach across container boundaries,
@@ -153,8 +155,10 @@ The caveat that must not get lost in that story: **the Docker bridge network
 can also reach `:9000`.** `minio` has no `network_mode: service:...`
 override of its own — it sits on the same default compose network as every
 other service, discoverable by its container name — so any sibling
-container, or the Docker host itself, can reach `http://minio:9000`
-directly, no Tailscale involved. That is a deliberate, documented limit of
+container, or the Docker host itself, can reach `https://minio:9000`
+directly, no Tailscale involved (`minio server --certs-dir` makes the
+endpoint TLS-only by construction — there is no plaintext `http://` to
+fall back to). That is a deliberate, documented limit of
 this posture, not an oversight: nothing on the LAN can reach it, because
 nothing routes from the LAN into the Docker bridge in this deployment. But
 it is a real boundary, one narrower than "only the tailnet can reach this,"

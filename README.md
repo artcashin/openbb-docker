@@ -19,15 +19,20 @@ from later chapters is.
 | v11.1.0 | Ep. 11 — The Shared Store | `tick-lab`'s EODHD-through-the-API reference adapter — the per-minute 2023 comparison yfinance cannot serve |
 | v11.1.1 | Ep. 11 — The Shared Store | `tick-lab`'s in-process OpenBB reference adapter (`--reference eodhd-local`) — the same call made locally, and what it costs versus `eodhd-api` |
 
-## What you get (this release: v11.0.0)
+## What you get (this release: v11.1.1)
 
-Two containers, one tailnet node, zero exposed ports:
+Eight services across two tailnet nodes, zero exposed ports. The backbone,
+unchanged since Ep. 1:
 
 - a small **Tailscale sidecar** that owns the network namespace and joins your
   tailnet as a node named `openbb`;
 - the **OpenBB Platform REST API** (all standard providers + the technical,
   quantitative, and econometrics extensions) sharing that namespace, bound to
   loopback only.
+
+Everything else — `openbb-mcp`, `key-maint`, `live-grid`, `rss-ticker`,
+`cache-chart`, and `minio` as its own second tailnet node — arrived in the
+episodes below.
 
 **Tailscale Serve is the only way in** — real HTTPS with a Let's Encrypt
 certificate at `https://openbb.<your-tailnet>.ts.net`, reachable from every
@@ -43,17 +48,22 @@ container rather than a sidecar (a sidecar's control socket is a file, and
 unreachable from another container no matter what's mounted), and certificate
 renewal lives there too, signalling its own `minio` child with `SIGHUP` —
 measured: MinIO ignores a certificate rewritten on disk, but reloads it on
-`SIGHUP` with zero dropped connections. Nothing is published to the host;
-`:9000` is reachable on the tailnet and, as a documented limit of the
-posture, from the Docker bridge — never from the LAN. The **openbb-arcticdb
-provider extension** (`provider="arcticdb"`) puts that store behind the
-Platform's normal historical-price interface, tick data included (pass
-`interval` to resample ticks into OHLCV on read). **`tick-lab`** is a new,
-separate CLI — install it locally, point it at the same store via
-`minio.env`'s `ARCTICDB_S3_*` values, load FirstRate Data's free tick sample
-(GOOG + MSFT, 2023-05-12 — **not committed here**, it's third-party licensed
-data you download yourself), and it rolls your stored ticks into 1-minute
-bars and checks them against `yfinance`. **Apple Silicon readers, read
+`SIGHUP` — certificate serial updated, container uptime untouched (no
+restart); connections in flight during the signal were never observed.
+Nothing is published to the host; `:9000` is reachable on the tailnet and,
+as a documented limit of the posture, from the Docker bridge — in this
+deployment, that means never from the LAN, but that depends on the reader's
+host networking, not on anything this compose file guarantees. The
+**openbb-arcticdb provider extension** (`provider="arcticdb"`) puts that
+store behind the Platform's normal historical-price interface, tick data
+included (pass `interval` to resample ticks into OHLCV on read).
+**`tick-lab`** is a new, separate CLI — install it locally, point it at the
+same store via `minio.env`'s `ARCTICDB_S3_*` values, load FirstRate Data's
+free tick sample (GOOG + MSFT, 2023-05-12 — **not committed here**, it's
+third-party licensed data you download yourself), and it rolls your stored
+ticks into 1-minute bars and checks them against a reference source —
+`eodhd-api` by default since v11.1.0, with `yfinance` and the in-process
+`eodhd-local` also available via `--reference`. **Apple Silicon readers, read
 this:** the Platform image is pinned `linux/amd64` because ArcticDB
 publishes no aarch64 Linux wheels — on an M-series Mac it runs under
 emulation, so expect a slower build and slower queries (correctness is

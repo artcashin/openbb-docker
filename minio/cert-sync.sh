@@ -2,8 +2,10 @@
 # Fetch (or renew) this node's Let's Encrypt certificate and hand it to MinIO.
 #
 # MinIO does NOT notice a rewritten certificate on disk, but it DOES reload on
-# SIGHUP, with no restart and no dropped connections. So: write to a staging
-# path, compare, and only promote + signal when the content actually changed.
+# SIGHUP -- measured: certificate serial updates, container uptime doesn't
+# reset (no restart). Connections in flight during the signal were never
+# observed. So: write to a staging path, compare, and only promote + signal
+# when the content actually changed.
 #
 # usage: cert-sync.sh <cert-dir> <domain> <pid-file>
 set -eu
