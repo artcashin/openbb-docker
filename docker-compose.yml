@@ -231,8 +231,8 @@ services:
   # tailscaled runs INSIDE this container because its control socket is a file
   # and network_mode shares only the network namespace -- see minio/Dockerfile.
   #
-  # NOTHING is published to the host. :9000 (S3) and :9001 (console) exist on
-  # the tailscale interface only.
+  # NOTHING is published to the host, so :9000/:9001 exist on the tailscale
+  # interface (and the docker bridge) only.
   #
   # Before first start:
   #   cp minio.env.example minio.env && chmod 600 minio.env

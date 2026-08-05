@@ -55,10 +55,12 @@ echo "entrypoint: obtaining certificate for $DOMAIN"
     exit 1
 }
 
+MINIO_PID=""
+RENEW_PID=""
 term() {
-    kill -TERM "$MINIO_PID" 2>/dev/null || true
-    wait "$MINIO_PID" 2>/dev/null || true
-    kill -TERM "$RENEW_PID" 2>/dev/null || true
+    [ -n "${MINIO_PID:-}" ] && kill -TERM "$MINIO_PID" 2>/dev/null || true
+    [ -n "${MINIO_PID:-}" ] && wait "$MINIO_PID" 2>/dev/null || true
+    [ -n "${RENEW_PID:-}" ] && kill -TERM "$RENEW_PID" 2>/dev/null || true
     kill -TERM "$TAILSCALED_PID" 2>/dev/null || true
     exit 0
 }
