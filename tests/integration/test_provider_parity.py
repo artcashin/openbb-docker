@@ -25,6 +25,12 @@ GOLDEN = Path(__file__).resolve().parents[2] / "tick-lab/tests/fixtures/golden_1
 def load_golden() -> pd.DataFrame:
     golden = pd.read_csv(GOLDEN, index_col="timestamp")
     golden.index = pd.DatetimeIndex(golden.index).tz_convert("UTC")
+    # Clear the index name exactly as tick-lab's own load_golden does. Both
+    # sides must read this shared artifact identically -- that is the whole
+    # point of pinning them to one file -- and a difference here would only
+    # surface later, as a puzzling failure in whichever side gets extended
+    # first to compare indexes rather than positions.
+    golden.index.name = None
     return golden
 
 
