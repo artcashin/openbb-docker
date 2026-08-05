@@ -2,6 +2,7 @@
 credentials.env
 api-auth.env
 ts.env
+minio.env
 deps.env
 .env
 .env.*
