@@ -2,7 +2,7 @@
 
 import pytest
 
-from openbb_kdb.config import KdbConfig, resolve_config
+from openbb_kdb.config import resolve_config
 
 
 def test_defaults(monkeypatch):
@@ -64,3 +64,35 @@ def test_config_is_frozen():
     cfg = resolve_config()
     with pytest.raises(Exception):
         cfg.host = "elsewhere"  # type: ignore[misc]
+
+
+def test_explicit_embedded_false_credential_is_honored(monkeypatch):
+    """A credential of False must not be mistaken for 'not set'."""
+    monkeypatch.delenv("KDB_EMBEDDED", raising=False)
+    cfg = resolve_config({"kdb_embedded": False})
+    assert cfg.embedded is False
+
+
+def test_explicit_zero_memory_credential_raises(monkeypatch):
+    """A credential of 0 must not be mistaken for 'not set' and silently defaulted."""
+    monkeypatch.delenv("KDB_MEMORY_MB", raising=False)
+    with pytest.raises(ValueError):
+        resolve_config({"kdb_memory_mb": 0})
+
+
+def test_explicit_zero_watermark_credential_raises(monkeypatch):
+    """A credential of 0.0 must not be mistaken for 'not set' and silently defaulted."""
+    monkeypatch.delenv("KDB_CACHE_WATERMARK", raising=False)
+    with pytest.raises(ValueError):
+        resolve_config({"kdb_cache_watermark": 0.0})
+
+
+def test_empty_env_host_falls_back_to_default(monkeypatch):
+    """An empty string is how a shell/compose env file expresses 'unset'."""
+    monkeypatch.setenv("KDB_HOST", "")
+    assert resolve_config().host == "127.0.0.1"
+
+
+def test_ipv6_loopback_host_is_treated_as_embedded(monkeypatch):
+    monkeypatch.setenv("KDB_HOST", "::1")
+    assert resolve_config().embedded is True
