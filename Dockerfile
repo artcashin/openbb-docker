@@ -92,6 +92,14 @@ RUN pip install /opt/openbb-eodhd
 # nothing here can carry it).
 COPY --from=kdbx /root/.kx /opt/kx
 
+# Shared kdb+ session/store plumbing (Ep. 10): openbb-kdb and live-grid both
+# depend on the "kdb-store" distribution now, and it is not published to
+# PyPI, so it must be installed from this checkout before openbb-kdb (whose
+# own pyproject.toml lists it as a dependency) or pip has nothing to resolve
+# "kdb-store" against.
+COPY kdb-store /tmp/kdb-store
+RUN pip install --no-cache-dir /tmp/kdb-store && rm -rf /tmp/kdb-store
+
 # kdb read-through cache provider (Ep. 10).
 COPY openbb-kdb /tmp/openbb-kdb
 RUN pip install --no-cache-dir /tmp/openbb-kdb && rm -rf /tmp/openbb-kdb

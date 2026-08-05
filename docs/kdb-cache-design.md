@@ -1,8 +1,21 @@
 # kdb+ read-through cache for the OpenBB Platform
 
 **Date:** 2026-08-04
-**Status:** Approved
+**Status:** Approved — **charting sections superseded, see below**
 **Ships as:** v10.0.0 — *Adventures in OpenBB, Ep. 10*
+
+> **Superseded.** Everything in this document about the read-through cache
+> itself (`openbb-kdb`, `provider="kdb"`, eviction, coverage, the memory
+> ceiling) still ships and is still accurate. But **the `cache-chart` service
+> this document describes was deleted before release** and never shipped —
+> its chart moved into `live-grid` instead, built from the tick stream that
+> service already receives rather than from the historical cache alone. The
+> "What already exists" plan below (a standalone chart container) was
+> superseded during Ep. 10 by
+> [docs/tick-chart-design.md](tick-chart-design.md), which is the accurate
+> description of the shipped chart, the `/chart` / `/series` / `/demo`
+> endpoints, and the `kdb-store` package the cache and the chart now share.
+> Every `cache-chart/` reference below is history, not current state.
 
 ## Purpose
 
@@ -228,17 +241,26 @@ channel is needed.
 
 ## Components
 
+**`cache-chart/` row below is superseded** — see the notice at the top of
+this document; the chart lives in `live-grid/` instead.
+
 | Path | What it is |
 |---|---|
 | `openbb-kdb/` | Provider extension registering `provider="kdb"` for equity / ETF / crypto / currency / index historical. Added to this repo's Dockerfile (PyKX is not currently in the image). |
-| `cache-chart/` | FastAPI service, `live-grid/`'s layout: the Workspace widget backend and the standalone demo page. |
-| `docker-compose.yml` | q startup in the openbb-api container, `mem_limit`, license mount, Serve route for `:6906`. |
+| ~~`cache-chart/`~~ | ~~FastAPI service, `live-grid/`'s layout: the Workspace widget backend and the standalone demo page.~~ Deleted; superseded by the chart in `live-grid/` — see [docs/tick-chart-design.md](tick-chart-design.md). |
+| `docker-compose.yml` | q startup in the openbb-api container, `mem_limit`, license mount. |
 | `scripts/verify-isolation.sh` | Extended to check port 5000. |
 
 Intervals in scope: daily **and** intraday (`1m`, `5m`, `1h`), matching EODHD's
 coverage.
 
-## The chart
+## The chart (superseded — kept for history, see the notice at the top)
+
+This whole section describes the standalone `cache-chart/` service as
+originally planned. It was deleted before release; the shipped chart lives in
+`live-grid/` and is built from the tick stream, not solely from the
+historical cache. See [docs/tick-chart-design.md](tick-chart-design.md) for
+what actually shipped.
 
 `cache-chart/` calls the OpenBB API on loopback `127.0.0.1:6900` with
 `provider=kdb` and Basic auth, so the demo exercises exactly the path any
@@ -294,15 +316,19 @@ scroll story requires the standalone page.
 ## Networking
 
 `q` binds `127.0.0.1:5000` and is never published by Serve, never funneled.
-`cache-chart` is published by Serve on `:6906`, tailnet-only, never funneled.
+(`cache-chart` was never built, so the `:6906` Serve route describing it
+never shipped either — the chart is served by `live-grid` on its existing
+`:6903` route instead.)
 
 ## Testing
 
 The gap arithmetic is the one piece with real logic and no I/O: coverage
 subtraction, range coalescing, tail exclusion and corporate-action detection
-are unit-tested against a fake q connection. `cache-chart` gets mocked-HTTP
-tests in the style of `live-grid/tests`. **CI needs neither a kdb license nor
-an EODHD key.**
+are unit-tested against a fake q connection. (The charting tests described
+here as `cache-chart`'s never shipped under that name; the equivalent
+coverage lives in `live-grid/tests` — see
+[docs/tick-chart-design.md](tick-chart-design.md).) **CI needs neither a kdb
+license nor an EODHD key.**
 
 ## Risks
 

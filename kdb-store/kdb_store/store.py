@@ -2,7 +2,7 @@
 
 Kept in one module so the q surface is auditable and mockable in one place.
 
-Four measured facts shape this file:
+Five measured facts shape this file:
   * `heap`, not `used`, is what approaches `wmax` and kills q, so eviction
     watches heap.
   * `delete` frees `used` but leaves `heap` untouched; only `.Q.gc[]` returns
@@ -28,6 +28,14 @@ Four measured facts shape this file:
     is therefore namespaced under the `qw` prefix (`_PARAM_PREFIX` below) --
     a string no market-data provider would ever emit as a column name -- so
     the whole class of collision is closed, not patched case by case.
+  * An UNGROUPED aggregate (`min`/`max` with no `by`) always returns exactly
+    one row, even over zero matching input rows, and PyKX's `.pd()` turns that
+    row's q null timestamp into a bogus 1700s-era `Timestamp` rather than
+    `NaT` -- so `pd.isna()` cannot detect "no data" after the fact. Found live
+    by `scripts/tick_check.py` against a real q: `prune_ticks` correctly
+    emptied `trades`, but the next `tick_span` call, on an empty table,
+    returned a fabricated span instead of `None`. See `tick_span` for the fix
+    (check the row count in q before aggregating, not the pandas result after).
 
 Nothing in here may run off the session's owner thread -- see session.py.
 Every query, every K-object construction (`_q_symbol`, `_q_timestamp`) and
@@ -273,12 +281,29 @@ class KdbStore:
         return self._call(prune)
 
     def tick_span(self, symbol: str):
-        """Earliest and latest tick held for a symbol, or None if there are none."""
+        """Earliest and latest tick held for a symbol, or None if there are none.
+
+        An UNGROUPED q aggregate (no `by`) always answers with exactly one row,
+        even over zero matching input rows -- there is no group-by key to be
+        absent, so `min`/`max` of an empty selection is a row of q nulls (`0Nt`),
+        not an empty table. `got.empty` therefore can't detect "no ticks" here
+        the way it does for a keyed/grouped result.
+        Worse: PyKX's `.pd()` does not turn that q null into pandas `NaT` -- it
+        reinterprets the null's raw int64 bit pattern as a nanosecond offset from
+        the q epoch (2000-01-01) and hands back a real-looking `Timestamp` deep in
+        the 1700s. `pd.isna()` never fires because the value isn't NaN/NaT, just
+        wrong -- caught live by `tick_check.py` against a real q, invisible to
+        every mocked test. So the emptiness check has to happen in q, before the
+        aggregate ever runs: 0 matching rows returns an explicitly empty table
+        instead of an aggregate over nothing.
+        """
         import pandas as pd
 
         def span(conn):
             got = conn(
-                "{[qwsym] select lo: min time, hi: max time from trades where sym = qwsym}",
+                "{[qwsym] $[0 = count select from trades where sym = qwsym;"
+                " ([] lo:`timestamp$(); hi:`timestamp$());"
+                " select lo: min time, hi: max time from trades where sym = qwsym]}",
                 _q_symbol(symbol),
             ).pd()
             if got is None or got.empty:

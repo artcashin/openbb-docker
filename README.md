@@ -14,7 +14,7 @@ from later chapters is.
 | v6.0.0 | Ep. 6 — The Analyst | OpenBB MCP server (tool-discovery mode), agent deploy configs |
 | v8.0.0 | Ep. 8 — The Tape | EODHD provider extension + live-grid streaming service |
 | v9.0.0 | Ep. 9 — All the News That Fits, We Print | rss-ticker news wire joins the stack |
-| v10.0.0 | Ep. 10 — The Cache | kdb+ read-through cache (`provider="kdb"`) + cache-chart scroll demo |
+| v10.0.0 | Ep. 10 — The Cache | kdb+ read-through cache (`provider="kdb"`) + tick recording and a unified chart in `live-grid` |
 
 ## What you get (this release: v10.0.0)
 
@@ -30,33 +30,42 @@ Two containers, one tailnet node, zero exposed ports:
 certificate at `https://openbb.<your-tailnet>.ts.net`, reachable from every
 device on your tailnet and invisible to everything else.
 
-**New in v10.0.0 (Ep. 10):** the cache. The **openbb-kdb provider
-extension** (`provider="kdb"`) puts an in-memory kdb+ database in front of any
-other provider (`KDB_UPSTREAM`, default `eodhd` — any installed provider
-works): a request serves whatever bars it already holds and fetches only the
-date ranges it's missing. Verified live: a one-year chart, then the same
-request again, then widened to three years, came back `miss` → `hit` →
-`partial` with exactly one gap fetched. The cache is **memory-only**, on
-purpose — a restart means a cold cache, not a lost dataset. The published
-image carries the q runtime but no licence — deleted in the **builder stage**,
-so it is absent from every layer and not merely whited-out of the flattened
-filesystem, which is what `docker save` would still hand a puller. Bring your
-own `kc.lic` (drop it in `kdb-license/`, git-ignored, and point `QLIC` at the
-mount) — without one, or without a reachable q, the provider passes straight
-through to the upstream and reports `cache: "bypass"`, so the stack still
-works, just uncached (that pass-through latches for the process, so add a
-licence and restart the container). q runs as a child
-of the API container bound to **`127.0.0.1:5000`**, never `0.0.0.0` — every
-service here shares the tailscale network namespace, so a loopback bind
-reaches its siblings and no tailnet peer, while `0.0.0.0` would publish an
-unauthenticated q (which executes arbitrary q code) to the whole tailnet;
-`scripts/verify-isolation.sh` now checks port 5000 for exactly that. The
-**cache-chart** service makes it visible: a Workspace chart widget plus a
-standalone page whose scroll gesture shows only the missing range being
-fetched. Serve publishes it on :6906, tailnet-only, never funneled. See
-[openbb-kdb/README.md](openbb-kdb/README.md),
-[cache-chart/README.md](cache-chart/README.md) and
-[docs/kdb-cache-design.md](docs/kdb-cache-design.md).
+**New in v10.0.0 (Ep. 10):** the cache, tick recording, and one unified
+chart. The **openbb-kdb provider extension** (`provider="kdb"`) puts an
+in-memory kdb+ database in front of any other provider (`KDB_UPSTREAM`,
+default `eodhd` — any installed provider works): a request serves whatever
+bars it already holds and fetches only the date ranges it's missing.
+Verified live: a one-year chart, then the same request again, then widened
+to three years, came back `miss` → `hit` → `partial` with exactly one gap
+fetched. The cache is **memory-only**, on purpose — a restart means a cold
+cache, not a lost dataset. The published image carries the q runtime but no
+licence — deleted in the **builder stage**, so it is absent from every layer
+and not merely whited-out of the flattened filesystem, which is what
+`docker save` would still hand a puller. Bring your own `kc.lic` (drop it in
+`kdb-license/`, git-ignored, and point `QLIC` at the mount) — without one, or
+without a reachable q, the provider passes straight through to the upstream
+and reports `cache: "bypass"`, so the stack still works, just uncached (that
+pass-through latches for the process, so add a licence and restart the
+container). q runs as a child of the API container bound to
+**`127.0.0.1:5000`**, never `0.0.0.0` — every service here shares the
+tailscale network namespace, so a loopback bind reaches its siblings and no
+tailnet peer, while `0.0.0.0` would publish an unauthenticated q (which
+executes arbitrary q code) to the whole tailnet; `scripts/verify-isolation.sh`
+now checks port 5000 for exactly that.
+
+The shared q plumbing (`config.py`, `session.py`, `store.py`, `ranges.py`)
+lives in its own **`kdb-store`** distribution so it has exactly one
+implementation, used by both `openbb-kdb` and **`live-grid`**, which now
+*records* the tick stream it already receives, aggregates it in q (`xbar`),
+and serves a chart that joins those live bars to cached history at the point
+where the tick window begins — replacing the earlier standalone
+`cache-chart` service, now removed. Serve continues to publish `live-grid`
+on :6903, tailnet-only. See [openbb-kdb/README.md](openbb-kdb/README.md),
+[live-grid/README.md](live-grid/README.md),
+[kdb-store/README.md](kdb-store/README.md) and
+[docs/tick-chart-design.md](docs/tick-chart-design.md) (which supersedes
+[docs/kdb-cache-design.md](docs/kdb-cache-design.md) for anything
+chart-related).
 
 **New in v9.0.0 (Ep. 9):** the wire. The
 **[rss-ticker](https://github.com/artcashin/rss-ticker)** news service joins
