@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
+import pytz.exceptions
 
 from tick_lab.firstrate import FirstRateFormatError, detect_kind, parse
 
@@ -93,4 +94,79 @@ def test_ragged_row_is_reported_with_its_line_number():
         "2023-05-12 09:30:01.000000,310.60,100\n"
     )
     with pytest.raises(FirstRateFormatError, match="line 2"):
+        parse(text)
+
+
+def test_ragged_row_after_an_interior_blank_line_reports_the_physical_line():
+    """The blank line at physical line 2 must not shift the reported line
+    number of the malformed row that follows it -- it is physical line 3, not
+    filtered-list position 2."""
+    text = (
+        "2023-05-12 09:30:00.000000,310.55,500,2,O\n"
+        "\n"
+        "2023-05-12 09:30:01.000000,310.60,100\n"
+    )
+    with pytest.raises(FirstRateFormatError, match="line 3"):
+        parse(text)
+
+
+def test_too_many_fields_trade_row_raises_instead_of_being_truncated():
+    """A stray embedded comma must not be silently swallowed by usecols."""
+    text = (
+        "2023-05-12 09:30:00.000000,310.55,500,2,O\n"
+        "2023-05-12 09:30:01.000000,310.60,100,1,,EXTRA\n"
+    )
+    with pytest.raises(FirstRateFormatError, match="line 2"):
+        parse(text)
+
+
+def test_nine_field_quote_row_raises_instead_of_being_truncated():
+    """A quote row past the documented eight fields is malformed, not just a
+    row with more data to discard."""
+    text = (
+        "2023-05-12 09:30:00.000000,310.50,100,1,310.60,200,2,310.60\n"
+        "2023-05-12 09:30:30.250000,310.60,300,1,310.70,100,2,310.70,EXTRA\n"
+    )
+    with pytest.raises(FirstRateFormatError, match="line 2"):
+        parse(text)
+
+
+def test_parses_the_documented_eight_field_quote_end_to_end():
+    """The vendor's format doc names the eighth field 'offer price' a second
+    time. It must be dropped by usecols without shifting any of the seven
+    named columns -- this exercises that truncation through parse(), not just
+    detect_kind()."""
+    kind, df = parse(_read("MSFT_quotes_8field_sample.txt"))
+    assert kind == "quote"
+    assert list(df.columns) == [
+        "bid_price",
+        "bid_size",
+        "bid_exchange",
+        "ask_price",
+        "ask_size",
+        "ask_exchange",
+    ]
+    assert len(df) == 2
+    row = df.loc[pd.Timestamp("2023-05-12 13:30:00", tz="UTC")]
+    assert row["bid_price"] == 310.50
+    assert row["bid_size"] == 100
+    assert row["bid_exchange"] == 1
+    assert row["ask_price"] == 310.60
+    assert row["ask_size"] == 200
+    assert row["ask_exchange"] == 2
+
+
+def test_ambiguous_local_time_raises_instead_of_silently_coercing():
+    """2023-11-05 01:30:00 US Eastern occurs twice (DST fall-back). A silent
+    coercion here would surface much later as a mass discrepancy against the
+    reference source, so this must raise rather than guess an offset."""
+    text = "2023-11-05 01:30:00.000000,310.55,500,2,O\n"
+    with pytest.raises(pytz.exceptions.AmbiguousTimeError):
+        parse(text)
+
+
+def test_nonexistent_local_time_raises_instead_of_silently_coercing():
+    """2023-03-12 02:30:00 US Eastern does not exist (DST spring-forward)."""
+    text = "2023-03-12 02:30:00.000000,310.55,500,2,O\n"
+    with pytest.raises(pytz.exceptions.NonExistentTimeError):
         parse(text)
