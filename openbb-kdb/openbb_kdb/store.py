@@ -2,11 +2,16 @@
 
 Kept in one module so the q surface is auditable and mockable in one place.
 
-Three measured facts shape this file:
+Four measured facts shape this file:
   * `heap`, not `used`, is what approaches `wmax` and kills q, so eviction
     watches heap.
   * `delete` frees `used` but leaves `heap` untouched; only `.Q.gc[]` returns
     it. Every eviction therefore ends in a collect.
+  * `upsert` matches column types EXACTLY -- an incoming column whose q type
+    differs from the stored one raises `'type`, it is not coerced -- while
+    pandas re-infers each column's dtype from the values of whichever batch
+    it is handed. Every write therefore conforms the batch to the stored
+    table's schema first; see `_conform_dtypes`.
   * q binds `x`/`y`/`z` as implicit parameters only INSIDE a lambda. A bare
     `conn("... where sym = x", sym)` sends an expression that references an
     unbound `x` and q answers `'x` -- which the cache catches and degrades to
@@ -121,10 +126,17 @@ class KdbStore:
         name = self.table_name(symbol, interval)
 
         def write(conn):
+            # q's upsert demands the incoming column types match the stored
+            # ones exactly, and pandas re-infers them from each batch's
+            # values -- so the batch is bent to the stored table's schema
+            # before it goes over the wire. See _conform_dtypes.
+            incoming = df
+            if conn(f"`{name} in key `.").py():
+                incoming = _conform_dtypes(df, conn(f"0#{name}").pd())
             # A leading underscore is q's drop/cut operator, not a valid
             # identifier start -- `incoming_bars` can't collide with a
             # `bars_<SYMBOL>_<INTERVAL>` cache table.
-            conn["incoming_bars"] = df
+            conn["incoming_bars"] = incoming
             conn(
                 f"{name}: `t xasc 0!(`t xkey $[`{name} in key `.; {name}; 0#incoming_bars]) "
                 "upsert incoming_bars"
@@ -222,6 +234,64 @@ class KdbStore:
             "(heap=%s budget=%s)", heap, budget_bytes,
         )
         return evicted
+
+
+def _conform_dtypes(df, prototype):
+    """`df` with the column types the cached table already has.
+
+    q's `upsert` requires the incoming column's type to MATCH the stored
+    column's type; a mismatch raises `'type` rather than coercing. pandas, on
+    the other side of the boundary, infers each column's dtype from the values
+    in ONE batch -- so the same provider column arrives as float64 in a batch
+    that carries values and as object in a batch where every value is None
+    (an all-None column has no dtype to infer), and an int64 volume column
+    arrives as float64 in any batch holding a NaN. Whichever batch is written
+    first therefore fixes the q type of every column, and any later batch that
+    infers differently is rejected outright.
+
+    A purely historical window hides this completely: its second request is a
+    full cache hit that writes nothing. A window reaching the present cannot --
+    the forming bar is never cached, so every repeat request writes a second,
+    much smaller batch into the same table, and a small batch is exactly the
+    one whose columns come back empty and untyped.
+
+    Casting is one-directional on purpose. The STORED column keeps its type and
+    the incoming batch is bent to fit; recasting the stored column to follow the
+    newest batch would let one integer-valued batch truncate a float price
+    column. A column that cannot be cast is left alone -- the upsert then fails
+    exactly as it does today and the request degrades to a bypass, which is no
+    worse than before and never silently wrong.
+    """
+    import numpy as np
+
+    columns = getattr(df, "columns", None)
+    prototype_columns = getattr(prototype, "columns", None)
+    if columns is None or prototype_columns is None:
+        # Nothing frame-shaped to conform, or nothing to conform against:
+        # hand the batch straight through, exactly as before this existed.
+        return df
+
+    out = df
+    for column in columns:
+        if column not in prototype.columns:
+            continue
+        want = prototype[column].dtype
+        values = df[column]
+        if values.dtype == want:
+            continue
+        try:
+            if want.kind == "i" and values.isna().any():
+                # q casts a float null to the integer null of that width;
+                # pandas raises instead, so the mapping is made explicit.
+                values = values.fillna(np.iinfo(want.type).min)
+            converted = values.astype(want)
+        except (TypeError, ValueError, OverflowError) as exc:
+            logger.debug("cannot conform column %r to %s: %s", column, want, exc)
+            continue
+        if out is df:
+            out = df.copy()
+        out[column] = converted
+    return out
 
 
 def _q_symbol(value: str):

@@ -59,6 +59,30 @@ store.write_bars("LIVECHK", "1d", frame)
 back2 = store.read_bars("LIVECHK", "1d", now - timedelta(days=10), now)
 check("upsert does not duplicate", len(back2) == 5, f"got {len(back2)} rows")
 
+# Per-batch dtype drift, against a REAL q upsert. A provider column is float64
+# in a batch that carries values and object in a short batch where every value
+# is None; q's upsert refuses to coerce and answers 'type. Only a window
+# reaching the present writes a second, small batch into an existing table, so
+# this is the whole reason a live chart never cached.
+drift_cold = pd.DataFrame({
+    "t": [now - timedelta(days=i) for i in (2, 1)],
+    "close": [1.5, 1.6], "volume": [100, 200],
+    "dividend": [0.0, 0.0], "vwap": [None, None],
+})
+drift_tail = pd.DataFrame({
+    "t": [now - timedelta(days=1), now],
+    "close": [1.6, 1.7], "volume": [200.0, float("nan")],
+    "dividend": [None, None], "vwap": [None, None],
+})
+store.write_bars("DRIFTCHK", "1d", drift_cold)
+try:
+    store.write_bars("DRIFTCHK", "1d", drift_tail)
+    drift_rows = len(store.read_bars("DRIFTCHK", "1d", now - timedelta(days=5), now))
+    check("a drifting batch dtype still upserts", drift_rows == 3, f"{drift_rows} rows")
+except Exception as exc:  # noqa: BLE001
+    check("a drifting batch dtype still upserts", False, f"{type(exc).__name__}: {exc}")
+store.drop("DRIFTCHK", "1d")
+
 # Coverage round-trip (real timestamp conversion).
 store.record_coverage("LIVECHK", "1d", (now - timedelta(days=5), now))
 cov = store.read_coverage("LIVECHK", "1d")
