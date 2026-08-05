@@ -67,52 +67,77 @@ that refills on demand. This is a cache; it is allowed to be empty.
 
 ### Configuration
 
+**Amended in Ep. 10 (bring-your-own-q):** the table below described an
+earlier design where the image carried a licenced kdb-x install and
+`KDB_EMBEDDED` derived from whether `KDB_HOST` looked like loopback. Neither
+is true of what shipped — see "Bring your own q, and licensing" below for
+why. Current variables:
+
 | Var | Default | Meaning |
 |---|---|---|
-| `KDB_EMBEDDED` | *derived* | Spawn q inside the container. With no explicit value it is derived from `KDB_HOST`: true when the host is loopback (`127.0.0.1`, `localhost`, `::1`), false otherwise — spawning only makes sense for a q we own. Set it explicitly to override. |
-| `KDB_HOST` | `127.0.0.1` | Point at an **existing kdb+ server** instead of the spawned one. |
+| `KDB_EMBEDDED` | *derived* | Spawn q inside the container. With no explicit value it is derived from whether an executable `bin/q` is actually found at `KDB_LOCAL_QHOME` — spawning only makes sense for a q the operator supplied. Set it explicitly to override. |
+| `KDB_LOCAL_QHOME` | `/kdb` | Where the operator mounted their own q (this repo ships none). `QHOME` is accepted as a fallback for the older variable name, read **once per process, before `import pykx`** — importing PyKX rewrites `QHOME` in place to point at its own bundled q, so a second read would silently answer with PyKX's lib instead of the operator's install. |
+| `KDB_HOST` | *(unset)* | Point at an **existing kdb+ server** — only consulted once spawning and a loopback probe both fail; see the chain below. |
 | `KDB_PORT` | `5000` | As above. |
 | `KDB_MEMORY_MB` | `8192` | Cache budget. q is launched with `-w` = this × 1.25 as containment. |
 | `KDB_CACHE_WATERMARK` | `0.75` | Fraction of budget (measured on `.Q.w[]` `heap`) that triggers LRU eviction. |
 | `KDB_UPSTREAM` | `eodhd` | Provider used for cache misses. Any registered provider. |
-| `QHOME` | `/opt/kx` | The kdb-x install q is launched from. Read **once per process, before `import pykx`** — importing PyKX rewrites `QHOME` in place to point at its own bundled q, so a second read would silently answer with PyKX's lib instead of the operator's install. |
-| `QLIC` | *`QHOME`* | Directory q looks in for `kc.lic`. Load-bearing: the bring-your-own-licence mount is inert unless this points at the directory the licence is actually mounted into. It is separate from `QHOME` precisely so a licence need not be placed inside the (deliberately licence-free) `/opt/kx`. |
+| `QLIC` | *(none — set it)* | Directory q looks in for `kc.lic`. Falls back to `QHOME` (a legacy variable compose no longer sets, so in practice this default doesn't fire) then `/opt/kx`. Load-bearing: the bring-your-own-licence mount is inert unless this points at the directory the licence is actually mounted into. |
 
-`KDB_EMBEDDED`, `KDB_HOST`, `KDB_PORT`, `KDB_MEMORY_MB`, `KDB_CACHE_WATERMARK`
-and `KDB_UPSTREAM` also accept an OpenBB credential (`kdb_host`, `kdb_port`, …)
-which takes precedence over the environment. `QHOME` and `QLIC` do not: they
-are properties of the container, not of a caller.
+`KDB_EMBEDDED`, `KDB_LOCAL_QHOME`, `KDB_HOST`, `KDB_PORT`, `KDB_MEMORY_MB`,
+`KDB_CACHE_WATERMARK` and `KDB_UPSTREAM` also accept an OpenBB credential
+(`kdb_host`, `kdb_port`, …) which takes precedence over the environment.
+`QLIC` does not: it is a property of the container, not of a caller.
 
 Spawned-local and bring-your-own-server are the **same code path** — an IPC
 connection to a host and port. Only the "do we start q ourselves" step differs.
 
-### How q gets into the image, and licensing
+### Bring your own q, and licensing
 
-This repo's Dockerfile gains a stage that copies the kdb-x runtime (`QHOME`,
-the `q` binary and its libs) into the OpenBB image, **excluding `kc.lic`**, and
-adds PyKX to the Python environment. The published image therefore carries the
-runtime but no license.
+**This is no longer how it works — see below for why the approach this
+section originally described was abandoned.** KX's licence does not permit
+redistributing their `q` binary, full stop — not flattened out of a layer,
+not whited out, not even temporarily present in a builder stage. So the
+Dockerfile carries no kdb-x stage at all, the published image contains no
+`q` binary in any layer, and `import pykx` is the only kdb+-related thing it
+ships. The operator supplies q themselves, and `kdb_store.session.KdbSession`
+resolves it through a chain, tried in order:
 
-**The licence is deleted in the builder stage, before the copy — not after
-it.** Docker layers are additive: `COPY` the runtime and then `RUN rm` the
-licence in the final stage and the flattened filesystem looks clean, but the
-`COPY` layer still holds the intact blob and the `rm` only adds a whiteout on
-top. Anyone who pulls the image can extract the licence with `docker save`.
-Checking `ls /opt/kx/kc.lic` inside a running container does **not** test this;
-the test is that no layer tar in `docker save` contains a `kc.lic` entry.
+1. **Spawn.** If `KDB_LOCAL_QHOME` (default `/kdb`, bind-mounted from
+   `./kdb` in `docker-compose.yml`) holds an executable `bin/q`, run it as a
+   child of `openbb-api`, bound to `127.0.0.1:KDB_PORT`.
+2. **Loopback.** Probe `127.0.0.1:KDB_PORT` directly — a q another service in
+   the shared tailscale network namespace already spawned. This is how
+   `live-grid` (which never spawns; `KDB_EMBEDDED=false`) reaches the same q
+   `openbb-api` started.
+3. **External host.** If `KDB_HOST` is set, connect to `KDB_HOST:KDB_PORT` —
+   a kdb container the operator runs themselves, same machine or elsewhere.
 
-The reader supplies their own kdb-x license, mounted from a git-ignored path
-(the `ts.env` / `api-auth.env` pattern) and pointed at by `QLIC` — which must
-name the directory the licence is actually mounted into, or the mount is
-silently inert. No license blob enters this repository or any image published
-from it — the existing `kdb-x` images have one baked in and must not be
-republished as-is. `scripts/scrub-check.sh` gates the repository side by
+The reader supplies their own kdb-x license too, mounted from a git-ignored
+path (the `ts.env` / `api-auth.env` pattern) and pointed at by `QLIC` — which
+must name the directory the licence is actually mounted into, or the mount
+is silently inert. No license blob enters this repository or any image
+published from it. `scripts/scrub-check.sh` gates the repository side by
 filename, because its content patterns skip binary files.
 
-With no license, no q, or an unreachable server, `provider="kdb"` **passes
-through to the upstream provider**. The stack runs uncached rather than
-failing. This is also what makes the episode's before/after comparison
-possible.
+With no q reachable through any link in the chain, no license, or an
+unreachable external server, `provider="kdb"` **passes through to the
+upstream provider**. The stack runs uncached rather than failing. This is
+also what makes the episode's before/after comparison possible.
+
+**Why the old approach — copying the runtime into a builder stage and
+deleting the licence before the final `COPY` — was abandoned.** It relied on
+Docker layers being additive: `COPY` the runtime and then `RUN rm` the
+licence in the final stage, and the flattened filesystem looks clean, but the
+`COPY` layer still holds the intact blob and the `rm` only adds a whiteout on
+top — anyone who pulls the image can extract the licence with `docker save`.
+(`ls /opt/kx/kc.lic` inside a running container never tested this; the real
+test is that no layer tar in `docker save` contains a `kc.lic` entry.) That
+was a licence-handling bug, not the actual constraint — the deeper problem is
+that KX's licence does not permit redistributing the **`q` binary itself**,
+licence file or not. Deleting only `kc.lic` from a shipped image still left
+`q` in it. The bring-your-own-q chain above removes the binary from the
+image entirely, which is the only fix that actually satisfies the licence.
 
 ## The read-through path
 

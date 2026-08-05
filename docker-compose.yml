@@ -70,23 +70,33 @@ services:
       # purpose: without it the API would come up unauthenticated.
       - path: ./api-auth.env
         required: true
-    # Ep. 10: the kdb+ read-through cache. q runs as a CHILD of this container
-    # on 127.0.0.1:5000 -- never 0.0.0.0. Every service here shares the
-    # tailscale network namespace, so loopback reaches all of them and no
-    # tailnet peer, while a 0.0.0.0 bind would publish an unauthenticated q
-    # (which executes arbitrary q) to the whole tailnet.
+    # Ep. 10: the kdb+ read-through cache. This repo ships NO KX software --
+    # the licence does not permit redistributing q. Bring your own:
     #
-    # Bring your own license: register with KX, drop kc.lic into
-    # ./kdb-license/ (git-ignored). Without it the cache passes through to
-    # the upstream provider and the stack runs uncached.
+    #   1. Drop a q binary into ./kdb (mounted below at /kdb:ro,
+    #      KDB_LOCAL_QHOME=/kdb) and this container spawns it as a CHILD on
+    #      127.0.0.1:5000 -- never 0.0.0.0. Every service here shares the
+    #      tailscale network namespace, so loopback reaches all of them and
+    #      no tailnet peer, while a 0.0.0.0 bind would publish an
+    #      unauthenticated q (which executes arbitrary q) to the whole
+    #      tailnet.
+    #   2. Or run your own kdb container and set KDB_HOST in credentials.env
+    #      -- see credentials.env.example for the platform-specific value
+    #      and the bind/publish rules for that setup.
+    #
+    # Bring your own license too: register with KX, drop kc.lic into
+    # ./kdb-license/ (git-ignored). Without a reachable q AND a licence, the
+    # cache passes through to the upstream provider and the stack runs
+    # uncached.
     environment:
       - KDB_EMBEDDED=true
       - KDB_MEMORY_MB=8192
       - KDB_UPSTREAM=eodhd
-      - QHOME=/opt/kx
+      - KDB_LOCAL_QHOME=/kdb
       - QLIC=/opt/kx-license
     volumes:
       - openbb-data:/root/.openbb_platform
+      - ./kdb:/kdb:ro
       - ./kdb-license:/opt/kx-license:ro
     # Cache budget (KDB_MEMORY_MB) is 8GB, but q's own -w ceiling is budget *
     # 1.25 = 10GB headroom -- see openbb_kdb/config.py's _WORKSPACE_HEADROOM.
@@ -185,7 +195,6 @@ services:
       - LIVE_GRID_CHART=true
       - LIVE_TICK_WINDOW_SECONDS=86400
       - KDB_EMBEDDED=false
-      - QHOME=/opt/kx
       - QLIC=/opt/kx-license
     env_file:
       # EODHD_API_KEY comes from here (the public demo websocket key covers

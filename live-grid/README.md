@@ -30,10 +30,18 @@ signal-handler and grow-forever-buffer quirks are handled in `app/feeds.py`.
 ## Tick recording and the chart (Ep. 10)
 
 Every trade this service already receives over the websocket is now also
-recorded into the **same kdb+ instance `openbb-api` spawns** (reached at
-`127.0.0.1:5000` through the shared tailscale network namespace — no new
-port, and this container never spawns its own q; see `docker-compose.yml`'s
-`KDB_EMBEDDED=false`). Ticks accumulate in a bounded in-process buffer
+recorded into whichever q the same **`kdb-store`** resolution chain finds —
+in the stock compose setup, the **same kdb+ instance `openbb-api` spawns**,
+reached at `127.0.0.1:5000` through the shared tailscale network namespace
+(no new port, and this container never spawns its own q; see
+`docker-compose.yml`'s `KDB_EMBEDDED=false`). See
+[openbb-kdb/README.md](../openbb-kdb/README.md#configuration) for the full
+chain (bring-your-own q dropped in `./kdb`, then loopback, then `KDB_HOST`) —
+this service's `KDB_EMBEDDED=false` only opts it out of the *spawning* step,
+so it always joins a q something else provides. `GET /health` reports which
+link resolved, under `ticks.endpoint` — `"spawned"`, `"loopback"`, or
+`"<host>:<port>"` — so you can tell which one is actually in use without
+guessing. Ticks accumulate in a bounded in-process buffer
 (`app/recorder.py`) and are flushed to q as one batch on the existing
 ~250 ms cadence — per-tick IPC would not keep up. On overflow the buffer
 drops the oldest tick, counts the drop, and reports it on `/health`.

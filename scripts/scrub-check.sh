@@ -75,6 +75,25 @@ if [[ -n "$b64_hits" ]]; then
   fail=1
 fi
 
+# .env.example value gate. A *.env.example file is a TEMPLATE; a real value
+# in one is either a leaked credential already, or about to become one the
+# moment someone copies it into the real file without editing it first. The
+# content patterns above look for particular SECRET SHAPES (tailnet names,
+# CGNAT IPs, AWS-style keys, long base64 runs) -- a generic 16-to-40-char
+# alphanumeric vendor key matches none of them and sails straight through.
+# This gate does not look at shape at all: it fails on ANY non-empty value
+# in a *.env.example file, full stop. Known-safe non-secret defaults (e.g.
+# EODHD's published demo key) go in the allowlist below, same mechanism as
+# everywhere else in this script -- not a separate one.
+env_example_hits=$( { grep -rnH --include='*.env.example' "${EXCLUDES[@]}" \
+                       -E '^[A-Za-z_][A-Za-z0-9_]*=.+$' . || true; } \
+                     | filter_allowed)
+if [[ -n "$env_example_hits" ]]; then
+  echo "$env_example_hits"
+  echo "SCRUB FAIL: *.env.example has a non-empty value -- templates ship empty" >&2
+  fail=1
+fi
+
 for p in "${PATTERNS[@]}"; do
   hits=$( { grep -rInE "${EXCLUDES[@]}" -e "$p" . || true; } | filter_allowed)
   if [[ -n "$hits" ]]; then

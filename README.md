@@ -38,22 +38,41 @@ bars it already holds and fetches only the date ranges it's missing.
 Verified live: a one-year chart, then the same request again, then widened
 to three years, came back `miss` → `hit` → `partial` with exactly one gap
 fetched. The cache is **memory-only**, on purpose — a restart means a cold
-cache, not a lost dataset. The published image carries the q runtime but no
-licence — deleted in the **builder stage**, so it is absent from every layer
-and not merely whited-out of the flattened filesystem, which is what
-`docker save` would still hand a puller. Bring your own `kc.lic` (drop it in
-`kdb-license/`, git-ignored, and point `QLIC` at the mount) — without one, or
-without a reachable q, the provider passes straight through to the upstream
-and reports `cache: "bypass"`, so the stack still works, just uncached (a
-failed connect suppresses retries for 60 s so a licence-less reader doesn't
-pay a doomed spawn per request — then it tries again, so mounting a licence
-into a running container re-arms the cache within a minute). q runs as a
-child of the API container bound to
-**`127.0.0.1:5000`**, never `0.0.0.0` — every service here shares the
-tailscale network namespace, so a loopback bind reaches its siblings and no
-tailnet peer, while `0.0.0.0` would publish an unauthenticated q (which
-executes arbitrary q code) to the whole tailnet; `scripts/verify-isolation.sh`
-now checks port 5000 for exactly that.
+cache, not a lost dataset.
+
+**This repo ships no KX software.** KX's licence does not permit
+redistributing their `q` binary, so it is not in the Dockerfile, not in the
+published image, and not on PyPI — you supply it. Two ways, tried in that
+order:
+
+- **Option A — drop your own q into `./kdb`** (see
+  [kdb/README.md](kdb/README.md)). It's mounted read-only at `/kdb`;
+  `openbb-api` spawns it bound to `127.0.0.1:5000` and every other service in
+  the stack reaches it over the shared tailscale network namespace — no new
+  port, nothing else to configure.
+- **Option B — run your own kdb container** and point `KDB_HOST` at it in
+  `credentials.env` (see `credentials.env.example` for the platform-specific
+  value — `host.docker.internal` on Docker Desktop, `172.17.0.1` on a Linux
+  host — and how to publish it to host loopback only).
+
+Bring your own `kc.lic` too (drop it in `kdb-license/`, git-ignored, and
+point `QLIC` at the mount) — without a reachable q, or without a licence, the
+provider passes straight through to the upstream and reports
+`cache: "bypass"`, so the stack still works, just uncached (a failed connect
+suppresses retries for 60 s so a q-less reader doesn't pay a doomed spawn or
+connect attempt per request — then it tries again, so mounting a licence or
+starting a container after the fact re-arms the cache within a minute).
+
+**q must bind `127.0.0.1`, never `0.0.0.0`** — every service in this stack
+shares the tailscale network namespace, so a loopback bind reaches every
+sibling and no tailnet peer, while `0.0.0.0` would publish an
+unauthenticated q (which executes arbitrary q code) to the whole tailnet.
+For option A that bind is this repo's own code and already correct. For
+**option B the reader's own image controls its bind** — get it wrong and
+either the connection fails (bind `127.0.0.1` *inside* a separate container
+and `-p` cannot reach it) or q ends up on the LAN (bind `0.0.0.0` and publish
+it beyond host loopback). `scripts/verify-isolation.sh`'s port-5000 check is
+what catches that mistake — run it after standing up your own kdb container.
 
 The shared q plumbing (`config.py`, `session.py`, `store.py`, `ranges.py`)
 lives in its own **`kdb-store`** distribution so it has exactly one
@@ -68,26 +87,6 @@ on :6903, tailnet-only. See [openbb-kdb/README.md](openbb-kdb/README.md),
 [docs/tick-chart-design.md](docs/tick-chart-design.md) (which supersedes
 [docs/kdb-cache-design.md](docs/kdb-cache-design.md) for anything
 chart-related).
-
-**Building the image needs `kdb-x`.** The Dockerfile's first stage is
-`ghcr.io/artcashin/kdb-x:1.0`, and the only thing it contributes is the q
-server binary (`/opt/kx`) — kdb+ is not on PyPI and KX ships no public
-`docker pull` of the runtime, so it has to come from somewhere. **That
-package is currently private**, so `docker build .` will fail on an
-anonymous pull with a 403; CI skips its build job unless a registry token
-secret is configured. Two ways round it if you are building this yourself:
-
-- Point the stage at your own image — install
-  [kdb-x](https://kx.com/kdb-x/) (or kdb+ Personal Edition) into any base
-  image so that `q` and its `l64`/`m64` directory land under one root, and
-  change that one `FROM` line to it; or
-- drop the `FROM ... AS kdbx` stage and the `COPY --from=kdbx` line
-  entirely, and run q as a separate container, pointing `KDB_HOST` at it with
-  `KDB_EMBEDDED=false`. The cache does not care whether it spawned q.
-
-Either way the licence stays yours: no `*.lic` is ever copied into this
-image, the builder stage deletes every one it finds, and the build fails if
-any survives into the final stage.
 
 **New in v9.0.0 (Ep. 9):** the tape. The **openbb-eodhd provider
 extension** (`provider="eodhd"`: equity/ETF/crypto/forex historical, EOD +
