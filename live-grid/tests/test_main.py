@@ -15,7 +15,31 @@ class FakeRest:
         return self.snaps.get(ticker, {"close": "100", "previousClose": "90", "volume": "5"})
 
 
-def make_client(**kw):
+class _FakeSnapshotStore:
+    """Stands in for KdbStore: no cached snapshot, ever. Keeps quotes.seed()'s
+    kdb-first lookup off the real spawn/loopback/host chain -- otherwise a
+    request through /live_grid or the websocket's baseline seed pays a
+    genuine `connect()` to 127.0.0.1:5000."""
+
+    def read_snapshot(self, symbol, max_age):
+        return None
+
+    def write_snapshot(self, symbol, payload):
+        pass
+
+
+def make_client(monkeypatch=None, **kw):
+    """`monkeypatch` is optional: pass it (a pytest fixture) for any test that
+    exercises REST seeding (`/live_grid`, the websocket's baseline seed) so
+    quotes.seed() never reaches a real kdb+ session. Tests that only touch
+    `/widgets.json` or `/health` don't need it -- see
+    test_health_includes_ticks_key_when_chart_is_enabled_by_default, which
+    deliberately keeps the real (never-connected) KdbSession to prove
+    `.endpoint` reports None rather than raising."""
+    if monkeypatch is not None:
+        monkeypatch.setattr("kdb_store.config.resolve_config", lambda: object())
+        monkeypatch.setattr("kdb_store.session.KdbSession", lambda config: object())
+        monkeypatch.setattr("kdb_store.store.KdbStore", lambda session: _FakeSnapshotStore())
     app = create_app(api_key=kw.pop("api_key", "test-key"),
                      seed_client=kw.pop("seed_client", FakeRest()),
                      client_factory=kw.pop("client_factory", lambda *a, **k: _NullWs()))
@@ -46,9 +70,9 @@ def test_widgets_json_declares_the_live_grid_contract():
     assert vol["enableCellChangeWs"] is False
 
 
-def test_live_grid_seeds_rows_in_request_order():
+def test_live_grid_seeds_rows_in_request_order(monkeypatch):
     rest = FakeRest({"AAPL.US": {"close": "150", "previousClose": "100", "volume": "7"}})
-    rows = make_client(seed_client=rest).get("/live_grid?symbol=AAPL,BTC-USD").json()
+    rows = make_client(monkeypatch, seed_client=rest).get("/live_grid?symbol=AAPL,BTC-USD").json()
     assert [r["symbol"] for r in rows] == ["AAPL", "BTC-USD"]
     assert rows[0]["price"] == 150.0
     assert rows[0]["change"] == 50.0
@@ -87,8 +111,8 @@ def test_health_includes_ticks_key_when_chart_is_enabled_by_default(monkeypatch)
     assert body["ticks"]["endpoint"] is None
 
 
-def test_websocket_registers_params_and_streams_dirty_rows():
-    client = make_client()
+def test_websocket_registers_params_and_streams_dirty_rows(monkeypatch):
+    client = make_client(monkeypatch)
     with client.websocket_connect("/live_grid_ws") as ws:
         ws.send_json({"params": {"symbol": "AAPL"}})
         # Reach into the app: mark a tick so the producer has something to flush.

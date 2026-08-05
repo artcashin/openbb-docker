@@ -15,6 +15,24 @@ def bar(stamp, close=1.0):
             "close": close, "volume": 1.0}
 
 
+class _NoSpanStore:
+    """Stands in for KdbStore: a recorder is wired up, but reports no tick
+    span, so build_series falls straight back to history. Keeps this fixture
+    off the real spawn/loopback/host chain -- otherwise every test using it
+    pays a genuine `connect()` to 127.0.0.1:5000, and on a host where
+    something else (e.g. macOS AirPlay) already owns that port, a real
+    connect timeout."""
+
+    def tick_span(self, symbol):
+        return None
+
+    def prune_ticks(self, cutoff):
+        return 0
+
+    def write_ticks(self, frame):
+        return 0
+
+
 @pytest.fixture
 def client(monkeypatch):
     async def fake_history(symbol, interval, start, end, provider="kdb"):
@@ -23,6 +41,9 @@ def client(monkeypatch):
                  "gaps_fetched": 0, "upstream_ms": 0.0, "kdb_ms": 1.0})
 
     monkeypatch.setattr("app.main.fetch_series", fake_history)
+    monkeypatch.setattr("kdb_store.config.resolve_config", lambda: object())
+    monkeypatch.setattr("kdb_store.session.KdbSession", lambda config: object())
+    monkeypatch.setattr("kdb_store.store.KdbStore", lambda session: _NoSpanStore())
     return TestClient(create_app(api_key="test-key"))
 
 
@@ -56,9 +77,25 @@ def test_chart_widget_is_registered(client):
     assert any("chart" in key for key in client.get("/widgets.json").json())
 
 
-def test_series_works_with_no_recorder(client):
-    """No kdb: history only, and the route must not error."""
-    body = client.get("/series", params={"symbol": "AAPL"}).json()
+def test_series_works_with_no_recorder(monkeypatch):
+    """No kdb: history only, and the route must not error.
+
+    Deliberately does not use the `client` fixture: that fixture wires up a
+    (mocked) recorder, so its tick_span happens to return None. That is a
+    different code path from `recorder is None` -- build_series short-circuits
+    on `recorder is None` before ever touching a store. Setting
+    LIVE_GRID_CHART=false drives create_app() down the real no-recorder
+    branch, so this test exercises what its name says.
+    """
+    async def fake_history(symbol, interval, start, end, provider="kdb"):
+        return ([bar("2025-06-10T13:58:00"), bar("2025-06-10T13:59:00")],
+                {"cache": "hit", "rows_from_cache": 2, "rows_from_upstream": 0,
+                 "gaps_fetched": 0, "upstream_ms": 0.0, "kdb_ms": 1.0})
+
+    monkeypatch.setattr("app.main.fetch_series", fake_history)
+    monkeypatch.setenv("LIVE_GRID_CHART", "false")
+    no_recorder_client = TestClient(create_app(api_key="test-key"))
+    body = no_recorder_client.get("/series", params={"symbol": "AAPL"}).json()
     assert body["cache"]["rows_from_ticks"] == 0
 
 
