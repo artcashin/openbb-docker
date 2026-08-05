@@ -52,13 +52,26 @@ def s3_uri_from_env(env: Any = None) -> str | None:
 
     Shape matters: host and bucket are separated by ':' and the port is a
     QUERY parameter. 'host:port:bucket' is not valid ArcticDB syntax.
+
+    Values are stripped, matching tick_lab.config.from_env on the laptop
+    side -- these are the same ARCTICDB_S3_* names read from the same
+    minio.env, and Docker Compose's env_file parser does NOT strip trailing
+    whitespace. Without stripping here, a stray trailing space in
+    ARCTICDB_S3_SECRET (invisible in most editors) would work for tick-lab
+    but build `secret=hunter2%20` in the container and fail auth deep
+    inside ArcticDB with no hint that whitespace was the problem.
     """
     # pylint: disable=import-outside-toplevel
     from urllib.parse import quote
 
     e = os.environ if env is None else env
-    if any(not e.get(k) for k in _S3_REQUIRED):
+    if any(not str(e.get(k, "")).strip() for k in _S3_REQUIRED):
         return None
+
+    endpoint = str(e["ARCTICDB_S3_ENDPOINT"]).strip()
+    bucket = str(e["ARCTICDB_S3_BUCKET"]).strip()
+    access = str(e["ARCTICDB_S3_ACCESS"]).strip()
+    secret = str(e["ARCTICDB_S3_SECRET"]).strip()
 
     port_raw = str(e.get("ARCTICDB_S3_PORT") or "9000").strip()
     if not port_raw.isdigit():
@@ -72,10 +85,10 @@ def s3_uri_from_env(env: Any = None) -> str | None:
 
     scheme = "s3s" if secure_raw == "true" else "s3"
     return (
-        f"{scheme}://{e['ARCTICDB_S3_ENDPOINT']}:{e['ARCTICDB_S3_BUCKET']}"
+        f"{scheme}://{endpoint}:{bucket}"
         f"?port={port_raw}"
-        f"&access={quote(e['ARCTICDB_S3_ACCESS'], safe='')}"
-        f"&secret={quote(e['ARCTICDB_S3_SECRET'], safe='')}"
+        f"&access={quote(access, safe='')}"
+        f"&secret={quote(secret, safe='')}"
         f"&use_virtual_addressing=false"
     )
 

@@ -46,6 +46,30 @@ def test_credentials_are_url_encoded():
     assert "secret=a%2Fb%2Bc%3Dd%26e" in uri
 
 
+def test_trailing_whitespace_is_stripped_from_every_part():
+    # Docker Compose's env_file parser preserves trailing whitespace, so a
+    # stray space after a value in minio.env (invisible in most editors)
+    # must not become part of the URI -- otherwise tick-lab (which strips,
+    # see tick_lab.config.from_env) connects fine while the container
+    # builds e.g. secret=hunter2%20 and fails auth with no hint that
+    # whitespace was the cause.
+    padded = {
+        "ARCTICDB_S3_ENDPOINT": " minio.example.ts.net ",
+        "ARCTICDB_S3_BUCKET": " openbb ",
+        "ARCTICDB_S3_ACCESS": " someaccesskey ",
+        "ARCTICDB_S3_SECRET": "somesecretkey ",
+    }
+    assert s3_uri_from_env(padded) == (
+        "s3s://minio.example.ts.net:openbb"
+        "?port=9000&access=someaccesskey&secret=somesecretkey"
+        "&use_virtual_addressing=false"
+    )
+
+
+def test_whitespace_only_value_counts_as_missing():
+    assert s3_uri_from_env({**FULL, "ARCTICDB_S3_SECRET": "   "}) is None
+
+
 def test_rejects_non_numeric_port():
     with pytest.raises(ValueError, match="ARCTICDB_S3_PORT"):
         s3_uri_from_env({**FULL, "ARCTICDB_S3_PORT": "nine-thousand"})
