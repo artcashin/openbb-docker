@@ -44,6 +44,16 @@ def test_stitch_with_no_ticks_returns_history():
     assert stitch(history, [], D("2025-06-10T14:01:00")) == history
 
 
+def test_stitch_with_no_ticks_does_not_alias_history():
+    """Every other branch returns a fresh list -- this one must too, or a caller
+    that mutates the result (sort, append) silently corrupts a cached `history`."""
+    history = [bar("2025-06-10T13:58:00")]
+    out = stitch(history, [], D("2025-06-10T14:01:00"))
+    assert out is not history
+    out.append(bar("2025-06-10T13:59:00"))
+    assert history == [bar("2025-06-10T13:58:00")]
+
+
 def test_stitch_with_no_history_returns_ticks():
     ticks = [bar("2025-06-10T14:01:00")]
     assert stitch([], ticks, D("2025-06-10T14:01:00")) == ticks
@@ -56,7 +66,16 @@ def test_stitch_output_is_time_ordered_even_if_inputs_are_not():
     assert [r["date"] for r in out] == sorted(r["date"] for r in out)
 
 
-@pytest.mark.parametrize("interval,ok", [("1m", True), ("5m", True), ("1h", True),
-                                         ("1d", False), ("1w", False)])
-def test_tick_capable_rejects_intervals_wider_than_the_window(interval, ok):
-    assert tick_capable(interval, timedelta(hours=6)) is ok
+@pytest.mark.parametrize(
+    "interval,window,ok",
+    [
+        ("1m", timedelta(hours=6), True),
+        ("5m", timedelta(hours=6), True),
+        ("1h", timedelta(hours=6), True),
+        ("1d", timedelta(hours=6), False),
+        ("1w", timedelta(hours=6), False),
+        ("1h", timedelta(hours=1), True),  # width == window is still capable
+    ],
+)
+def test_tick_capable_rejects_intervals_wider_than_the_window(interval, window, ok):
+    assert tick_capable(interval, window) is ok

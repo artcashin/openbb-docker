@@ -37,7 +37,7 @@ def tick_capable(interval: str, window: timedelta) -> bool:
 def stitch(history: list[dict], ticks: list[dict], boundary: datetime) -> list[dict]:
     """History strictly before `boundary`, then tick-derived bars, time-ordered."""
     if not ticks:
-        return history
+        return list(history)
     kept = [row for row in history if row["date"] < boundary]
     if not kept:
         return sorted(ticks, key=lambda r: r["date"])
