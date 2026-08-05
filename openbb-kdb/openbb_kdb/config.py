@@ -20,6 +20,21 @@ _DEFAULTS = {
 # of the container -- the real budget is enforced by eviction well below it.
 _WORKSPACE_HEADROOM = 1.25
 
+# `import pykx` REWRITES os.environ["QHOME"] to PyKX's own bundled q directory.
+# So the same call, made twice in one process, can resolve two different qhomes
+# depending on whether PyKX had loaded in between -- and the second answer is
+# the wrong one: it points at PyKX's lib, not the operator's kdb-x install.
+# The first resolution therefore wins for the lifetime of the process.
+_qhome: str | None = None
+
+
+def _resolve_qhome() -> str:
+    """QHOME as it read BEFORE PyKX could rewrite it. Decided once per process."""
+    global _qhome  # noqa: PLW0603
+    if _qhome is None:
+        _qhome = os.getenv("QHOME") or _DEFAULTS["qhome"]
+    return _qhome
+
 
 @dataclass(frozen=True)
 class KdbConfig:
@@ -113,7 +128,7 @@ def resolve_config(credentials: dict | None = None) -> KdbConfig:
     upstream = _pick("upstream", "KDB_UPSTREAM", credentials)
     if upstream is None:
         upstream = _DEFAULTS["upstream"]
-    qhome = os.getenv("QHOME") or _DEFAULTS["qhome"]
+    qhome = _resolve_qhome()
     # A licence dir separate from QHOME lets the operator bind-mount kc.lic
     # without it living inside qhome (which the Dockerfile strips clean).
     # Falling back to qhome preserves today's behaviour for anyone who does

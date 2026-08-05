@@ -2,7 +2,14 @@
 
 import pytest
 
+import openbb_kdb.config as config
 from openbb_kdb.config import resolve_config
+
+
+@pytest.fixture(autouse=True)
+def _unmade_qhome_decision(monkeypatch):
+    """QHOME is decided once per PROCESS; give each test that decision unmade."""
+    monkeypatch.setattr(config, "_qhome", None)
 
 
 def test_defaults(monkeypatch):
@@ -102,6 +109,19 @@ def test_qlic_env_var_is_carried_onto_config(monkeypatch):
     """The mounted licence directory must survive into KdbConfig.qlic."""
     monkeypatch.setenv("QLIC", "/opt/kx-license")
     assert resolve_config().qlic == "/opt/kx-license"
+
+
+def test_qhome_survives_pykx_rewriting_the_environment(monkeypatch):
+    """`import pykx` REWRITES os.environ["QHOME"] to PyKX's own bundled q. A
+    second resolve_config() must not therefore hand back a different qhome --
+    spawning PyKX's q instead of the operator's kdb-x install."""
+    monkeypatch.setenv("QHOME", "/opt/kx")
+    first = resolve_config()
+
+    monkeypatch.setenv("QHOME", "/usr/local/lib/python3.13/site-packages/pykx/lib")
+    second = resolve_config()
+
+    assert first.qhome == second.qhome == "/opt/kx"
 
 
 def test_qlic_falls_back_to_qhome_when_unset(monkeypatch):

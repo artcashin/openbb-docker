@@ -27,7 +27,13 @@ session = KdbSession(config)
 conn = session.connection()
 store = KdbStore(session)
 
-check("q answers", conn("1+1").py() == 2)
+
+def q(expr):
+    """Raw q, on the session's owner thread -- the only thread allowed to touch it."""
+    return session.run(lambda: conn(expr).py())
+
+
+check("q answers", q("1+1") == 2)
 
 mem = store.memory()
 check("memory keys are str", "heap" in mem and "wmax" in mem, str(mem)[:120])
@@ -58,19 +64,23 @@ store.record_coverage("LIVECHK", "1d", (now - timedelta(days=5), now))
 cov = store.read_coverage("LIVECHK", "1d")
 check("coverage round-trip", len(cov) == 1, str(cov)[:120])
 
-# Eviction genuinely returns heap -- delete alone does not.
-before = store.memory()["heap"]
-conn("ballast: 4000000 # 1.0")
+# Eviction genuinely returns heap -- delete alone does not. The ballast has to
+# exceed q's 64MB initial heap or nothing was ever allocated to give back:
+# 20M floats is 160MB, which q rounds up to a 320MB heap.
+q("ballast: 20000000 # 1.0")
 grown = store.memory()["heap"]
-conn("delete ballast from `.")
-conn(".Q.gc[]")
+q("delete ballast from `.")
+q(".Q.gc[]")
 after = store.memory()["heap"]
 check("gc reclaims heap", after < grown, f"{grown} -> {after}")
 
 store.drop("LIVECHK", "1d")
 check("drop clears coverage", store.read_coverage("LIVECHK", "1d") == [])
 
-# One shared connection used from several threads (spec risk 3).
+# q reached from several threads at once (spec risk 3). PyKX is unusable from
+# more than one thread, so the session marshals every call onto its owner
+# thread; what is under test is that the marshalling holds and replies never
+# cross between callers.
 import threading
 
 results = {}
@@ -78,7 +88,7 @@ results = {}
 
 def worker(tag):
     try:
-        results[tag] = conn(f"{tag}+1").py()
+        results[tag] = q(f"{tag}+1")
     except Exception as exc:  # noqa: BLE001
         results[tag] = f"ERR {type(exc).__name__}"
 
@@ -87,9 +97,37 @@ threads = [threading.Thread(target=worker, args=(i,)) for i in range(1, 4)]
 [t.start() for t in threads]
 [t.join() for t in threads]
 ok = all(results.get(i) == i + 1 for i in range(1, 4))
-check("shared connection across threads", ok, str(results))
-if not ok:
-    print("  -> serialize q access behind one lock, or open a connection per thread")
+check("concurrent threads reach q", ok, str(results))
+
+# The decisive case: NO concurrency at all, just a different thread each round.
+# Before the owner-thread fix this aborted the whole process with
+# `free(): invalid size`; a lock would not have helped, there is nothing here
+# to serialise.
+rounds = [("2024-01-01", "2024-12-31"), ("2022-01-01", "2023-12-31"),
+          ("2020-01-01", "2021-12-31"), ("2018-01-01", "2019-12-31")]
+seen = []
+
+
+def round_trip(first, last):
+    span = pd.bdate_range(first, last)
+    store.write_bars("THREADCHK", "1d", pd.DataFrame({
+        "t": span, "open": 1.0, "high": 2.0, "low": 0.5, "close": 1.5, "volume": 100,
+    }))
+    got = store.read_bars("THREADCHK", "1d", datetime(2015, 1, 1), datetime(2026, 1, 1))
+    seen.append(len(got))
+
+
+for index, (first, last) in enumerate(rounds):
+    t = threading.Thread(target=round_trip, args=(first, last), name=f"round{index}")
+    t.start()
+    t.join()
+
+check(
+    "sequential round-trips, a fresh thread each",
+    len(seen) == len(rounds) and seen == sorted(seen) and seen[-1] > seen[0],
+    f"rows after each round: {seen}",
+)
+store.drop("THREADCHK", "1d")
 
 session.close()
 print()

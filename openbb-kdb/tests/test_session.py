@@ -1,6 +1,7 @@
 """Session lifecycle: spawn, reuse, notice death, respawn, give up cleanly."""
 
 import subprocess
+import threading
 
 import pytest
 
@@ -22,11 +23,13 @@ class FakeConn:
     def __init__(self, alive=True):
         self.alive = alive
         self.calls = []
+        self.threads = []
 
     def __call__(self, query, *args):
         if not self.alive:
             raise RuntimeError("Attempted to use a closed IPC connection")
         self.calls.append(query)
+        self.threads.append(threading.get_ident())
         return 2
 
     def close(self):
@@ -192,6 +195,79 @@ def test_spawn_env_uses_qlic_not_qhome(monkeypatch, tmp_path):
     assert captured["env"]["QHOME"] == "/opt/kx"
     assert captured["env"]["QLIC"] == "/opt/kx-license"
     assert captured["env"]["QLIC"] != captured["env"]["QHOME"]
+
+
+def test_every_q_call_lands_on_one_thread_that_is_never_the_caller(monkeypatch):
+    """PyKX is unusable from more than one thread: four strictly sequential
+    write/read rounds abort with `free(): invalid size` when each round runs on
+    a fresh thread, with no concurrency at all. Affinity, not a mutex, is the
+    fix -- so every call must land on the SAME thread, whoever asked."""
+    conn = FakeConn()
+    monkeypatch.setattr(KdbSession, "_spawn", lambda self: None)
+    monkeypatch.setattr(KdbSession, "_connect", lambda self: conn)
+    s = KdbSession(cfg())
+
+    idents = []
+
+    def caller():
+        idents.append(s.run(lambda: s._conn("1+1")))
+
+    s.connection()
+    for _ in range(4):  # a fresh thread each round -- the shape that aborted
+        t = threading.Thread(target=caller)
+        t.start()
+        t.join()
+
+    assert len(set(conn.threads)) == 1
+    assert threading.get_ident() not in conn.threads
+    s.close()
+
+
+def test_the_connection_is_created_on_the_owner_thread_too(monkeypatch):
+    """Affinity that begins after the handle was opened elsewhere is not
+    affinity: the spawn and the connect must run on the owner thread."""
+    seen = {}
+    monkeypatch.setattr(KdbSession, "_spawn",
+                        lambda self: seen.__setitem__("spawn", threading.get_ident()))
+    monkeypatch.setattr(KdbSession, "_connect",
+                        lambda self: seen.__setitem__("connect", threading.get_ident())
+                        or FakeConn())
+    s = KdbSession(cfg())
+    conn = s.connection()
+    s.run(lambda: conn("1+1"))
+
+    assert seen["spawn"] == seen["connect"] == conn.threads[0]
+    assert seen["connect"] != threading.get_ident()
+    s.close()
+
+
+def test_run_from_inside_the_owner_thread_does_not_deadlock(monkeypatch):
+    """One worker means re-entrant work queued behind itself would wait
+    forever -- `connection()` and `is_alive()` both route through run()."""
+    monkeypatch.setattr(KdbSession, "_spawn", lambda self: None)
+    monkeypatch.setattr(KdbSession, "_connect", lambda self: FakeConn())
+    s = KdbSession(cfg())
+
+    def nested():
+        # connection() -> run() from inside a run() task.
+        return s.run(lambda: s.connection() is not None) and s.is_alive()
+
+    assert s.run(nested) is True
+    s.close()
+
+
+def test_close_retires_the_owner_thread_and_never_raises(monkeypatch):
+    monkeypatch.setattr(KdbSession, "_spawn", lambda self: None)
+    monkeypatch.setattr(KdbSession, "_connect", lambda self: FakeConn())
+    s = KdbSession(cfg())
+    conn = s.connection()
+
+    s.close()
+    s.close()  # idempotent: a second close must not raise either
+
+    assert conn.alive is False
+    with pytest.raises(KdbUnavailable):  # the owner thread is gone; no more q
+        s.run(lambda: None)
 
 
 def test_close_does_not_kill_a_process_that_exits_on_terminate():

@@ -1,4 +1,4 @@
-"""Ownership of the q process and its IPC connection.
+"""Ownership of the q process, its IPC connection, and the thread that may touch it.
 
 q is a child of THIS container, bound to loopback. Everything in this stack
 shares the tailscale container's network namespace, so a loopback bind is
@@ -8,11 +8,24 @@ whole tailnet.
 
 Crossing q's -w kills the process outright (verified against kdb-x 5.0), so a
 dead q is treated as an ordinary state: detect, respawn, carry on.
+
+PyKX is not merely un-serialised across threads, it is unusable from more than
+one thread: four STRICTLY SEQUENTIAL write/read rounds (no concurrency at all)
+survive on one thread and abort with `free(): invalid size` when each round
+runs on a fresh thread. A mutex therefore cannot fix it -- serialising the
+calls leaves the same heap corruption, it only hides the visible symptom of
+replies crossing between threads. What the C layer wants is thread AFFINITY,
+so this module owns a single-worker executor and every PyKX interaction --
+spawning q, opening the connection, every query, every K-object conversion --
+happens on that one thread for the process lifetime. Callers hand work in
+through `run()`.
 """
 
 import logging
 import subprocess
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 from openbb_kdb.config import KdbConfig
 
@@ -36,7 +49,7 @@ class KdbUnavailable(Exception):
 
 
 class KdbSession:
-    """Owns at most one q process and one IPC connection."""
+    """Owns at most one q process, one IPC connection, and the thread that may use them."""
 
     def __init__(self, config: KdbConfig):
         self.config = config
@@ -44,6 +57,35 @@ class KdbSession:
         self._proc: subprocess.Popen | None = None
         self._proc_log_path: str | None = None
         self._given_up = False
+        # One worker, forever: PyKX needs the SAME thread every time, not just
+        # one thread at a time. `_owner_ident` is stamped by the worker itself
+        # on its first task so `run()` can recognise a re-entrant call.
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="openbb-kdb-q")
+        self._owner_ident: int | None = None
+        self._closed = False
+
+    def run(self, fn):
+        """Run `fn()` on the q owner thread and return its result.
+
+        Everything that touches PyKX must go through here, including creating
+        the connection and spawning q -- affinity that starts after the
+        connection was opened elsewhere is not affinity.
+
+        A call already ON the owner thread runs inline: `connection()` and
+        `is_alive()` route through `run()` themselves, so a store method that
+        asks for the connection from inside its own submitted task would
+        otherwise queue work behind itself on a one-worker pool and deadlock.
+        """
+        if threading.get_ident() == self._owner_ident:
+            return fn()
+        if self._closed:
+            raise KdbUnavailable("kdb+ session is closed")
+        return self._executor.submit(self._own, fn).result()
+
+    def _own(self, fn):
+        """Body of every submitted task: claim ownership, then do the work."""
+        self._owner_ident = threading.get_ident()
+        return fn()
 
     def _q_argv(self) -> list[str]:
         """Argument vector for the q server."""
@@ -141,6 +183,9 @@ class KdbSession:
 
     def is_alive(self) -> bool:
         """True when the current connection still answers."""
+        return self.run(self._is_alive)
+
+    def _is_alive(self) -> bool:
         if self._conn is None:
             return False
         try:
@@ -150,10 +195,17 @@ class KdbSession:
             return False
 
     def connection(self):
-        """Return a live connection, spawning or respawning as needed."""
+        """Return a live connection, spawning or respawning as needed.
+
+        The object handed back belongs to the owner thread: use it only from
+        inside a `run()` callable, never directly from the caller's thread.
+        """
+        return self.run(self._connection)
+
+    def _connection(self):
         if self._given_up:
             raise KdbUnavailable("kdb+ previously unreachable; not retrying")
-        if self._conn is not None and self.is_alive():
+        if self._conn is not None and self._is_alive():
             return self._conn
         self._conn = None
         spawned = False
@@ -198,7 +250,33 @@ class KdbSession:
         self._cleanup_log_file()
 
     def close(self) -> None:
-        """Close the connection and stop a q we started. Never raises."""
+        """Close the connection, stop a q we started, retire the owner thread.
+
+        Never raises. The connection is closed ON the owner thread -- closing a
+        PyKX handle is as much a PyKX call as querying it -- and the executor is
+        shut down only afterwards, so no task can outlive the process it drives.
+        """
+        try:
+            self.run(self._shutdown)
+        except Exception:
+            # The owner thread is already gone (or never started): the child
+            # process still has to be reaped, and _shutdown is idempotent.
+            logger.debug("kdb+ shutdown could not run on the owner thread", exc_info=True)
+            try:
+                self._shutdown()
+            except Exception:
+                logger.debug("error during kdb+ shutdown", exc_info=True)
+        self._closed = True
+        try:
+            self._executor.shutdown(wait=True)
+        except Exception:
+            logger.debug("error shutting down the kdb+ owner thread", exc_info=True)
+        # Thread identities are recycled once a thread is gone: a stale ident
+        # would let some unrelated future thread take the re-entrant path.
+        self._owner_ident = None
+
+    def _shutdown(self) -> None:
+        """Close the IPC connection and reap the child. Never raises."""
         try:
             if self._conn is not None:
                 self._conn.close()

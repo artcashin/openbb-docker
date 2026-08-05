@@ -13,11 +13,13 @@ class FakeConn:
 
     def __init__(self, responses=None):
         self.queries = []
+        self.calls = []  # (query, args) -- args matter for the lambda-binding check
         self.responses = responses or {}
         self.data = {}
 
     def __call__(self, query, *args):
         self.queries.append(query)
+        self.calls.append((query, args))
         for needle, value in self.responses.items():
             if needle in query:
                 return _Wrapped(value)
@@ -41,9 +43,15 @@ class _Wrapped:
 class FakeSession:
     def __init__(self, conn):
         self._conn = conn
+        self.runs = 0
 
     def connection(self):
         return self._conn
+
+    def run(self, fn):
+        """Stand-in for the real owner-thread marshalling: run it here, now."""
+        self.runs += 1
+        return fn()
 
 
 def store_with(responses=None):
@@ -220,3 +228,88 @@ def test_no_statement_uses_a_leading_underscore_identifier():
     leading_underscore_ident = re.compile(r"(?<![\w.])_[A-Za-z]")
     for q in conn.queries:
         assert not leading_underscore_ident.search(q), q
+
+
+def exercise_every_statement(store):
+    """Drive every store method that issues q, on one fake connection."""
+    store.write_bars("AAPL", "1d", object())
+    store.read_bars("AAPL", "1d", D("2024-01-01"), D("2024-01-02"))
+    store.read_coverage("AAPL", "1d")
+    store.record_coverage("AAPL", "1d", (D("2024-01-01"), D("2024-01-02")))
+    store.touch("AAPL", "1d")
+    store.drop("AAPL", "1d")
+    store.memory()
+    store.evict_until_below(10**9)
+
+
+def test_every_parameterised_statement_is_a_lambda():
+    """q binds x/y/z/w as implicit parameters only INSIDE {...}. A bare
+    expression referencing them raises 'x, which the cache swallows as a
+    bypass -- so the whole cache silently did nothing against a real q."""
+    s, conn = store_with({
+        ".cache.cov": [], ".cache.lru": [],
+        ".Q.w[]": {"used": 1, "heap": 1, "wmax": 10},
+        "in key": True,
+    })
+    exercise_every_statement(s)
+
+    parameterised = [(q, args) for q, args in conn.calls if args]
+    assert parameterised, "no statement passed arguments -- the check is vacuous"
+    for query, args in parameterised:
+        assert query.startswith("{["), f"unbound implicit args in: {query}"
+        # The lambda must actually declare as many parameters as are sent.
+        declared = query[2:query.index("]")].split(";")
+        assert len(declared) == len(args), f"{len(args)} args, {declared} declared: {query}"
+
+
+def test_lambda_parameters_never_shadow_a_column_name():
+    """Inside select/delete, a table's own columns shadow the lambda's
+    parameters: `{[s;e] ... where sym = s}` against .cache.cov (columns s, e)
+    would compare a column with itself and match every row."""
+    s, conn = store_with({
+        ".cache.cov": [], ".cache.lru": [],
+        ".Q.w[]": {"used": 1, "heap": 1, "wmax": 10},
+        "in key": True,
+    })
+    exercise_every_statement(s)
+
+    columns = {"sym", "iv", "s", "e", "atime", "t", "open", "high", "low", "close",
+               "volume"}
+    for query, args in conn.calls:
+        if not args:
+            continue
+        declared = {p.strip() for p in query[2:query.index("]")].split(";")}
+        assert not declared & columns, f"parameter shadows a column: {query}"
+
+
+def test_every_q_call_is_marshalled_onto_the_session_owner_thread():
+    """PyKX is unusable from more than one thread -- not merely unserialised --
+    so no query, K-object construction or conversion may happen outside
+    session.run()."""
+    conn = FakeConn({
+        ".cache.cov": [], ".cache.lru": [],
+        ".Q.w[]": {"used": 1, "heap": 1, "wmax": 10},
+    })
+
+    class StrictSession(FakeSession):
+        """Refuses to hand out a connection except from inside run()."""
+
+        def __init__(self, conn):
+            super().__init__(conn)
+            self.inside = False
+
+        def connection(self):
+            assert self.inside, "connection() reached outside run()"
+            return self._conn
+
+        def run(self, fn):
+            self.runs += 1
+            self.inside = True
+            try:
+                return fn()
+            finally:
+                self.inside = False
+
+    session = StrictSession(conn)
+    exercise_every_statement(KdbStore(session))
+    assert session.runs >= 8
