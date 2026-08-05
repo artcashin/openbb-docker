@@ -21,7 +21,7 @@ from tick_lab.reference.base import ReferenceError, fetch_finest
 from tick_lab.reference.yfinance_adapter import YFinanceAdapter
 from tick_lab.report import compare as compare_frames
 from tick_lab.rollup import aggregate, to_minute_bars
-from tick_lab.store import TickStore
+from tick_lab.store import LibraryNotFoundError, StoreWriteError, TickStore
 
 # Later releases add entries here; the CLI needs no other change.
 ADAPTERS = {
@@ -92,7 +92,12 @@ def _iter_members(path: Path):
                 yield child.name, child.read_text()
         return
 
-    with zipfile.ZipFile(path) as archive:
+    try:
+        archive = zipfile.ZipFile(path)
+    except (FileNotFoundError, zipfile.BadZipFile) as err:
+        raise ValueError(f"cannot read {str(path)!r} as a zip archive or directory: {err}") from err
+
+    with archive:
         for info in sorted(archive.infolist(), key=lambda i: i.filename):
             # Checking only the leaf name misses macOS zip noise that lives
             # in a prefixed *directory*, e.g. "__MACOSX/._MSFT_trades....txt"
@@ -109,30 +114,50 @@ def cmd_load(args) -> int:
     store = TickStore(from_env())
     failures = 0
 
-    for name, text in _iter_members(Path(args.path)):
-        try:
-            symbol, kind_from_name = symbol_from_filename(name)
-            kind, frame = parse(text)
-        except (ValueError, FirstRateFormatError) as err:
-            print(f"  SKIP {name}: {err}", file=sys.stderr)
-            failures += 1
-            continue
+    # The whole method is wrapped in one ValueError guard so a bad top-level
+    # path (not a zip, doesn't exist -- see _iter_members) is reported
+    # cleanly instead of raising out of main(). It does not blur into the
+    # per-file guard below: symbol_from_filename/parse ValueErrors are caught
+    # and turned into a per-file SKIP before they could ever reach here, so
+    # this outer except only ever fires for the iterator itself failing.
+    try:
+        for name, text in _iter_members(Path(args.path)):
+            try:
+                symbol, kind_from_name = symbol_from_filename(name)
+                kind, frame = parse(text)
+            except (ValueError, FirstRateFormatError) as err:
+                print(f"  SKIP {name}: {err}", file=sys.stderr)
+                failures += 1
+                continue
 
-        if kind != kind_from_name:
-            print(
-                f"  SKIP {name}: filename says {kind_from_name}, contents look like {kind}",
-                file=sys.stderr,
-            )
-            failures += 1
-            continue
+            if kind != kind_from_name:
+                print(
+                    f"  SKIP {name}: filename says {kind_from_name}, "
+                    f"contents look like {kind}",
+                    file=sys.stderr,
+                )
+                failures += 1
+                continue
 
-        library = TRADE_LIBRARY if kind == "trade" else QUOTE_LIBRARY
-        if args.dry_run:
-            print(f"  would write {len(frame):>8,} {kind} rows -> {library}/{symbol}")
-            continue
+            library = TRADE_LIBRARY if kind == "trade" else QUOTE_LIBRARY
+            if args.dry_run:
+                print(f"  would write {len(frame):>8,} {kind} rows -> {library}/{symbol}")
+                continue
 
-        store.write(library, symbol, frame, metadata={"source": name, "kind": kind})
-        print(f"  wrote {len(frame):>8,} {kind} rows -> {library}/{symbol}")
+            # A write failure (network blip, ArcticDB rejecting the frame,
+            # ...) is a per-file problem, not a reason to abort the rest of
+            # the batch -- so it is reported and counted exactly like a
+            # parse failure, and the loop continues to the next file.
+            try:
+                store.write(library, symbol, frame, metadata={"source": name, "kind": kind})
+            except StoreWriteError as err:
+                print(f"  SKIP {name}: {err}", file=sys.stderr)
+                failures += 1
+                continue
+            print(f"  wrote {len(frame):>8,} {kind} rows -> {library}/{symbol}")
+    except ValueError as err:
+        print(f"error: {err}", file=sys.stderr)
+        return 1
 
     return 1 if failures else 0
 
@@ -141,10 +166,26 @@ def cmd_compare(args) -> int:
     cfg = from_env()
     store = TickStore(cfg)
 
-    trades = store.read(TRADE_LIBRARY, args.symbol, start=args.date, end=args.date)
+    # The loader upper-cases the symbol at write time (symbol_from_filename),
+    # so a lowercase --symbol here would otherwise report "no ticks stored"
+    # even though the data is there under the upper-cased key.
+    symbol = args.symbol.upper()
+    # Both sides of the comparison must look at the SAME window: our own
+    # ticks and the reference fetch below both span args.date..(args.end or
+    # args.date). Reading only args.date..args.date here would silently
+    # truncate our side to day one while the reference spans the full
+    # window, reporting every later bar as a spurious reference-only gap.
+    end = args.end or args.date
+
+    try:
+        trades = store.read(TRADE_LIBRARY, symbol, start=args.date, end=end)
+    except LibraryNotFoundError as err:
+        print(str(err), file=sys.stderr)
+        return 1
+
     if trades.empty:
         print(
-            f"no ticks stored for {args.symbol} on {args.date} "
+            f"no ticks stored for {symbol} on {args.date} "
             f"(library {TRADE_LIBRARY!r}) — run `tick-lab load` first",
             file=sys.stderr,
         )
@@ -158,7 +199,7 @@ def cmd_compare(args) -> int:
     print(f"asking {adapter.name} for 1m bars...")
 
     try:
-        result = fetch_finest(adapter, args.symbol, args.date, args.end or args.date)
+        result = fetch_finest(adapter, symbol, args.date, end)
     except ReferenceError as err:
         print(f"\n{adapter.name} cannot serve this window: {err.kind}", file=sys.stderr)
         print(f"  {err.detail}", file=sys.stderr)
@@ -177,7 +218,7 @@ def cmd_compare(args) -> int:
 
     ours = aggregate(ours_1m, result.interval)
     report = compare_frames(
-        ours, result.frame, args.symbol, result.interval,
+        ours, result.frame, symbol, result.interval,
         tolerance=args.tol, notes=notes,
     )
 

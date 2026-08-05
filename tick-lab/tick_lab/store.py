@@ -17,6 +17,28 @@ import pandas as pd
 from tick_lab.config import S3Config
 
 
+class LibraryNotFoundError(ValueError):
+    """Raised by `TickStore.read` when the requested library does not exist.
+
+    A `ValueError` subclass (not a bare `ValueError`) so callers that want to
+    react specifically to "nothing has been loaded yet" can catch this type,
+    while `pytest.raises(ValueError, ...)` and other broad catches upstream
+    keep working unchanged.
+    """
+
+
+class StoreWriteError(RuntimeError):
+    """Raised by `TickStore.write` when ArcticDB rejects a write.
+
+    Wraps `arcticdb.exceptions.ArcticException` -- the library's own
+    exception hierarchy, confirmed against the pinned arcticdb version (see
+    `tick_lab/reference/yfinance_adapter.py` for the same principle applied
+    to yfinance). Only ArcticDB's own exceptions are classified as a write
+    problem; a bug in our code (AttributeError, TypeError, ...) is not a data
+    or storage problem and must propagate unchanged.
+    """
+
+
 def to_bounds(start: Any, end: Any) -> tuple[pd.Timestamp | None, pd.Timestamp | None]:
     """Build an ArcticDB `date_range` pair.
 
@@ -66,7 +88,14 @@ class TickStore:
         metadata: dict | None = None,
     ) -> None:
         """Overwrite `symbol`, so re-running a load is idempotent."""
-        self._library(library).write(symbol, frame, metadata=metadata)
+        from arcticdb.exceptions import ArcticException
+
+        try:
+            self._library(library).write(symbol, frame, metadata=metadata)
+        except ArcticException as err:
+            raise StoreWriteError(
+                f"ArcticDB rejected the write for {symbol!r} to library {library!r}: {err}"
+            ) from err
 
     def read(
         self,
@@ -77,7 +106,7 @@ class TickStore:
     ) -> pd.DataFrame:
         """Read a symbol, filtering by date range on the server where possible."""
         if not self._arctic.has_library(library):
-            raise ValueError(
+            raise LibraryNotFoundError(
                 f"ArcticDB library {library!r} does not exist. Check "
                 "ARCTICDB_LIBRARY/--library, or run `tick-lab load` first "
                 "if nothing has been written to it yet."
