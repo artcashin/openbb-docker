@@ -4,9 +4,14 @@ A local CLI that reads ticks out of the shared ArcticDB store, rolls them
 into 1-minute OHLCV bars, and checks those bars against an independent
 source. Companion code for *Adventures in OpenBB, Ep. 11*.
 
-It runs on your own machine — it never enters a container and never imports
-`openbb`. The point of this chapter is that the store is a shared network
-service usable from any Python process, and `tick-lab` is that process:
+It runs on your own machine and never enters a container. By default it
+never imports `openbb` either — the point of this chapter is that the store
+is a shared network service usable from any Python process, and `tick-lab`
+is that process. The one exception is `--reference eodhd-local` (added in
+v11.1.1): opt into it and `openbb` runs in-process on your laptop, on
+purpose, as a teaching contrast — see
+["Three ways to ask the same question"](#three-ways-to-ask-the-same-question)
+below.
 
 ```bash
 tick-lab load ./FirstRate_sample.zip
@@ -87,9 +92,11 @@ tick-lab compare --symbol MSFT --date 2023-05-12
 ```
 
 This reads your stored MSFT ticks for that day, rolls them into 1-minute
-bars, asks a reference source (`yfinance`, by default and the only adapter
-in v11.0.0) for its own 1-minute bars over the same window, and reports
-where the two disagree.
+bars, asks a reference source for its own 1-minute bars over the same
+window, and reports where the two disagree. `--reference` defaults to
+`eodhd-api`; `yfinance` and `eodhd-local` are also available — see
+["Three ways to ask the same question"](#three-ways-to-ask-the-same-question)
+for what each one costs.
 
 ### Expected output
 
@@ -167,6 +174,66 @@ to 1d because 1m wasn't servable").
 
 `--end` extends the window past `--date` (`--date 2023-05-12 --end
 2023-05-15`); it defaults to `--date` itself, i.e. a single day.
+
+## Three ways to ask the same question
+
+`--reference` picks how `compare` gets its independent 1-minute bars. All
+three answer the same question — "what does an outside source say happened
+in this window?" — but they pay for the answer differently:
+
+| `--reference` | Runs where | Needs on your laptop | 2023 intraday? |
+|---|---|---|---|
+| `yfinance` (default before v11.1.0) | your laptop, hits Yahoo directly | nothing but `yfinance` (already a dependency) | no — Yahoo's own 1-minute retention is ~30 days, so a 2023 window steps down to `1d` |
+| `eodhd-api` (**the default**) | your laptop, hits *this stack's* OpenBB REST API | just `OPENBB_URL` + the Basic-auth pair — no provider credential, no `openbb` install | yes — the EODHD key lives on the server |
+| `eodhd-local` | your laptop, runs OpenBB **in-process** | `pip install openbb openbb-eodhd`, *and* an EODHD key present locally (e.g. `EODHD_API_KEY`) | yes, for symbols the key covers |
+
+`eodhd-local` exists for the contrast, not because it's the recommended
+path: it makes the same request as `eodhd-api`, but locally, so you can see
+both side by side. It needs `openbb` installed here **and** the provider key
+present here — on your own machine — which is exactly what routing through
+this stack's own REST API (`eodhd-api`) spares you. That's the payoff of
+running the stack at all: one Basic-auth pair replaces an installed SDK plus
+a credential on every laptop that wants to ask.
+
+```bash
+pip install openbb openbb-eodhd   # not a tick-lab dependency -- opt in only if you use this adapter
+EODHD_API_KEY=<your key> tick-lab compare --symbol MSFT --date 2023-05-12 --reference eodhd-local
+```
+
+### The GOOG entitlement example
+
+The EODHD demo key committed in this repo's `credentials.env.example`
+(shared with the Docker stack's `openbb-eodhd` extension) covers `MSFT` but
+**not** `GOOG`. Verified directly against the live EODHD API: an MSFT
+1-minute intraday request for 2023-05-12 returns real bars (HTTP 200); the
+identical request for GOOG returns HTTP 403 Forbidden. Asking for GOOG
+through `eodhd-local` is expected to fail with a *specific, actionable*
+message — an `entitlement` error naming the 403 — rather than a silent
+empty frame:
+
+```bash
+EODHD_API_KEY=<demo key> tick-lab compare --symbol GOOG --date 2023-05-12 --reference eodhd-local
+```
+
+```
+asking eodhd-local for 1m bars...
+  1m: entitlement — GOOG at 1m: 403 Forbidden — this API key's plan does not
+      cover the request (...)
+
+eodhd-local cannot serve this window: entitlement
+  GOOG at 1m: 403 Forbidden — this API key's plan does not cover the request (...)
+```
+
+**This exact transcript was not captured from a live run.** The 403 itself
+was verified directly against the EODHD API (real HTTP 200 for MSFT, real
+HTTP 403 for GOOG); the message shape above is what `eodhd_local.py`'s
+`classify_exception` produces from that failure, exercised in
+`tests/test_eodhd_local.py`. Running it live also needs `openbb` +
+`openbb-eodhd` installed — a heavier ask than the rest of this CLI's
+dependencies — which could not be added to this development environment (the
+latest `openbb` requires Python `<3.13`; this venv runs 3.13). If your own
+`.venv` is on an older Python, `pip install openbb openbb-eodhd` and the two
+commands above are the manual check to run and confirm.
 
 ## Running the tests
 

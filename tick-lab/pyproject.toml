@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tick-lab"
-version = "11.1.0"
+version = "11.1.1"
 description = "Read ticks from the shared ArcticDB store, roll them into bars, and check them against another source"
 readme = "README.md"
 requires-python = ">=3.10"

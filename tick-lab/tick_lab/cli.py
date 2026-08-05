@@ -19,6 +19,7 @@ from tick_lab.config import ConfigError, from_env
 from tick_lab.firstrate import FirstRateFormatError, parse
 from tick_lab.reference.base import ReferenceError, fetch_finest
 from tick_lab.reference.eodhd_api import from_env as eodhd_api_from_env
+from tick_lab.reference.eodhd_local import EodhdLocalAdapter
 from tick_lab.reference.yfinance_adapter import YFinanceAdapter
 from tick_lab.report import compare as compare_frames
 from tick_lab.rollup import aggregate, to_minute_bars
@@ -28,6 +29,7 @@ from tick_lab.store import LibraryNotFoundError, StoreWriteError, TickStore
 ADAPTERS = {
     "yfinance": YFinanceAdapter,
     "eodhd-api": eodhd_api_from_env,
+    "eodhd-local": EodhdLocalAdapter,
 }
 
 TRADE_LIBRARY = "ticks"
