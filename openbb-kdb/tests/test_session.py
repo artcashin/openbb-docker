@@ -1,7 +1,10 @@
 """Session lifecycle: spawn, reuse, notice death, respawn, give up cleanly."""
 
+import subprocess
+
 import pytest
 
+import openbb_kdb.session as session
 from openbb_kdb.config import KdbConfig
 from openbb_kdb.session import KdbSession, KdbUnavailable
 
@@ -28,6 +31,32 @@ class FakeConn:
 
     def close(self):
         self.alive = False
+
+
+class FakeProc:
+    """Stands in for subprocess.Popen -- records terminate/wait/kill calls."""
+
+    def __init__(self, alive=True):
+        self.alive = alive
+        self.terminated = False
+        self.killed = False
+        self.wait_calls = 0
+
+    def poll(self):
+        return None if self.alive else 0
+
+    def terminate(self):
+        self.terminated = True
+
+    def kill(self):
+        self.killed = True
+        self.alive = False
+
+    def wait(self, timeout=None):
+        self.wait_calls += 1
+        if self.alive:
+            raise subprocess.TimeoutExpired(cmd="q", timeout=timeout)
+        return 0
 
 
 def test_connects_and_reuses_one_connection(monkeypatch):
@@ -106,3 +135,60 @@ def test_q_command_binds_loopback_and_sets_workspace():
     assert argv[2] == "127.0.0.1:5000"
     assert "0.0.0.0" not in " ".join(argv)
     assert argv[argv.index("-w") + 1] == "1280"  # 1024 * 1.25
+
+
+def test_orphaned_process_terminated_on_connect_failure(monkeypatch):
+    """A q we spawned must never keep running unsupervised after connect fails."""
+    fake_proc = FakeProc(alive=True)
+
+    def fake_spawn(self):
+        self._proc = fake_proc
+
+    def fake_connect(self):
+        raise OSError("connection refused")
+
+    # Keep the retry loop's total budget tiny so the test doesn't burn real time.
+    monkeypatch.setattr(session, "_CONNECT_BUDGET_S", 0.05)
+    monkeypatch.setattr(session, "_CONNECT_POLL_INTERVAL_S", 0.01)
+    monkeypatch.setattr(KdbSession, "_spawn", fake_spawn)
+    monkeypatch.setattr(KdbSession, "_connect", fake_connect)
+
+    s = KdbSession(cfg())
+    with pytest.raises(KdbUnavailable):
+        s.connection()
+
+    assert fake_proc.terminated is True
+    assert s._proc is None
+
+
+def test_close_terminates_and_reaps_process_falling_back_to_kill():
+    """close() must wait() after terminate(), and escalate to kill() if it hangs."""
+    fake_proc = FakeProc(alive=True)
+    s = KdbSession(cfg())
+    s._proc = fake_proc
+
+    s.close()
+
+    assert fake_proc.terminated is True
+    assert fake_proc.wait_calls >= 1
+    assert fake_proc.killed is True
+    assert s._proc is None
+
+
+def test_close_does_not_kill_a_process_that_exits_on_terminate():
+    """A clean SIGTERM exit must not escalate to SIGKILL."""
+
+    class ExitsOnTerminate(FakeProc):
+        def terminate(self):
+            super().terminate()
+            self.alive = False
+
+    fake_proc = ExitsOnTerminate(alive=True)
+    s = KdbSession(cfg())
+    s._proc = fake_proc
+
+    s.close()
+
+    assert fake_proc.terminated is True
+    assert fake_proc.wait_calls == 1
+    assert fake_proc.killed is False
