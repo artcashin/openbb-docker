@@ -316,9 +316,10 @@ scroll story requires the standalone page.
 ## Networking
 
 `q` binds `127.0.0.1:5000` and is never published by Serve, never funneled.
-(`cache-chart` was never built, so the `:6906` Serve route describing it
-never shipped either — the chart is served by `live-grid` on its existing
-`:6903` route instead.)
+(`cache-chart` was built and committed, then removed before release in favor
+of folding its chart into `live-grid`, so the `:6906` Serve route describing
+it never shipped in a tagged release — the chart is served by `live-grid` on
+its existing `:6903` route instead.)
 
 ## Testing
 

@@ -379,6 +379,30 @@ def test_tick_span_returns_none_when_no_ticks():
     assert s.tick_span("NOPE") is None
 
 
+def test_tick_span_query_guards_the_empty_case_in_q_not_python():
+    """Pins the presence of the `0 = count ...` guard in the query tick_span
+    sends, so a regression can't silently drop it.
+
+    What this proves: the guard clause is still in the outgoing q statement.
+    What this does NOT prove: that the guard actually prevents the bug it was
+    written for. FakeConn matches replies by substring and always hands back
+    `None` for an unmatched query, so this suite passes identically whether or
+    not the guard is present in a query whose result is never inspected here --
+    it can only catch the guard's absence, not its effect. The real defect
+    lived in PyKX: `.pd()` reinterprets a q null timestamp's raw int64 as
+    nanoseconds since the q epoch and returns a real-looking (wrong) Timestamp
+    instead of NaT, so `pd.isna()` never fired. Only a real q process can show
+    that the guard actually suppresses that -- see kdb-store/scripts/tick_check.py.
+    """
+    s, conn = store_with()
+    s.tick_span("AAPL")
+    assert any("0 = count" in q for q in conn.queries), (
+        "tick_span's query must guard the zero-row case in q -- an ungrouped "
+        "aggregate over zero rows returns a row of nulls that PyKX silently "
+        "mis-converts instead of an empty/absent result"
+    )
+
+
 def test_lambda_parameters_in_tick_queries_never_shadow_a_column():
     """A q lambda parameter matching a column name silently returns wrong rows."""
     import re

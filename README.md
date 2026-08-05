@@ -132,8 +132,11 @@ cp credentials.env.example credentials.env   # optional — keyless providers wo
 docker compose up -d --build
 
 # 3. Verify the front door (from any tailnet device)
-curl -u openbb:<password> https://openbb.<your-tailnet>.ts.net/widgets.json   # 200
-curl https://openbb.<your-tailnet>.ts.net/widgets.json                        # 401
+# widgets.json is the (unauthenticated) widget manifest -- auth guards the
+# /api/v1/* command endpoints, so probe one of those for the 401 check.
+curl https://openbb.<your-tailnet>.ts.net/widgets.json                                     # 200, no auth needed
+curl https://openbb.<your-tailnet>.ts.net/api/v1/equity/price/quote                        # 401, no credentials
+curl -u openbb:<password> https://openbb.<your-tailnet>.ts.net/api/v1/equity/price/quote   # 422, authenticated (no symbol given)
 
 # 4. Verify the walls (from a SECOND tailnet device)
 scripts/verify-isolation.sh openbb.<your-tailnet>.ts.net

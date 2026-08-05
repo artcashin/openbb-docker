@@ -11,13 +11,18 @@ door opens.**
 
 From v2.0.0 the compose file refuses to start the API without
 `api-auth.env` — HTTP Basic auth with your username/password. Verify it
-works tailnet-only *before* touching Funnel:
+works tailnet-only *before* touching Funnel. Auth hangs off the
+`get_user_settings` dependency, which only guards `/api/v1/*` — `widgets.json`
+is the unauthenticated widget manifest, so the 401 check has to go against a
+command endpoint:
 
 ```bash
 curl -s -o /dev/null -w '%{http_code}\n' https://openbb.<your-tailnet>.ts.net/widgets.json
+# -> 200 (metadata endpoint, not auth-gated)
+curl -s -o /dev/null -w '%{http_code}\n' https://openbb.<your-tailnet>.ts.net/api/v1/equity/price/quote
 # -> 401
-curl -s -o /dev/null -w '%{http_code}\n' -u openbb:<password> https://openbb.<your-tailnet>.ts.net/widgets.json
-# -> 200
+curl -s -o /dev/null -w '%{http_code}\n' -u openbb:<password> https://openbb.<your-tailnet>.ts.net/api/v1/equity/price/quote
+# -> 422 (authenticated, reaches validation -- no symbol given)
 ```
 
 ## 2. Permit Funnel in the tailnet policy
@@ -46,11 +51,14 @@ tailnet-only.
 
 ## 4. Verify from OFF the tailnet
 
-From a device that is not on your tailnet (a phone on cellular works):
+From a device that is not on your tailnet (a phone on cellular works). As in
+step 1, `widgets.json` is unauthenticated metadata; the auth check needs a
+command endpoint:
 
 ```bash
-curl -s -o /dev/null -w '%{http_code}\n' https://openbb.<your-tailnet>.ts.net/widgets.json   # 401
-curl -s -o /dev/null -w '%{http_code}\n' -u openbb:<password> https://openbb.<your-tailnet>.ts.net/widgets.json  # 200
+curl -s -o /dev/null -w '%{http_code}\n' https://openbb.<your-tailnet>.ts.net/widgets.json   # 200, no auth needed
+curl -s -o /dev/null -w '%{http_code}\n' https://openbb.<your-tailnet>.ts.net/api/v1/equity/price/quote   # 401
+curl -s -o /dev/null -w '%{http_code}\n' -u openbb:<password> https://openbb.<your-tailnet>.ts.net/api/v1/equity/price/quote  # 422
 ```
 
 ## Connecting OpenBB Workspace (pro.openbb.co)
