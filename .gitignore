@@ -16,6 +16,10 @@ kdb-data/
 kdb-license/*
 !kdb-license/.gitkeep
 
+# The operator's own q binary -- bring your own; never commit it.
+# Enforced by kdb/.gitignore itself (belt and suspenders: this directory
+# must be structurally impossible to commit a binary into).
+
 # python
 __pycache__/
 *.egg-info/
