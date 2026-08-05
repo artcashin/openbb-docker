@@ -46,7 +46,7 @@ published image, and not on PyPI — you supply it. Two ways, tried in that
 order:
 
 - **Option A — drop your own q into `./kdb`** (see
-  [kdb/README.md](kdb/README.md)). It's mounted read-only at `/kdb`;
+  [kdb/README.md](kdb/README.md)). It's mounted read-only at `/opt/kx`;
   `openbb-api` spawns it bound to `127.0.0.1:5000` and every other service in
   the stack reaches it over the shared tailscale network namespace — no new
   port, nothing else to configure.

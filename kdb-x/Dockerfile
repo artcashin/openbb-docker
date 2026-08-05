@@ -68,8 +68,20 @@ RUN set -eux; \
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
+# KX_PORT default binds ALL interfaces (0.0.0.0), matching this image's
+# documented use: a standalone container published with
+# `-p 127.0.0.1:5000:5000` on the host. A loopback bind INSIDE the container
+# is unreachable through `-p` -- docker-proxy accepts the TCP connection but
+# the q IPC handshake behind it never completes, which makes that failure
+# mode invisible to a plain `nc -z` check.
+#
+# Override to `-e KX_PORT=127.0.0.1:5000` ONLY when this container shares a
+# network namespace with other services (e.g. a compose stack). In that case
+# 0.0.0.0 would publish an unauthenticated q -- and q IPC executes arbitrary
+# q code -- to every peer that can reach this container, so loopback there is
+# not optional.
 ENV QHOME=/root/.kx \
     PATH=/root/.kx/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-    KX_PORT=127.0.0.1:5000
+    KX_PORT=0.0.0.0:5000
 
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/entrypoint.sh"]

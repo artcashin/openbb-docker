@@ -53,12 +53,26 @@ docker run -d --name kdb \
   -p 127.0.0.1:5000:5000 kdb-x:local
 ```
 
-`KX_PORT` defaults to `127.0.0.1:5000` — loopback, deliberately. In a stack
-where containers share a network namespace, `0.0.0.0` publishes an
-unauthenticated q, and q IPC executes arbitrary q, to every peer on the
-network. Bind `0.0.0.0` **only** for a standalone container whose exposure you
-control with `-p 127.0.0.1:...` on the host side; a loopback bind inside the
-container is unreachable through `-p`.
+`KX_PORT` defaults to `0.0.0.0:5000` — all interfaces, deliberately, because
+this image's documented use is exactly the standalone container above: a
+loopback bind *inside* the container is unreachable through `-p` at all (the
+handshake fails behind docker-proxy, even though `nc -z` on the published port
+looks fine), so `127.0.0.1` as the default would make this very command not
+work. Exposure is controlled on the **host** side instead, with
+`-p 127.0.0.1:5000:5000` as shown above.
+
+**Override this if you run the image differently.** In a stack where this
+container shares a network namespace with others (e.g. spawned as a child of
+another service, or `network_mode: service:...` in compose), bind loopback
+instead:
+
+```bash
+-e KX_PORT=127.0.0.1:5000
+```
+
+Getting this backwards is a real exposure, not a cosmetic one: `0.0.0.0`
+inside a shared namespace publishes an **unauthenticated q — and q IPC
+executes arbitrary q code — to every peer that can reach this container**.
 
 ## The licence file
 

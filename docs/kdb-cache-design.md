@@ -76,7 +76,7 @@ why. Current variables:
 | Var | Default | Meaning |
 |---|---|---|
 | `KDB_EMBEDDED` | *derived* | Spawn q inside the container. With no explicit value it is derived from whether an executable `bin/q` is actually found at `KDB_LOCAL_QHOME` — spawning only makes sense for a q the operator supplied. Set it explicitly to override. |
-| `KDB_LOCAL_QHOME` | `/kdb` | Where the operator mounted their own q (this repo ships none). `QHOME` is accepted as a fallback for the older variable name, read **once per process, before `import pykx`** — importing PyKX rewrites `QHOME` in place to point at its own bundled q, so a second read would silently answer with PyKX's lib instead of the operator's install. |
+| `KDB_LOCAL_QHOME` | `/opt/kx` | Where the operator mounted their own q (this repo ships none). `QHOME` is accepted as a fallback for the older variable name, read **once per process, before `import pykx`** — importing PyKX rewrites `QHOME` in place to point at its own bundled q, so a second read would silently answer with PyKX's lib instead of the operator's install. |
 | `KDB_HOST` | *(unset)* | Point at an **existing kdb+ server** — only consulted once spawning and a loopback probe both fail; see the chain below. |
 | `KDB_PORT` | `5000` | As above. |
 | `KDB_MEMORY_MB` | `8192` | Cache budget. q is launched with `-w` = this × 1.25 as containment. |
@@ -103,7 +103,7 @@ Dockerfile carries no kdb-x stage at all, the published image contains no
 ships. The operator supplies q themselves, and `kdb_store.session.KdbSession`
 resolves it through a chain, tried in order:
 
-1. **Spawn.** If `KDB_LOCAL_QHOME` (default `/kdb`, bind-mounted from
+1. **Spawn.** If `KDB_LOCAL_QHOME` (default `/opt/kx`, bind-mounted from
    `./kdb` in `docker-compose.yml`) holds an executable `bin/q`, run it as a
    child of `openbb-api`, bound to `127.0.0.1:KDB_PORT`.
 2. **Loopback.** Probe `127.0.0.1:KDB_PORT` directly — a q another service in

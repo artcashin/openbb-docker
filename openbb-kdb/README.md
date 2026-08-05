@@ -27,7 +27,7 @@ cached) or `bypass` (kdb unavailable — served straight from upstream).
 | Env var | Default | Meaning |
 |---|---|---|
 | `KDB_EMBEDDED` | *derived* | Spawn q inside this container. Unset, it follows whether a q is actually found at `KDB_LOCAL_QHOME` — see the chain below. Set it explicitly to override |
-| `KDB_LOCAL_QHOME` | `/kdb` | Where the operator mounted their own q (bring-your-own — this repo ships none; see [../kdb/README.md](../kdb/README.md)). `QHOME` is accepted as a fallback for anyone carrying the older variable, read once per process, *before* `import pykx` rewrites it to PyKX's own bundled q |
+| `KDB_LOCAL_QHOME` | `/opt/kx` | Where the operator mounted their own q (bring-your-own — this repo ships none; see [../kdb/README.md](../kdb/README.md)). `QHOME` is accepted as a fallback for anyone carrying the older variable, read once per process, *before* `import pykx` rewrites it to PyKX's own bundled q |
 | `KDB_HOST` | *(unset)* | Point at your own kdb+ container — only consulted once the chain's earlier links fail; see below |
 | `KDB_PORT` | `5000` | |
 | `KDB_MEMORY_MB` | `8192` | Cache budget; q gets `-w` 25% above it |
@@ -37,7 +37,7 @@ cached) or `bypass` (kdb unavailable — served straight from upstream).
 
 **The resolution chain**, tried in order on every connect/respawn attempt:
 
-1. **Spawn.** If `KDB_LOCAL_QHOME` (default `/kdb`) holds an executable
+1. **Spawn.** If `KDB_LOCAL_QHOME` (default `/opt/kx`) holds an executable
    `bin/q`, run it as a child bound to `127.0.0.1:KDB_PORT`.
 2. **Loopback.** Probe `127.0.0.1:KDB_PORT` — a q another service in the same
    shared network namespace already spawned (e.g. `openbb-api`, from
