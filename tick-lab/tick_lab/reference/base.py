@@ -22,9 +22,14 @@ INTERVAL_LADDER = ("1m", "5m", "15m", "30m", "1h", "1d")
 # Anything else is a real problem and must surface, not be stepped past.
 _STEPPABLE = ("retention", "empty")
 
-# The documented closed set a ReferenceError.kind may take. auth, entitlement
-# and transport are never steppable -- see fetch_finest below.
-_KINDS = _STEPPABLE + ("auth", "entitlement", "transport")
+# The documented closed set a ReferenceError.kind may take:
+# - retention: data retention limit; try a coarser interval
+# - empty: no rows in the window; try a coarser interval
+# - auth: authentication failure (bad key); permanent
+# - entitlement: unauthorized for this plan; permanent
+# - transport: network or server failure; permanent
+# - not_covered: symbol/route not available from this source; permanent
+_KINDS = _STEPPABLE + ("auth", "entitlement", "transport", "not_covered")
 
 
 class ReferenceError(Exception):

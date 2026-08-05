@@ -20,18 +20,9 @@ def adapter():
     return EodhdApiAdapter("https://openbb.example.ts.net", "user", "pass")
 
 
-# base.ReferenceError.kind is a CLOSED set: retention, empty, auth,
-# entitlement, transport -- there is no "not_covered" kind (the brief's
-# sample invents one, which base.ReferenceError would reject with a
-# ValueError). 404 (symbol/route not found) is a real, non-steppable
-# problem with no better-fitting kind in the closed set, so it classifies as
-# "transport" -- same bucket yfinance_adapter.classify() uses for any
-# recognised-but-uncategorised non-steppable failure. The detail text still
-# says "404" and names the symbol, so the fact is not lost, only the kind
-# is folded into the existing non-steppable bucket.
 @pytest.mark.parametrize(
     "status,kind",
-    [(401, "auth"), (403, "entitlement"), (404, "transport"), (500, "transport")],
+    [(401, "auth"), (403, "entitlement"), (404, "not_covered"), (500, "transport")],
 )
 def test_status_codes_are_classified(status, kind):
     assert classify_status(status, "").kind == kind

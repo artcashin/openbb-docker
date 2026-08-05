@@ -34,12 +34,11 @@ def classify_status(status: int, body: str) -> ReferenceError:
 
     401/403/404/5xx are different facts (bad key, unentitled plan, unknown
     symbol, server-side transport failure) and must not collapse into one
-    message. Kind, however, is a closed set (see `ReferenceError`): 401 is
-    `auth` and 403 is `entitlement`, but there is no dedicated kind for "404
-    not found" -- it is a real, non-steppable problem like any other, so it
-    joins 5xx (and anything else unrecognised) in the `transport` bucket. The
-    detail string still names the status and the route, so the fact is not
-    lost, only folded into the existing non-steppable kind.
+    message. A 404 means the symbol or route is not available from this source
+    — a data-coverage fact. A 5xx or connection error is a transport failure
+    — a network fact. These are distinct: "not covered" tells the reader to
+    pick a different symbol or source; "transport" tells them to retry or
+    check the stack.
     """
     if status == 401:
         return ReferenceError("auth", f"401 from the OpenBB API — check Basic auth ({body[:120]})")
@@ -49,7 +48,7 @@ def classify_status(status: int, body: str) -> ReferenceError:
             f"403 Forbidden — the provider plan does not cover this request ({body[:120]})",
         )
     if status == 404:
-        return ReferenceError("transport", f"404 — symbol or route not found ({body[:120]})")
+        return ReferenceError("not_covered", f"404 — symbol or route not available from this source ({body[:120]})")
     return ReferenceError("transport", f"HTTP {status} from the OpenBB API ({body[:120]})")
 
 

@@ -77,6 +77,16 @@ def test_entitlement_errors_are_not_swallowed_by_stepping_down():
     assert adapter.calls == ["1m"]
 
 
+def test_not_covered_errors_are_not_swallowed_by_stepping_down():
+    """A 404 means 'this source does not have this symbol', not 'try a
+    coarser bar' -- a symbol unavailable at 1m is unavailable at 1d too."""
+    adapter = FakeAdapter({"1m": ReferenceError("not_covered", "404 symbol not found")})
+    with pytest.raises(ReferenceError) as exc:
+        fetch_finest(adapter, "WEIRD", "2023-05-12", "2023-05-12")
+    assert exc.value.kind == "not_covered"
+    assert adapter.calls == ["1m"]
+
+
 def test_raises_when_the_whole_ladder_is_exhausted():
     adapter = FakeAdapter({i: ReferenceError("empty", "no rows") for i in INTERVAL_LADDER})
     with pytest.raises(ReferenceError, match="no interval"):
