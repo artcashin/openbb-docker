@@ -3905,10 +3905,20 @@ echo "entrypoint: obtaining certificate for $DOMAIN"
     exit 1
 }
 
+# Bind these BEFORE installing the trap. Under `set -u`, dereferencing an
+# unset variable is a fatal error during word expansion -- it aborts before
+# the `kill` and its `|| true` ever run. A signal arriving between the trap
+# and the assignments below would otherwise kill the script on the unbound
+# $RENEW_PID and never reach the tailscaled shutdown.
+MINIO_PID=""
+RENEW_PID=""
+
 term() {
-    kill -TERM "$MINIO_PID" 2>/dev/null || true
-    wait "$MINIO_PID" 2>/dev/null || true
-    kill -TERM "$RENEW_PID" 2>/dev/null || true
+    [ -n "${MINIO_PID:-}" ] && kill -TERM "$MINIO_PID" 2>/dev/null || true
+    [ -n "${MINIO_PID:-}" ] && wait "$MINIO_PID" 2>/dev/null || true
+    [ -n "${RENEW_PID:-}" ] && kill -TERM "$RENEW_PID" 2>/dev/null || true
+    # Unconditional: TAILSCALED_PID is always bound by this point, and the
+    # daemon must come down even when the kills above were skipped.
     kill -TERM "$TAILSCALED_PID" 2>/dev/null || true
     exit 0
 }
