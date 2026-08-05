@@ -40,7 +40,7 @@ Two things must be true for this to be worth an episode:
   fetch-on-miss. The new extension is a cache-scoped descendant of it.
 - `kdb-x` container images (`QHOME=/root/.kx`, `KX_PORT=5000`), with a kdb-x
   license baked in.
-- `openbb-eodhd` (Ep. 8), in this repo — the default upstream.
+- `openbb-eodhd` (Ep. 9), in this repo — the default upstream.
 
 ## Design decisions
 

@@ -2,7 +2,7 @@
 
 OpenBB Workspace `live_grid` backend streaming real-time **EODHD** prices —
 US equities, crypto and forex in one watchlist. Companion code for
-*Adventures in OpenBB, Ep. 8*, extended in **Ep. 10** with tick recording and
+*Adventures in OpenBB, Ep. 9*, extended in **Ep. 10** with tick recording and
 a chart that joins cached history to bars built from the live feed.
 
 - `GET /widgets.json` — the widget contract (`live_grid` plus, when the chart

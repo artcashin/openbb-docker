@@ -27,7 +27,7 @@ never appears in a released tag.
 
 ## The starting point
 
-`live-grid` (Ep. 8) streams EODHD websocket prices for equities, crypto and
+`live-grid` (Ep. 9) streams EODHD websocket prices for equities, crypto and
 forex. `QuoteTable.apply_message` updates one current-value row per symbol and
 **discards the message**. There is no history to aggregate.
 

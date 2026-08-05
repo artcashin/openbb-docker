@@ -1,7 +1,7 @@
 # OpenBB Platform API + MCP server, containerized. Companion image for the
-# Adventures in OpenBB series (v8.0.0).
+# Adventures in OpenBB series (v9.0.0).
 #
-# Scope (v8.0.0): the Platform REST API with OpenBB's standard providers,
+# Scope (v9.0.0): the Platform REST API with OpenBB's standard providers,
 # the analysis extensions, the official MCP server for AI agents, and the
 # EODHD provider extension. No CLI/Terminal; other custom providers arrive
 # with their episodes.
@@ -97,7 +97,7 @@ p.write_text(src.replace(anchor, anchor.replace("\n)", "\n    allow_private_netw
 PY
 RUN python -c "import ast; ast.parse(open('/usr/local/lib/python3.12/site-packages/openbb_core/api/rest_api.py').read()); print('rest_api CORS patch parses OK')"
 
-# Custom EODHD provider extension (Ep. 8): equity/ETF/crypto/forex historical
+# Custom EODHD provider extension (Ep. 9): equity/ETF/crypto/forex historical
 # (EOD + intraday) and fundamentals via the official SDK, pinned to a GitHub
 # commit (the PyPI release predates the SDK's typed errors and timeouts).
 COPY openbb-eodhd/ /opt/openbb-eodhd/

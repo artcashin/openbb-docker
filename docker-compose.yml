@@ -152,7 +152,7 @@ services:
       #   mkdir -p key-maint-admin && chmod 700 key-maint-admin
       - ./key-maint-admin:/config/admin
 
-  # live-grid (Ep. 8; tick recording + unified chart added Ep. 10): OpenBB
+  # live-grid (Ep. 9; tick recording + unified chart added Ep. 10): OpenBB
   # Workspace live_grid backend streaming EODHD websocket prices. Loopback
   # :6903; Serve publishes it on :6903 — tailnet-only unless you deliberately
   # funnel it (it carries your market-data key and has no auth of its own,
@@ -204,7 +204,7 @@ services:
     volumes:
       - ./kdb-license:/opt/kx-license:ro
 
-  # rss-ticker (Ep. 9): the news wire — polls RSS feeds, streams new articles
+  # rss-ticker (Ep. 8): the news wire — polls RSS feeds, streams new articles
   # over a websocket, serves a Bloomberg-style news window widget. Source lives
   # in its own repo; compose builds it from GitHub. Loopback :8088; Serve
   # publishes it on :8088 — tailnet-only, NEVER funneled (under tailscale_auth
@@ -216,7 +216,7 @@ services:
   #   cp rss-ticker.env.example rss-ticker.env       # TICKER_ADMIN_KEY
   rss-ticker:
     build: https://github.com/artcashin/rss-ticker.git
-    image: rss-ticker:9.0.0
+    image: rss-ticker:8.0.0
     container_name: openbb-rss-ticker
     restart: unless-stopped
     network_mode: service:tailscale

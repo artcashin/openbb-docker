@@ -12,8 +12,8 @@ from later chapters is.
 | v2.0.0 | Ep. 2 — The Borrowed Terminal | HTTP Basic auth on the API, Tailscale Funnel (port 443 only) |
 | v3.0.0 | Ep. 3 — (with BDOBB v3.0.0) | key-maint: the transport-tiered key status widget backend |
 | v6.0.0 | Ep. 6 — The Analyst | OpenBB MCP server (tool-discovery mode), agent deploy configs |
-| v8.0.0 | Ep. 8 — The Tape | EODHD provider extension + live-grid streaming service |
-| v9.0.0 | Ep. 9 — All the News That Fits, We Print | rss-ticker news wire joins the stack |
+| v8.0.0 | Ep. 8 — All the News That Fits, We Print | rss-ticker news wire joins the stack |
+| v9.0.0 | Ep. 9 — The Tape | EODHD provider extension + live-grid streaming service |
 | v10.0.0 | Ep. 10 — The Cache | kdb+ read-through cache (`provider="kdb"`) + tick recording and a unified chart in `live-grid` |
 
 ## What you get (this release: v10.0.0)
@@ -89,7 +89,17 @@ Either way the licence stays yours: no `*.lic` is ever copied into this
 image, the builder stage deletes every one it finds, and the build fails if
 any survives into the final stage.
 
-**New in v9.0.0 (Ep. 9):** the wire. The
+**New in v9.0.0 (Ep. 9):** the tape. The **openbb-eodhd provider
+extension** (`provider="eodhd"`: equity/ETF/crypto/forex historical, EOD +
+intraday, and fundamentals — symbols qualified invisibly, unknown fields
+passed through, SDK pinned to a commit) and the **live-grid** service — a
+Workspace `live_grid` backend streaming EODHD websocket prices with REST
+snapshot seeding, per-asset-class feeds, debounced rebuilds and ~4
+coalesced flushes/second. Serve publishes it on :6903, tailnet-only. See
+[live-grid/README.md](live-grid/README.md) and
+[openbb-eodhd/README.md](openbb-eodhd/README.md).
+
+**New in v8.0.0 (Ep. 8):** the wire. The
 **[rss-ticker](https://github.com/artcashin/rss-ticker)** news service joins
 the sidecar: it polls your RSS feeds (conditional GETs, jitter, backoff),
 dedupes into SQLite, streams new articles over a websocket, and serves a
@@ -100,16 +110,6 @@ Serve publishes it on :8088, tailnet-only, never funneled. Compose builds it
 straight from its repo; configure `rss-ticker-config/config.yaml` (from the
 example) and `rss-ticker.env` (admin key), then add the backend in Workspace
 or BDOBB with a **blank API key** — your Serve identity is the credential.
-
-**New in v8.0.0 (Ep. 8):** the tape. The **openbb-eodhd provider
-extension** (`provider="eodhd"`: equity/ETF/crypto/forex historical, EOD +
-intraday, and fundamentals — symbols qualified invisibly, unknown fields
-passed through, SDK pinned to a commit) and the **live-grid** service — a
-Workspace `live_grid` backend streaming EODHD websocket prices with REST
-snapshot seeding, per-asset-class feeds, debounced rebuilds and ~4
-coalesced flushes/second. Serve publishes it on :6903, tailnet-only. See
-[live-grid/README.md](live-grid/README.md) and
-[openbb-eodhd/README.md](openbb-eodhd/README.md).
 
 **New in v6.0.0 (Ep. 6, pairs with BDOBB v6.0.0):** the **OpenBB MCP
 server** — the analyst's hands. Same image, wrapping the same Platform
