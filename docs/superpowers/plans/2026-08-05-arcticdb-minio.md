@@ -18,6 +18,7 @@
 - **Session default:** `regular` = 09:30:00 inclusive to 16:00:00 exclusive, US Eastern (D9).
 - **Secrets:** no real credentials, hostnames, or tailnet names in any committed file. `scripts/scrub-check.sh` must pass before every commit.
 - **Base images:** pin explicit tags, never `latest`.
+- **kdb-x base image (Ep. 10's concern, NOT Ep. 11's):** this chapter does not touch the `kdbx` stage, the `openbb-kdb`/`kdb-store` packages, or the q runtime. It is recorded here only because Ep. 11's `platform: linux/amd64` pin is what *exposed* an Ep. 10 problem: `kdb-x:latest` was a single-arch **arm64** manifest, so an amd64 build copied AArch64 `q` binaries into an x86_64 image, and because `COPY --from` never *executes* anything the build stayed green while only the runtime q spawn failed. Ep. 10 fixed it by publishing multi-arch `:1.0` and `:latest`, and carries both a versioned pin and a `build-smoke` CI step asserting the bundled q's ELF architecture. **Ep. 11 must not re-add either** — it inherits them through the Task 17 rebase, and Step 4 there checks they survived it.
 - **Extension versions (D6, partial):** `openbb-arcticdb` → `11.0.0`, `openbb-eodhd` `0.1.0` → `8.0.0`. `openbb-kdb`/`kdb-store` are DEFERRED — a concurrent Ep. 10 session is rewriting that package.
 - **Python style:** ruff, `line-length = 100`, `target-version = "py310"`, matching `openbb-kdb/pyproject.toml`.
 - **Licensing:** the FirstRate zip is third-party licensed data and is **never committed**. Tests use synthetic fixtures in the FirstRate format.
@@ -3321,7 +3322,34 @@ git fetch origin && git rebase ep10-kdb-cache
 
 Resolve conflicts in `Dockerfile`, `docker-compose.yml` and `openbb-kdb/pyproject.toml` — Ep. 10's `kdb-store` split touches the last of these. Re-run Step 1 after rebasing.
 
-- [ ] **Step 4: Tag**
+
+- [ ] **Step 4: Verify the kdb-x pin and that the bundled q actually executes**
+
+**Post-rebase gate.** Both of the things checked here belong to **Ep. 10, not this chapter** — Ep. 11 deliberately adds neither, and must not re-add them. They arrive with the rebase in Step 3, and a `Dockerfile` or `ci.yml` conflict there could silently drop either. This chapter's `platform: linux/amd64` pin is the case that makes a wrong-architecture q certain rather than merely possible, so Ep. 11 is where the loss would hurt — which is why it is worth one grep here even though the code is Ep. 10's. See the kdb-x bullet in Global Constraints.
+
+Check after the rebase, not before:
+
+```bash
+grep -q 'FROM ghcr.io/artcashin/kdb-x:1.0 AS kdbx' Dockerfile \
+  || { echo 'FAIL: kdbx stage is not pinned to :1.0'; exit 1; }
+grep -q 'e_machine' .github/workflows/ci.yml \
+  || { echo 'FAIL: the build-smoke q architecture check was lost in the rebase'; exit 1; }
+```
+
+Then prove it on the real artifact — this image is what gets tagged, and it is built `--platform linux/amd64`, the exact case that broke:
+
+```bash
+docker build --platform linux/amd64 -t openbb-local:11.0.0 .
+docker run --rm --platform linux/amd64 --entrypoint python3 openbb-local:11.0.0 \
+  -c 'import os,sys; m=os.uname().machine; want={"x86_64":0x3e,"aarch64":0xb7}[m]; d=open("/opt/kx/bin/q","rb").read(20); got=d[18]|(d[19]<<8); print(f"image={m} q e_machine=0x{got:x} want=0x{want:x}"); sys.exit(got!=want)'
+docker run --rm --platform linux/amd64 --entrypoint sh openbb-local:11.0.0 \
+  -c '/opt/kx/bin/q -e 0 </dev/null 2>&1' | grep -q 'license error' \
+  || { echo 'FAIL: bundled q did not execute'; exit 1; }
+```
+
+Expected: `image=x86_64 q e_machine=0x3e want=0x3e`, then a silent pass. `kc.lic` is deliberately absent from the image, so kdb+'s own `license error: no license loaded` is what a *working* binary prints — it proves the ELF loaded and ran. A wrong-arch binary never reaches that point: the kernel refuses the ELF and `sh` reports `not found`. **Do not tag on a failure** — a mismatched q means `provider="kdb"` silently degrades to pass-through in the released image.
+
+- [ ] **Step 5: Tag**
 
 ```bash
 git tag -a v11.0.0 -m "v11.0.0: the shared store — MinIO node, ArcticDB provider, tick-lab (Adventures in OpenBB, Ep. 11)"
