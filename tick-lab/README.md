@@ -228,12 +228,24 @@ eodhd-local cannot serve this window: entitlement
 was verified directly against the EODHD API (real HTTP 200 for MSFT, real
 HTTP 403 for GOOG); the message shape above is what `eodhd_local.py`'s
 `classify_exception` produces from that failure, exercised in
-`tests/test_eodhd_local.py`. Running it live also needs `openbb` +
-`openbb-eodhd` installed — a heavier ask than the rest of this CLI's
-dependencies — which could not be added to this development environment (the
-latest `openbb` requires Python `<3.13`; this venv runs 3.13). If your own
-`.venv` is on an older Python, `pip install openbb openbb-eodhd` and the two
-commands above are the manual check to run and confirm.
+`tests/test_eodhd_local.py`. Running it live also needs `openbb` plus the EODHD provider extension
+installed here — a heavier ask than the rest of this CLI's dependencies, and
+the whole reason `--reference eodhd-api` exists.
+
+One wrinkle worth knowing before you try: **`openbb-eodhd` is not on PyPI.**
+It is this repository's own extension, so `pip install openbb-eodhd` fails
+with "No matching distribution found". Install it from the checkout instead:
+
+```bash
+.venv/bin/pip install openbb ../openbb-eodhd
+EODHD_API_KEY=<your key> .venv/bin/tick-lab compare \
+  --symbol GOOG --date 2023-05-12 --reference eodhd-local
+```
+
+(`openbb` 4.7.2 itself installs fine on Python 3.13; only releases up to
+4.4.5 capped at `<3.13`.) The GOOG entitlement error is observable on its own
+— it fails before any stored ticks are needed — so it is the cheaper half of
+this check to reproduce.
 
 ## Running the tests
 
