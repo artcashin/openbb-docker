@@ -74,6 +74,23 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build the image
         run: docker build -t openbb-local:ci .
+      - name: The bundled q matches the image architecture and executes
+        run: |
+          # COPY --from cannot fail on an architecture mismatch -- it copies
+          # whatever the kdbx stage resolved to, and copying never executes
+          # anything. So a wrong-arch q ships inside a perfectly green build
+          # and only surfaces when openbb-api spawns it at runtime. That is
+          # not hypothetical: kdb-x:latest was an arm64-only manifest until
+          # 2026-08-05, and every amd64 build silently bundled AArch64
+          # binaries. Assert both halves here, on this x86_64 runner.
+          docker run --rm --entrypoint python3 openbb-local:ci -c 'import os,sys; m=os.uname().machine; want={"x86_64":0x3e,"aarch64":0xb7}[m]; d=open("/opt/kx/bin/q","rb").read(20); got=d[18]|(d[19]<<8); print(f"image={m} q e_machine=0x{got:x} want=0x{want:x}"); sys.exit(got!=want)'
+          # kc.lic is deliberately absent from the image, so kdb+'s own
+          # "license error" is how a working binary announces itself -- it
+          # proves the ELF loaded and ran. A wrong-arch binary never reaches
+          # that point: the kernel refuses the ELF and sh reports "not found".
+          out=$(docker run --rm --entrypoint sh openbb-local:ci -c '/opt/kx/bin/q -e 0 </dev/null 2>&1' || true)
+          echo "$out"
+          echo "$out" | grep -q 'license error' || { echo "::error::bundled q did not execute"; exit 1; }
       - name: Boot the API with Basic auth
         run: |
           docker run -d --name api \

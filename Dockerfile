@@ -16,7 +16,15 @@
 # additive, so the COPY layer would still hold an intact kc.lic that anyone
 # who pulls the image can extract with `docker save`, even though the
 # flattened filesystem looks clean.
-FROM ghcr.io/artcashin/kdb-x:latest AS kdbx
+#
+# Pinned to :1.0, not :latest. Two reasons, and the second one bites silently:
+# :latest was a SINGLE-arch (arm64) manifest until 2026-08-05, so an amd64
+# build resolved it anyway and copied AArch64 binaries into an x86_64 image --
+# COPY never executes anything, so the build stayed green and only the q spawn
+# failed at runtime. :1.0 is a multi-arch index (amd64 + arm64) and resolves
+# per build platform. Ep. 11 pins platform: linux/amd64 (ArcticDB ships no
+# aarch64 Linux wheels), which is exactly the case that broke.
+FROM ghcr.io/artcashin/kdb-x:1.0 AS kdbx
 RUN rm -f /root/.kx/kc.lic
 
 FROM python:3.12-slim
