@@ -194,9 +194,22 @@ class ReadThroughCache:
         except Exception:  # noqa: BLE001 - an unparseable interval must not fail the call
             remaining = [] if log.ranges else [(start, end)]
         for gap in remaining:
-            await self._fetch(
-                model, params, credentials, symbol, interval, gap[0], gap[1], meta, log
-            )
+            try:
+                await self._fetch(
+                    model, params, credentials, symbol, interval, gap[0], gap[1], meta, log
+                )
+            except Exception:  # noqa: BLE001 - traced, then handed back untouched
+                # There is no third fallback: the cache is already out of the
+                # way, so a failure here is the PROVIDER failing on its own
+                # terms and the caller must see the provider's own exception
+                # (OpenBB assigns meaning to some of them). Logged explicitly
+                # so the trace shows the bypass was reached and then failed,
+                # rather than the exception escaping silently.
+                logger.warning(
+                    "upstream fetch failed on the bypass path for %s %s %s..%s",
+                    symbol, interval, gap[0], gap[1], exc_info=True,
+                )
+                raise
         rows = _dedupe(log.rows)
         meta["cache"] = "bypass"
         # Nothing here came out of kdb, so the split is unambiguous -- and it
@@ -258,11 +271,17 @@ class ReadThroughCache:
                     fetch_start = floor
                 compare = fetch_start < gap[0]
 
+            # What actually goes on the wire. Intraday gaps are widened to
+            # whole days because the provider's query params only take dates
+            # (see `_day_range`), and coverage records that wider range: it is
+            # what was asked for and what was stored, so the same day is not
+            # refetched on the next request. What is SERVED is narrowed back to
+            # the caller's window by the read_bars below.
+            wire_start, wire_end = _day_range(fetch_start, gap[1], step)
+
             rows = await self._fetch(
-                model, params, credentials, symbol, interval, fetch_start, gap[1], meta, log
+                model, params, credentials, symbol, interval, wire_start, wire_end, meta, log
             )
-            if not rows:
-                continue
             frame = _to_frame(rows)
 
             t0 = time.perf_counter()
@@ -272,8 +291,13 @@ class ReadThroughCache:
             cached = self.store.read_bars(
                 symbol, interval, fetch_start, min(gap[0] - step, boundary)
             ) if compare else None
-            self.store.write_bars(symbol, interval, frame)
-            recorded = trim_tail((fetch_start, gap[1]), boundary)
+            if rows:
+                self.store.write_bars(symbol, interval, frame)
+            # Recorded even when the provider returned NOTHING: "we asked and
+            # there is no data here" (the pre-IPO prefix of a zoomed-out chart)
+            # is exactly what the coverage table exists to remember. Without
+            # this, every repeat of that request pays for the same empty fetch.
+            recorded = trim_tail((wire_start, wire_end), boundary)
             if recorded:
                 self.store.record_coverage(symbol, interval, recorded)
             meta["kdb_ms"] += (time.perf_counter() - t0) * 1000
@@ -308,25 +332,50 @@ class ReadThroughCache:
     async def _timed_fetch(self, model, params, credentials, symbol, interval, start, end):
         call = dict(params)
         call["symbol"] = symbol
-        call["start_date"], call["end_date"] = _fetch_bounds(interval, start, end)
+        call["start_date"], call["end_date"] = _fetch_bounds(start, end)
         t0 = time.perf_counter()
         rows = await self._fetch_gap(self.config.upstream, model, call, credentials)
         return rows, (time.perf_counter() - t0) * 1000
 
 
-def _fetch_bounds(interval: str, start, end):
-    """Bounds as the upstream fetcher wants them.
+def _day_range(start, end, step):
+    """The range an upstream call actually covers, given date-only bounds.
 
-    Daily-and-longer intervals take plain dates. Intraday keeps the time of
-    day: sending `.date()` for a 14:00->15:07 five-minute gap would refetch the
-    whole day, every time.
+    Daily-and-longer intervals are already whole days. An INTRADAY gap is
+    widened to whole days, because `_fetch_bounds` can only send dates: a
+    14:00->15:07 five-minute hole goes on the wire as one date, and the
+    provider answers with the whole day. Recording the widened range as
+    coverage is what stops that day being refetched on every later request --
+    the concern that once, wrongly, made this send raw datetimes. Claiming the
+    whole day as covered is honest precisely because the wire request IS the
+    whole day: with date-only bounds the provider has nothing narrower to
+    answer with.
     """
-    if interval_step(interval) >= timedelta(days=1):
-        return (
-            start.date() if isinstance(start, datetime) else start,
-            end.date() if isinstance(end, datetime) else end,
-        )
-    return start, end
+    if step >= timedelta(days=1):
+        return start, end
+    if not isinstance(start, datetime) or not isinstance(end, datetime):
+        return start, end
+    day_start = datetime(start.year, start.month, start.day)
+    # Inclusive bar-timestamp convention: the last bar of the day starts one
+    # step before midnight (23:55 for 5m), so consecutive days coalesce.
+    day_end = datetime(end.year, end.month, end.day) + timedelta(days=1) - step
+    return day_start, day_end
+
+
+def _fetch_bounds(start, end):
+    """Bounds as the upstream fetcher wants them: plain dates, ALWAYS.
+
+    OpenBB's `EquityHistoricalQueryParams` types `start_date`/`end_date` as
+    `date | None`, and pydantic rejects a datetime carrying a time of day
+    (`date_from_datetime_inexact`). Sending datetimes for intraday intervals
+    therefore made every intraday request through provider="kdb" a hard error,
+    including on the bypass path. Intraday ranges are widened to whole days by
+    `_day_range` before they reach here, so nothing is silently lost.
+    """
+    return (
+        start.date() if isinstance(start, datetime) else start,
+        end.date() if isinstance(end, datetime) else end,
+    )
 
 
 def _adjusted_history_changed(cached, fresh) -> bool:
@@ -454,6 +503,14 @@ def _to_frame(rows: list[dict]):
             "Upstream rows carry no recognisable timestamp column (looked for "
             f"{', '.join(_STAMP_KEYS)}); got {list(frame.columns)}."
         )
+    if stamp != "t" and "t" in frame.columns:
+        # A row carrying BOTH a preferred stamp column and a raw `t` (some
+        # providers ship an epoch `t` beside a parsed `date`): renaming would
+        # produce two columns called `t` and every later ["t"] lookup would
+        # return a DataFrame, raising deep inside the merge. The preference
+        # order in _STAMP_KEYS decides, and the loser goes.
+        logger.debug("dropping the redundant 't' column in favour of %r", stamp)
+        frame = frame.drop(columns=["t"])
     frame = frame.rename(columns={stamp: "t"})
     frame["t"] = _naive_t(frame["t"])
     return frame.sort_values("t").reset_index(drop=True)

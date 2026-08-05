@@ -412,33 +412,150 @@ async def test_concurrent_requests_for_a_closed_window_fetch_once():
     assert len(calls) == 1
 
 
-async def test_intraday_gaps_keep_the_time_of_day():
-    """A 5-minute gap must not be widened to whole days."""
+async def test_intraday_gaps_go_out_as_whole_day_dates_and_are_covered_as_such():
+    """The provider's query params only take dates, so a 14:00->15:07 hole goes
+    on the wire as one DATE -- and the whole day it brings back is recorded as
+    coverage, so the morning is never fetched twice. What is SERVED is still
+    narrowed to the caller's window."""
     store = FakeStore()
     first_now = D("2025-06-10T15:07:00")
-    cache, calls = make_cache(store, [[
-        {"date": "2025-06-10T14:00:00", "close": 1.0},
-        {"date": "2025-06-10T15:00:00", "close": 1.0},
-    ]])
-    await cache.get(
+    cache, calls = make_cache(store, [
+        [{"date": "2025-06-10T09:30:00", "close": 1.0},   # before the window
+         {"date": "2025-06-10T14:00:00", "close": 1.0},
+         {"date": "2025-06-10T15:00:00", "close": 1.0}],
+        [{"date": "2025-06-10T15:05:00", "close": 2.0}],
+    ])
+    rows, meta = await cache.get(
         "AAPL", "5m", D("2025-06-10T14:00:00"), first_now,
         "EquityHistorical", {"symbol": "AAPL"}, None, now=first_now,
     )
-    assert calls[0]["start_date"] == D("2025-06-10T14:00:00")
-    assert calls[0]["end_date"] == first_now
-    assert not isinstance(calls[0]["start_date"], date) or isinstance(
-        calls[0]["start_date"], datetime
-    )
+    # Dates, never datetimes: pydantic rejects a datetime with a time of day.
+    assert calls[0]["start_date"] == calls[0]["end_date"] == date(2025, 6, 10)
+    assert not isinstance(calls[0]["start_date"], datetime)
+    assert not isinstance(calls[0]["end_date"], datetime)
+    # The 09:30 bar was stored but is outside the requested window.
+    assert [pd.Timestamp(r["date"]) for r in rows] == [
+        pd.Timestamp("2025-06-10T14:00:00"), pd.Timestamp("2025-06-10T15:00:00")
+    ]
+    assert meta["rows_from_cache"] + meta["rows_from_upstream"] == len(rows)
+    # Coverage spans the whole day up to the last COMPLETE bar, no further.
+    assert store.coverage[("AAPL", "5m")] == [
+        (D("2025-06-10T00:00:00"), D("2025-06-10T15:00:00"))
+    ]
 
     later = D("2025-06-10T15:12:00")
-    await cache.get(
+    rows, meta = await cache.get(
         "AAPL", "5m", D("2025-06-10T14:00:00"), later,
         "EquityHistorical", {"symbol": "AAPL"}, None, now=later,
     )
-    # The second call refetches minutes, not the whole trading day.
+    # One gap -- the newly formed bars -- not the morning all over again.
+    assert meta["cache"] == "partial"
+    assert meta["gaps_fetched"] == 1
     assert len(calls) == 2
-    assert calls[1]["end_date"] == later
-    assert calls[1]["start_date"] >= D("2025-06-10T14:50:00")
+    assert served(rows, "2025-06-10T15:05:00")["close"] == 2.0
+
+
+@pytest.mark.parametrize(
+    "interval,start,end,now",
+    [
+        ("1d", D("2024-01-01"), D("2024-01-31"), D("2024-06-01")),
+        ("5m", D("2025-06-10T09:30:00"), D("2025-06-10T15:12:00"),
+         D("2025-06-10T15:12:00")),
+    ],
+)
+async def test_emitted_params_validate_against_the_real_query_model(
+    interval, start, end, now
+):
+    """The fake upstream validates nothing, which is how datetimes on the wire
+    got through review. This one runs OpenBB's OWN query-params model over the
+    parameters the cache emits -- the model that types start_date as `date` and
+    rejects a datetime carrying a time of day."""
+    from openbb_core.provider.standard_models.equity_historical import (
+        EquityHistoricalQueryParams,
+    )
+
+    calls = []
+
+    async def validating_fetch(provider, model, params, credentials):
+        calls.append(dict(params))
+        EquityHistoricalQueryParams(**params)  # raises if the cache emits junk
+        return [{"date": "2024-01-02", "close": 1.0}]
+
+    cache = ReadThroughCache(FakeStore(), cfg())
+    cache._fetch_gap = validating_fetch
+    rows, meta = await cache.get(
+        "AAPL", interval, start, end,
+        "EquityHistorical", {"symbol": "AAPL"}, None, now=now,
+    )
+    # Nothing raised, and the failure did not merely hide in a bypass.
+    assert meta["cache"] != "bypass"
+    assert calls and len(calls) == 1
+    for call in calls:
+        model = EquityHistoricalQueryParams(**call)
+        assert isinstance(model.start_date, date)
+        assert not isinstance(model.start_date, datetime)
+
+
+async def test_an_empty_range_is_fetched_once_and_remembered():
+    """The pre-IPO prefix of a zoomed-out chart: the provider legitimately has
+    nothing. "We asked and there is no data" is what the coverage table is for,
+    so the second and third requests must cost nothing."""
+    store = FakeStore()
+    cache, calls = make_cache(store, [[]])
+    args = ("AAPL", "1d", D("2019-01-01"), D("2019-12-31"),
+            "EquityHistorical", {"symbol": "AAPL"}, None)
+    for _ in range(3):
+        rows, meta = await cache.get(*args, now=D("2024-06-01"))
+    assert rows == []
+    assert len(calls) == 1
+    assert meta["cache"] == "hit"
+    assert meta["gaps_fetched"] == 0
+    assert store.written == []          # nothing to write, but coverage was kept
+    assert store.coverage[("AAPL", "1d")] == [(D("2019-01-01"), D("2019-12-31"))]
+
+
+async def test_the_backstop_widens_only_the_last_gap():
+    """Two gaps, one call each. The corporate-action overlap rides on the gap
+    that reaches the tail; widening an interior gap would re-request cached
+    bars for nothing."""
+    store = FakeStore(
+        coverage={("AAPL", "1d"): [(D("2024-01-01"), D("2024-01-10")),
+                                   (D("2024-02-01"), D("2024-02-10"))]},
+        bars={("AAPL", "1d"): bars_frame(["2024-01-05", "2024-02-05"])},
+    )
+    cache, calls = make_cache(store, [[{"date": "2024-01-15", "close": 1.0}]])
+    rows, meta = await cache.get(
+        "AAPL", "1d", D("2024-01-01"), D("2024-03-31"),
+        "EquityHistorical", {"symbol": "AAPL"}, None, now=D("2024-06-01"),
+    )
+    assert len(calls) == 2
+    # The interior gap starts exactly where the hole starts: not widened.
+    assert calls[0]["start_date"] == D("2024-01-11").date()
+    # The last gap reaches back _OVERLAP_BARS into cached data -- same call.
+    assert calls[1]["start_date"] == D("2024-02-08").date()
+    assert calls[1]["end_date"] == D("2024-03-31").date()
+
+
+async def test_row_counts_survive_padding_on_a_partial_hit():
+    """Cached rows AND padding outside the window in one request: counting the
+    cache side as `len(served) - len(everything fetched)` gets this wrong."""
+    store = FakeStore(
+        coverage={("AAPL", "1d"): [(D("2024-01-01"), D("2024-01-10"))]},
+        bars={("AAPL", "1d"): bars_frame(["2024-01-02", "2024-01-03"])},
+    )
+    cache, calls = make_cache(store, [[
+        {"date": "2024-01-11", "close": 1.0},
+        {"date": "2024-01-25", "close": 1.0},   # padding, past the window
+        {"date": "2024-01-26", "close": 1.0},   # padding, past the window
+    ]])
+    rows, meta = await cache.get(
+        "AAPL", "1d", D("2024-01-01"), D("2024-01-20"),
+        "EquityHistorical", {"symbol": "AAPL"}, None, now=D("2024-06-01"),
+    )
+    assert len(rows) == 3
+    assert meta["rows_from_upstream"] == 1
+    assert meta["rows_from_cache"] == 2
+    assert meta["rows_from_cache"] + meta["rows_from_upstream"] == len(rows)
 
 
 async def test_daily_gaps_are_sent_as_dates():
@@ -545,6 +662,18 @@ def test_to_frame_rejects_rows_without_a_timestamp():
 def test_to_frame_accepts_alternative_stamp_names():
     frame = _to_frame([{"timestamp": "2024-01-02", "close": 1.0}])
     assert list(frame["t"]) == [pd.Timestamp("2024-01-02")]
+
+
+def test_to_frame_resolves_a_date_and_t_collision():
+    """A row carrying both `date` and a raw `t` used to rename into two columns
+    called `t`, raising -- a silent, permanent bypass. The preference order
+    decides and the loser is dropped."""
+    frame = _to_frame([
+        {"date": "2024-01-02", "t": 1704153600000, "close": 1.0},
+        {"date": "2024-01-03", "t": 1704240000000, "close": 2.0},
+    ])
+    assert list(frame["t"]) == [pd.Timestamp("2024-01-02"), pd.Timestamp("2024-01-03")]
+    assert list(frame["close"]) == [1.0, 2.0]
 
 
 def test_to_frame_normalises_timezones_and_sorts():
