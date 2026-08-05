@@ -116,6 +116,30 @@ def test_aggregate_to_daily_uses_eastern_calendar_days():
     assert row.volume == 1000
 
 
+def test_aggregate_to_daily_keeps_after_hours_trade_crossing_utc_midnight():
+    """A 20:30 ET trade on 2023-05-12 is 00:30 UTC on 2023-05-13 -- it crosses
+    UTC midnight but belongs to the same Eastern session day. Bucketing on the
+    raw UTC index (no tz_convert to EASTERN) would split it into a second
+    daily bar dated 2023-05-13; Eastern bucketing keeps it in one bar dated
+    2023-05-12.
+    """
+    bars = to_minute_bars(
+        ticks([
+            ("2023-05-12 09:30:00", 310.55, 500),
+            ("2023-05-12 12:00:00", 312.00, 100),
+            ("2023-05-12 15:59:00", 308.97, 400),
+            ("2023-05-12 20:30:00", 305.00, 900),
+        ]),
+        session="all",
+    )
+    daily = aggregate(bars, "1d")
+    assert len(daily) == 1
+    assert daily.index[0] == pd.Timestamp("2023-05-12 04:00:00", tz="UTC")
+    row = daily.iloc[0]
+    assert (row.open, row.high, row.low, row.close) == (310.55, 312.00, 305.00, 305.00)
+    assert row.volume == 1900
+
+
 def test_aggregate_to_five_minutes():
     bars = to_minute_bars(ticks([
         ("2023-05-12 09:30:00", 310.0, 100),

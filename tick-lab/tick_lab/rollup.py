@@ -84,8 +84,22 @@ def to_minute_bars(trades: pd.DataFrame, session: str = "regular") -> pd.DataFra
     return bars.dropna(subset=["open"])[BAR_COLUMNS]
 
 
+def _resample_ohlc(bars: pd.DataFrame, rule: str) -> pd.DataFrame:
+    """Apply the shared OHLCV resample/aggregate/dropna rule for one interval."""
+    out = bars.resample(rule, label="left", closed="left").agg(**_AGG)
+    return out.dropna(subset=["open"])[BAR_COLUMNS]
+
+
 def aggregate(bars: pd.DataFrame, interval: str) -> pd.DataFrame:
-    """Roll 1-minute bars up to a coarser interval."""
+    """Roll 1-minute bars up to a coarser interval.
+
+    `1d` buckets on Eastern calendar days rather than UTC days: bars are
+    converted to America/New_York before resampling and the result is
+    converted back to UTC. A US session can straddle UTC midnight (e.g. an
+    after-hours print past 20:00 ET) while still belonging to one Eastern
+    trading day, so bucketing on the raw UTC index could split or mislabel a
+    session that a daily reference feed treats as a single date.
+    """
     if interval not in _RULES:
         raise ValueError(
             f"unsupported interval {interval!r}; expected one of {', '.join(_RULES)}"
@@ -94,12 +108,7 @@ def aggregate(bars: pd.DataFrame, interval: str) -> pd.DataFrame:
         return bars
 
     if interval == "1d":
-        # A US equity session spans one Eastern calendar day but can straddle
-        # nothing in UTC terms -- still, bucket in Eastern so the daily bar
-        # matches what a daily reference feed calls that date.
         local = bars.tz_convert(EASTERN)
-        out = local.resample("1D", label="left", closed="left").agg(**_AGG)
-        return out.dropna(subset=["open"])[BAR_COLUMNS].tz_convert("UTC")
+        return _resample_ohlc(local, "1D").tz_convert("UTC")
 
-    out = bars.resample(_RULES[interval], label="left", closed="left").agg(**_AGG)
-    return out.dropna(subset=["open"])[BAR_COLUMNS]
+    return _resample_ohlc(bars, _RULES[interval])
