@@ -88,9 +88,12 @@ services:
     volumes:
       - openbb-data:/root/.openbb_platform
       - ./kdb-license:/opt/kx-license:ro
-    # KDB_MEMORY_MB + OpenBB's own ~2GB. Too low and the OOM killer takes the
-    # API down, not just the cache.
-    mem_limit: 11g
+    # Cache budget (KDB_MEMORY_MB) is 8GB, but q's own -w ceiling is budget *
+    # 1.25 = 10GB headroom -- see openbb_kdb/config.py's _WORKSPACE_HEADROOM.
+    # Plus OpenBB's own ~2GB, that's ~12GB. Set the cgroup limit below q's -w
+    # and the kernel OOM killer takes the whole container down -- API and
+    # all -- instead of q hitting -w and dying alone.
+    mem_limit: 12g
 
   # OpenBB MCP server (Ep. 6): wraps the same Platform app as openbb-api,
   # in-process, and serves MCP over streamable-http for the AI analyst.

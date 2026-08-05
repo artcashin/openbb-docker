@@ -96,3 +96,17 @@ def test_empty_env_host_falls_back_to_default(monkeypatch):
 def test_ipv6_loopback_host_is_treated_as_embedded(monkeypatch):
     monkeypatch.setenv("KDB_HOST", "::1")
     assert resolve_config().embedded is True
+
+
+def test_qlic_env_var_is_carried_onto_config(monkeypatch):
+    """The mounted licence directory must survive into KdbConfig.qlic."""
+    monkeypatch.setenv("QLIC", "/opt/kx-license")
+    assert resolve_config().qlic == "/opt/kx-license"
+
+
+def test_qlic_falls_back_to_qhome_when_unset(monkeypatch):
+    """No QLIC set: preserve today's behaviour of looking in QHOME."""
+    monkeypatch.delenv("QLIC", raising=False)
+    monkeypatch.setenv("QHOME", "/opt/kx")
+    cfg = resolve_config()
+    assert cfg.qlic == cfg.qhome == "/opt/kx"

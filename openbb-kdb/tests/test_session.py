@@ -11,7 +11,7 @@ from openbb_kdb.session import KdbSession, KdbUnavailable
 
 def cfg(**kw) -> KdbConfig:
     base = dict(host="127.0.0.1", port=5000, embedded=True, memory_mb=1024,
-                watermark=0.75, upstream="eodhd", qhome="/opt/kx")
+                watermark=0.75, upstream="eodhd", qhome="/opt/kx", qlic="/opt/kx")
     base.update(kw)
     return KdbConfig(**base)
 
@@ -173,6 +173,25 @@ def test_close_terminates_and_reaps_process_falling_back_to_kill():
     assert fake_proc.wait_calls >= 1
     assert fake_proc.killed is True
     assert s._proc is None
+
+
+def test_spawn_env_uses_qlic_not_qhome(monkeypatch, tmp_path):
+    """The mounted licence dir must reach q's environment, not get overwritten
+    by qhome -- that was the bug that made the bring-your-own-licence mount
+    inert."""
+    captured = {}
+
+    def fake_popen(argv, stdin=None, stdout=None, stderr=None, env=None, cwd=None):
+        captured["env"] = env
+        return FakeProc(alive=True)
+
+    monkeypatch.setattr(session.subprocess, "Popen", fake_popen)
+    s = KdbSession(cfg(qhome="/opt/kx", qlic="/opt/kx-license"))
+    s._spawn()
+
+    assert captured["env"]["QHOME"] == "/opt/kx"
+    assert captured["env"]["QLIC"] == "/opt/kx-license"
+    assert captured["env"]["QLIC"] != captured["env"]["QHOME"]
 
 
 def test_close_does_not_kill_a_process_that_exits_on_terminate():

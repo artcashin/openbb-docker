@@ -32,6 +32,7 @@ class KdbConfig:
     watermark: float
     upstream: str
     qhome: str
+    qlic: str
 
     @property
     def q_workspace_mb(self) -> int:
@@ -113,8 +114,13 @@ def resolve_config(credentials: dict | None = None) -> KdbConfig:
     if upstream is None:
         upstream = _DEFAULTS["upstream"]
     qhome = os.getenv("QHOME") or _DEFAULTS["qhome"]
+    # A licence dir separate from QHOME lets the operator bind-mount kc.lic
+    # without it living inside qhome (which the Dockerfile strips clean).
+    # Falling back to qhome preserves today's behaviour for anyone who does
+    # keep their licence in QHOME.
+    qlic = os.getenv("QLIC") or qhome
 
     return KdbConfig(
         host=host, port=port, embedded=embedded, memory_mb=memory_mb,
-        watermark=watermark, upstream=str(upstream), qhome=qhome,
+        watermark=watermark, upstream=str(upstream), qhome=qhome, qlic=qlic,
     )

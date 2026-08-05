@@ -74,7 +74,7 @@ class KdbSession:
         if self._proc is not None and self._proc.poll() is None:
             return
         self._cleanup_log_file()
-        env = dict(os.environ, QHOME=self.config.qhome, QLIC=self.config.qhome)
+        env = dict(os.environ, QHOME=self.config.qhome, QLIC=self.config.qlic)
         log_file = tempfile.NamedTemporaryFile(
             prefix="openbb-kdb-q-", suffix=".log", delete=False
         )

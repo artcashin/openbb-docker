@@ -14,7 +14,7 @@ D = lambda s: datetime.fromisoformat(s)  # noqa: E731
 
 def cfg(**kw) -> KdbConfig:
     base = dict(host="127.0.0.1", port=5000, embedded=True, memory_mb=1024,
-                watermark=0.75, upstream="eodhd", qhome="/opt/kx")
+                watermark=0.75, upstream="eodhd", qhome="/opt/kx", qlic="/opt/kx")
     base.update(kw)
     return KdbConfig(**base)
 
