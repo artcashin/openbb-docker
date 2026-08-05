@@ -253,6 +253,7 @@ def exercise_every_statement(store):
     store.drop("AAPL", "1d")
     store.memory()
     store.evict_until_below(10**9)
+    store.aggregate_frame("AAPL", "1m", D("2024-01-01"), D("2024-01-02"))
 
 
 def test_every_parameterised_statement_is_a_lambda():

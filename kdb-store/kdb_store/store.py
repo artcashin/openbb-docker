@@ -288,6 +288,33 @@ class KdbStore:
 
         return self._call(span)
 
+    def aggregate_frame(self, symbol: str, interval: str, start, end):
+        """OHLCV buckets for one symbol, aggregated in q.
+
+        `time xasc` is REQUIRED: ticks arrive out of order, and `first`/`last`
+        on an unsorted table silently produce the wrong open and close. The
+        result comes back keyed, so `0!` it before .pd().
+        """
+        from kdb_store.aggregate import bucket_ns
+
+        width = bucket_ns(interval)
+
+        def agg(conn):
+            return conn(
+                "{[qwsym;qwlo;qwhi;qwbucket]"
+                " 0!select open:first price, high:max price, low:min price,"
+                " close:last price, volume:sum size"
+                " by t: qwbucket xbar time"
+                " from `time xasc select from trades"
+                " where sym=qwsym, time within (qwlo;qwhi)}",
+                _q_symbol(symbol),
+                _q_timestamp(start),
+                _q_timestamp(end),
+                width,
+            ).pd()
+
+        return self._call(agg)
+
 
 def _conform_dtypes(df, prototype):
     """`df` with the column types the cached table already has.
