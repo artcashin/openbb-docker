@@ -405,3 +405,50 @@ def test_write_snapshot_stores_a_fetch_time():
 def test_read_snapshot_returns_none_when_absent():
     s, _ = store_with({"select from snap": None})
     assert s.read_snapshot("NOPE", 60.0) is None
+
+
+def test_read_snapshot_ttl_is_judged_against_utc_not_local_wall_clock():
+    """`fetched` comes back from q's `.z.p`, which is UTC -- but PyKX hands it
+    to Python as a tz-NAIVE pandas Timestamp. Comparing that against local
+    wall-clock time (`pd.Timestamp.now()` with no tz) mixes clocks by however
+    many hours the host is offset from UTC: on UTC-5 "age" goes negative and
+    the cache never expires (stale data served as fresh, the dangerous
+    direction); on UTC+1 "age" is already past any TTL the instant the row is
+    written (the cache never hits at all).
+
+    The host running this test may itself sit at UTC+0, where the bug happens
+    not to manifest -- so the local TZ is pinned to America/New_York (a large,
+    real offset) for the duration of the test, making the result the same
+    regardless of what timezone the test machine actually runs in.
+    """
+    import os
+    import time as time_module
+
+    import pandas as pd
+
+    old_tz = os.environ.get("TZ")
+    os.environ["TZ"] = "America/New_York"
+    time_module.tzset()
+    try:
+        elapsed = 30.0
+        # A UTC instant `elapsed` seconds ago, stored tz-naive -- exactly the
+        # shape PyKX's .pd() hands back for a q timestamp column.
+        fetched = (pd.Timestamp.now(tz="UTC") - pd.Timedelta(seconds=elapsed)).tz_localize(None)
+        s, _ = store_with({
+            "select fetched, payload from snap": pd.DataFrame({
+                "fetched": [fetched],
+                "payload": ['{"close": 1.0}'],
+            }),
+        })
+        assert s.read_snapshot("AAPL", max_age=elapsed + 10) == {"close": 1.0}, (
+            "an entry younger than the TTL must be judged fresh"
+        )
+        assert s.read_snapshot("AAPL", max_age=elapsed - 10) is None, (
+            "an entry older than the TTL must be judged stale"
+        )
+    finally:
+        if old_tz is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = old_tz
+        time_module.tzset()

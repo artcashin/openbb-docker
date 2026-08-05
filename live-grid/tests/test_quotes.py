@@ -198,3 +198,51 @@ def test_seed_works_with_no_snapshot_cache_at_all():
 
     QuoteTable().seed(["AAPL"], Client())
     assert len(calls) == 1
+
+
+def test_seed_falls_back_to_the_vendor_when_the_cache_raises_on_read():
+    """A regression moving the read out of its try (or narrowing the except)
+    must not take seeding down with it -- kdb+ being unreachable is exactly
+    when the vendor fallback matters most."""
+    class Cache:
+        def read_snapshot(self, symbol, max_age):
+            raise RuntimeError("kdb unreachable")
+
+        def write_snapshot(self, symbol, payload):
+            pass
+
+    calls = []
+
+    class Client:
+        def get_live_stock_prices(self, ticker):
+            calls.append(ticker)
+            return {"close": 1.0}
+
+    table = QuoteTable(snapshots=Cache())
+    rows = table.seed(["AAPL"], Client())
+    assert len(calls) == 1
+    assert rows[0]["price"] == 1.0
+
+
+def test_seed_falls_back_to_the_vendor_when_the_cache_raises_on_write():
+    """A regression moving the write outside its try -- e.g. hoisting it past
+    the vendor call -- must still leave seed() returning the vendor's row
+    without raising; live-grid ships with no kdb+ at all in some deployments."""
+    class Cache:
+        def read_snapshot(self, symbol, max_age):
+            return None
+
+        def write_snapshot(self, symbol, payload):
+            raise RuntimeError("kdb unreachable")
+
+    calls = []
+
+    class Client:
+        def get_live_stock_prices(self, ticker):
+            calls.append(ticker)
+            return {"close": 1.0}
+
+    table = QuoteTable(snapshots=Cache())
+    rows = table.seed(["AAPL"], Client())
+    assert len(calls) == 1
+    assert rows[0]["price"] == 1.0

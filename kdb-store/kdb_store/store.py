@@ -346,7 +346,23 @@ class KdbStore:
             fetched = got["fetched"].iloc[0]
             if pd.isna(fetched):
                 return None
-            age = (pd.Timestamp.now() - pd.Timestamp(fetched)).total_seconds()
+            # `fetched` was written from q's `.z.p`, which is UTC -- but PyKX's
+            # .pd() hands back a tz-NAIVE pandas Timestamp (it drops the zone,
+            # it does not convert to local time). Comparing that naive-but-UTC
+            # value against a naive-but-LOCAL `pd.Timestamp.now()` mixes the
+            # two clocks: on UTC-5 the resulting "age" starts negative and
+            # stays under any sane TTL for hours (the cache never refreshes,
+            # serving stale data as fresh); on UTC+1 "age" is already past the
+            # TTL the instant the row is written (the cache never hits). Pin
+            # both sides to UTC explicitly rather than assuming either one's
+            # tz-awareness.
+            fetched = pd.Timestamp(fetched)
+            fetched = (
+                fetched.tz_localize("UTC")
+                if fetched.tzinfo is None
+                else fetched.tz_convert("UTC")
+            )
+            age = (pd.Timestamp.now(tz="UTC") - fetched).total_seconds()
             if age > max_age:
                 return None
             raw = got["payload"].iloc[0]
