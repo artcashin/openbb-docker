@@ -70,8 +70,27 @@ services:
       # purpose: without it the API would come up unauthenticated.
       - path: ./api-auth.env
         required: true
+    # Ep. 10: the kdb+ read-through cache. q runs as a CHILD of this container
+    # on 127.0.0.1:5000 -- never 0.0.0.0. Every service here shares the
+    # tailscale network namespace, so loopback reaches all of them and no
+    # tailnet peer, while a 0.0.0.0 bind would publish an unauthenticated q
+    # (which executes arbitrary q) to the whole tailnet.
+    #
+    # Bring your own license: register with KX, drop kc.lic into
+    # ./kdb-license/ (git-ignored). Without it the cache passes through to
+    # the upstream provider and the stack runs uncached.
+    environment:
+      - KDB_EMBEDDED=true
+      - KDB_MEMORY_MB=8192
+      - KDB_UPSTREAM=eodhd
+      - QHOME=/opt/kx
+      - QLIC=/opt/kx-license
     volumes:
       - openbb-data:/root/.openbb_platform
+      - ./kdb-license:/opt/kx-license:ro
+    # KDB_MEMORY_MB + OpenBB's own ~2GB. Too low and the OOM killer takes the
+    # API down, not just the cache.
+    mem_limit: 11g
 
   # OpenBB MCP server (Ep. 6): wraps the same Platform app as openbb-api,
   # in-process, and serves MCP over streamable-http for the AI analyst.

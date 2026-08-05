@@ -5,6 +5,13 @@
 # the analysis extensions, the official MCP server for AI agents, and the
 # EODHD provider extension. No CLI/Terminal; other custom providers arrive
 # with their episodes.
+
+# --- kdb-x runtime (Ep. 10) -------------------------------------------------
+# The q SERVER binary only. kc.lic is deliberately NOT copied: this image is
+# published, and a personal-edition license may not be redistributed. Readers
+# mount their own at /opt/kx-license (see docker-compose.yml).
+FROM ghcr.io/artcashin/kdb-x:latest AS kdbx
+
 FROM python:3.12-slim
 
 # OpenBB version. Override with --build-arg to track a newer release.
@@ -74,6 +81,14 @@ RUN python -c "import ast; ast.parse(open('/usr/local/lib/python3.12/site-packag
 COPY openbb-eodhd/ /opt/openbb-eodhd/
 RUN pip install /opt/openbb-eodhd
 
+# q runtime, minus the license.
+COPY --from=kdbx /root/.kx /opt/kx
+RUN rm -f /opt/kx/kc.lic
+
+# kdb read-through cache provider (Ep. 10).
+COPY openbb-kdb /tmp/openbb-kdb
+RUN pip install --no-cache-dir /tmp/openbb-kdb && rm -rf /tmp/openbb-kdb
+
 # Official OpenBB MCP server (Ep. 6): wraps the Platform FastAPI app
 # in-process and serves MCP over streamable-http. PIP_CONSTRAINT still
 # applies, so it cannot drag shared libs anywhere the stack doesn't tolerate.
@@ -84,7 +99,8 @@ RUN python -c "import openbb_mcp_server; print('openbb-mcp-server import OK')"
 # platform registers at build time.
 RUN python -c "import openbb; openbb.build(); from openbb import obb; \
 assert 'eodhd' in obb.coverage.providers, 'eodhd provider not registered'; \
-print('OpenBB Platform OK:', len(obb.coverage.providers), 'providers (incl. eodhd)')"
+assert 'kdb' in obb.coverage.providers, 'kdb provider not registered'; \
+print('OpenBB Platform OK:', len(obb.coverage.providers), 'providers (incl. eodhd, kdb)')"
 
 WORKDIR /workspace
 

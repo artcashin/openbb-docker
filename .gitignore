@@ -12,6 +12,10 @@ ts-state/
 kdb-data/
 *.log
 
+# kdb+ license -- bring your own; never commit it.
+kdb-license/*
+!kdb-license/.gitkeep
+
 # python
 __pycache__/
 *.egg-info/
