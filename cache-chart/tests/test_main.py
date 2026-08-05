@@ -48,5 +48,54 @@ def test_demo_page_is_html_with_scroll_enabled():
     assert "plotly_relayout" in r.text
 
 
+def test_demo_page_headline_metric_is_honest():
+    """Every response travels browser<->service; only the backend->vendor hop
+    is ever skipped on a cache hit. The page must not claim otherwise."""
+    text = client.get("/demo").text
+    assert "without touching the network" not in text
+    assert "served from cache, without asking the data vendor" in text
+
+
+def test_demo_page_registers_relayout_handler_once():
+    """chart.on(...) must appear exactly once -- re-registering after every
+    gap fetch leaks a listener per zoom (Finding 5)."""
+    text = client.get("/demo").text
+    assert text.count('chart.on("plotly_relayout"') == 1
+
+
+def test_demo_page_client_handles_request_failures():
+    """The client must not assume a response body has a `cache` key -- an
+    error payload (or an unparsable body) needs a safe fallback so hud()
+    can't throw and blank the page (Finding 3)."""
+    text = client.get("/demo").text
+    assert "cache: \"error\"" in text or "cache: 'error'" in text
+    assert "catch" in text
+
+
 def test_health_reports_provider():
     assert client.get("/health").status_code == 200
+
+
+def test_series_returns_clean_error_when_upstream_fails(monkeypatch):
+    async def boom(symbol, interval, start, end, provider):
+        raise RuntimeError("upstream exploded")
+
+    monkeypatch.setattr("app.main.fetch_series", boom)
+    r = client.get("/series", params={"symbol": "AAPL"})
+    assert r.status_code == 502
+    body = r.json()
+    assert body["bars"] == []
+    assert body["cache"]["cache"] == "error"
+    assert "upstream exploded" in body["cache"]["error"]
+
+
+def test_chart_returns_clean_error_when_upstream_fails(monkeypatch):
+    async def boom(symbol, interval, start, end, provider):
+        raise RuntimeError("upstream exploded")
+
+    monkeypatch.setattr("app.main.fetch_series", boom)
+    r = client.get("/chart", params={"symbol": "AAPL"})
+    assert r.status_code == 502
+    body = r.json()
+    assert body["data"] == []
+    assert "upstream exploded" in body["layout"]["title"]["text"]

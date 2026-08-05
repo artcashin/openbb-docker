@@ -26,6 +26,19 @@ def _window(start: str | None, end: str | None) -> tuple[str, str]:
     return (start or str(today - timedelta(days=365)), end or str(today))
 
 
+def _error_cache(exc: Exception) -> dict:
+    """A cache-telemetry-shaped payload for a failed upstream call.
+
+    Keeps the response shape identical to a successful call (same keys the
+    HUD reads) so the frontend never has to special-case a missing field --
+    it just renders `cache: "error"` like any other status.
+    """
+    return {
+        "cache": "error", "rows_from_cache": 0, "rows_from_upstream": 0,
+        "gaps_fetched": 0, "upstream_ms": 0.0, "kdb_ms": 0.0, "error": str(exc),
+    }
+
+
 @app.get("/widgets.json")
 async def widgets():
     return JSONResponse(json.loads(_WIDGETS.read_text()))
@@ -41,7 +54,14 @@ async def series(
 ):
     """Bars plus the cache telemetry that drives the HUD."""
     s, e = _window(start, end)
-    bars, meta = await fetch_series(symbol, interval, s, e, provider)
+    try:
+        bars, meta = await fetch_series(symbol, interval, s, e, provider)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse(
+            {"symbol": symbol, "interval": interval, "start": s, "end": e,
+             "bars": [], "cache": _error_cache(exc)},
+            status_code=502,
+        )
     return {"symbol": symbol, "interval": interval, "start": s, "end": e,
             "bars": bars, "cache": meta}
 
@@ -56,7 +76,13 @@ async def chart(
 ):
     """Plotly figure JSON for the Workspace widget."""
     s, e = _window(start, end)
-    bars, _ = await fetch_series(symbol, interval, s, e, provider)
+    try:
+        bars, _ = await fetch_series(symbol, interval, s, e, provider)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse(
+            {"data": [], "layout": {"title": {"text": f"{symbol} -- error: {exc}"}}},
+            status_code=502,
+        )
     return JSONResponse(build_figure(symbol, bars))
 
 

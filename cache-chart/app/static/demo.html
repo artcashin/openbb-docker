@@ -8,7 +8,7 @@
   table { border-collapse:collapse; margin-top:12px; width:100%; }
   th, td { text-align:left; padding:4px 10px; border-bottom:1px solid #333; }
   .hit { color:#4ade80; } .partial { color:#fbbf24; }
-  .miss, .bypass { color:#f87171; }
+  .miss, .bypass, .error { color:#f87171; }
   header { display:flex; gap:16px; align-items:center; flex-wrap:wrap; }
   select, input { background:#222; color:#ddd; border:1px solid #444; padding:4px; }
 </style>
@@ -28,45 +28,109 @@
 <div id="chart"></div>
 <table id="hud">
   <thead><tr><th>window</th><th>cache</th><th>from cache</th><th>from upstream</th>
-  <th>upstream ms</th><th>kdb ms</th><th>bytes</th></tr></thead>
+  <th>upstream ms</th><th>kdb ms</th><th>bytes</th><th>round trip ms</th></tr></thead>
   <tbody></tbody>
 </table>
 <p id="total"></p>
 
 <script>
 const chart = document.getElementById("chart");
-let loadedStart = null, loadedEnd = null, bars = [], inflight = false, savedBytes = 0;
+let loadedStart = null, loadedEnd = null, bars = [], inflight = false;
+
+// Bumped every time the user switches symbol/provider. A fetch that resolves
+// after its generation has been superseded is discarded instead of being
+// applied to the (now wrong) chart -- see Finding 7.
+let requestGen = 0;
+
 const iso = d => d.toISOString().slice(0, 10);
 const symbol = () => document.getElementById("symbol").value.trim().toUpperCase();
 const provider = () => document.getElementById("provider").value;
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const esc = s => String(s).replace(/[&<>"]/g, c =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
+// Plotly's "xaxis.range[0]" is "YYYY-MM-DD[ HH:MM:SS]" with no zone, which
+// `new Date(...)` parses as LOCAL time. loadedStart/loadedEnd are plain
+// "YYYY-MM-DD" strings, which `new Date(...)` parses as UTC. Mixing the two
+// shifts the computed gap boundary near local midnight (Finding 6) -- so
+// parse everything through these two helpers instead of `new Date(string)`.
+function parseIsoDateUtc(s) {
+  const [y, m, d] = s.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d));
+}
+function parseRangeDateUtc(s) {
+  const [datePart, timePart] = s.replace("T", " ").split(" ");
+  const [y, m, d] = datePart.split("-").map(Number);
+  if (!timePart) return new Date(Date.UTC(y, m - 1, d));
+  const [hh, mm, ss] = timePart.split(":").map(Number);
+  return new Date(Date.UTC(y, m - 1, d, hh || 0, mm || 0, Math.floor(ss || 0)));
+}
+
+// Cumulative, honest telemetry (Finding 1). Every response -- hit, partial,
+// or miss -- travels the browser<->service link; a "hit" only means the
+// *backend* skipped the upstream vendor. So the headline metric is rows
+// actually served from the kdb+ cache without the vendor being asked, not
+// bytes "saved" over the network (none are).
+let cumRowsFromCache = 0;
+let cumUpstreamMs = 0;
+const requestCounts = {};
+
+// load() always resolves to a discriminated result so callers can tell
+// "busy, try again" apart from "fetched nothing" (Finding 2) and from a
+// failed request (Finding 3), instead of a bare `undefined` that collapses
+// all three into "nothing happened".
 async function load(start, end) {
-  if (inflight) return;
+  if (inflight) return { busy: true };
   inflight = true;
   const t0 = performance.now();
   const url = `/series?symbol=${symbol()}&start=${start}&end=${end}&provider=${provider()}`;
-  const res = await fetch(url);
-  const text = await res.text();
-  const body = JSON.parse(text);
+  let res, text;
+  try {
+    res = await fetch(url);
+    text = await res.text();
+  } catch (err) {
+    inflight = false;
+    const cache = { cache: "error", error: `network error: ${err}` };
+    hud(start, end, cache, 0, performance.now() - t0);
+    return { busy: false, error: cache.error };
+  }
   inflight = false;
-  hud(start, end, body.cache, new Blob([text]).size, performance.now() - t0);
-  return body.bars;
+
+  let body = null;
+  try { body = JSON.parse(text); } catch { /* handled below via fallback cache */ }
+
+  const cache = (body && body.cache) || {
+    cache: "error", error: `bad response (HTTP ${res.status}): ${text.slice(0, 200)}`,
+  };
+  hud(start, end, cache, new Blob([text]).size, performance.now() - t0);
+
+  if (!res.ok || cache.cache === "error") {
+    return { busy: false, error: cache.error || `HTTP ${res.status}` };
+  }
+  return { busy: false, bars: body.bars || [] };
 }
 
-function hud(start, end, cache, bytes) {
-  const row = document.createElement("tr");
+function hud(start, end, cache, bytes, roundTripMs) {
   const kind = cache.cache || "unknown";
-  if (kind === "hit") savedBytes += bytes;
+  requestCounts[kind] = (requestCounts[kind] || 0) + 1;
+  cumRowsFromCache += cache.rows_from_cache ?? 0;
+  cumUpstreamMs += cache.upstream_ms ?? 0;
+
+  const row = document.createElement("tr");
   row.innerHTML = `<td>${start} → ${end}</td>
-    <td class="${kind}">${kind}</td>
+    <td class="${kind}">${kind}${cache.error ? `: ${esc(cache.error)}` : ""}</td>
     <td>${cache.rows_from_cache ?? 0}</td>
     <td>${cache.rows_from_upstream ?? 0}</td>
     <td>${(cache.upstream_ms ?? 0).toFixed(1)}</td>
     <td>${(cache.kdb_ms ?? 0).toFixed(1)}</td>
-    <td>${bytes}</td>`;
+    <td>${bytes}</td>
+    <td>${roundTripMs.toFixed(1)}</td>`;
   document.querySelector("#hud tbody").prepend(row);
+
+  const counts = Object.entries(requestCounts).map(([k, n]) => `${n} ${k}`).join(", ");
   document.getElementById("total").textContent =
-    `served without touching the network: ${savedBytes} bytes`;
+    `${cumRowsFromCache} rows served from cache, without asking the data vendor ` +
+    `(requests so far: ${counts}; ${cumUpstreamMs.toFixed(1)}ms cumulative upstream time)`;
 }
 
 function draw() {
@@ -86,39 +150,76 @@ function draw() {
 // A continuous scroll fires many relayout events; debounce so ONE request
 // goes out when the gesture settles.
 let timer = null;
+let retryTimer = null;
+
 function onRelayout(ev) {
   const start = ev["xaxis.range[0]"];
   if (!start) return;
   clearTimeout(timer);
-  timer = setTimeout(async () => {
-    const wanted = new Date(start);
-    const floor = new Date(loadedEnd);
-    floor.setFullYear(floor.getFullYear() - 10);       // clamp
-    const from = wanted < floor ? floor : wanted;
-    if (from >= new Date(loadedStart)) return;          // already loaded
-    const gapEnd = new Date(loadedStart);
-    gapEnd.setDate(gapEnd.getDate() - 1);
-    const fetched = await load(iso(from), iso(gapEnd));
-    if (!fetched) return;
-    bars = fetched.concat(bars);
-    loadedStart = iso(from);
-    draw();
-    chart.on("plotly_relayout", onRelayout);
-  }, 150);
+  timer = setTimeout(() => attemptGapFetch(start), 150);
+}
+
+async function attemptGapFetch(rangeStart) {
+  const myGen = requestGen;
+  const wanted = parseRangeDateUtc(rangeStart);
+  const floor = parseIsoDateUtc(loadedEnd);
+  floor.setUTCFullYear(floor.getUTCFullYear() - 10);          // clamp
+  const from = wanted < floor ? floor : wanted;
+  if (from >= parseIsoDateUtc(loadedStart)) return;            // already loaded
+  const gapEnd = parseIsoDateUtc(loadedStart);
+  gapEnd.setUTCDate(gapEnd.getUTCDate() - 1);
+
+  const result = await load(iso(from), iso(gapEnd));
+  if (myGen !== requestGen) return;                             // superseded
+
+  if (result.busy) {
+    clearTimeout(retryTimer);
+    retryTimer = setTimeout(() => attemptGapFetch(rangeStart), 150);
+    return;
+  }
+  if (result.error) return;                                    // surfaced in HUD already
+
+  bars = result.bars.concat(bars);
+  loadedStart = iso(from);
+  draw();
+}
+
+// Retries on "busy" instead of dropping the request, and bails out early if
+// a later selection change supersedes this one (Finding 7).
+async function loadWithRetry(start, end, gen) {
+  let result = await load(start, end);
+  while (result.busy && gen === requestGen) {
+    await sleep(150);
+    result = await load(start, end);
+  }
+  return result;
+}
+
+async function reload() {
+  const myGen = ++requestGen;
+  clearTimeout(timer);
+  clearTimeout(retryTimer);
+
+  const end = new Date();
+  const start = new Date(end);
+  start.setUTCFullYear(start.getUTCFullYear() - 1);
+  const newStart = iso(start), newEnd = iso(end);
+
+  const result = await loadWithRetry(newStart, newEnd, myGen);
+  if (myGen !== requestGen) return;                             // superseded meanwhile
+
+  // Reset the loaded-window state on every switch so a stale, wider window
+  // from a previous symbol's zoom can't be reused for the new one.
+  loadedStart = newStart;
+  loadedEnd = newEnd;
+  bars = result.bars || [];
+  draw();
 }
 
 (async function boot() {
-  const end = new Date();
-  const start = new Date();
-  start.setFullYear(start.getFullYear() - 1);
-  loadedStart = iso(start); loadedEnd = iso(end);
-  bars = await load(loadedStart, loadedEnd) || [];
-  draw();
-  chart.on("plotly_relayout", onRelayout);
+  chart.on("plotly_relayout", onRelayout);                     // registered once (Finding 5)
   document.getElementById("symbol").onchange =
-  document.getElementById("provider").onchange = async () => {
-    bars = await load(loadedStart, loadedEnd) || [];
-    draw();
-  };
+  document.getElementById("provider").onchange = reload;
+  await reload();
 })();
 </script>
