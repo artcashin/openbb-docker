@@ -1,6 +1,7 @@
 """Comparing two bar sets: price disagreements vs coverage gaps."""
 
 import json
+import math
 
 import pandas as pd
 
@@ -102,3 +103,71 @@ def test_dict_output_is_json_serialisable():
 def test_notes_are_carried_into_the_report():
     rep = compare(frame([100.0]), frame([100.0]), "MSFT", "1d", notes=["stepped down from 1m"])
     assert "stepped down from 1m" in rep.to_text()
+
+
+def test_a_nan_reference_close_before_a_larger_genuine_discrepancy_does_not_latch():
+    # Reference (theirs) has NOT been through our rollup's dropna, so it can
+    # carry a NaN close at a shared timestamp. That NaN sorts first in
+    # timestamp order. A -50.0 genuine discrepancy follows at the second bar.
+    # max() over NaN comparisons never replaces the first item it saw, so an
+    # unguarded largest_close() would latch onto the NaN and hide the -50.0.
+    ours = frame([100.0, 100.0, 100.0])
+    theirs = frame([math.nan, 150.0, 102.0])
+    rep = compare(ours, theirs, "MSFT", "1m")
+    worst = rep.largest_close()
+    assert worst is not None
+    assert worst.timestamp == IDX[1]
+    assert worst.diff == -50.0
+
+
+def test_a_nan_on_our_side_is_excluded_from_largest_close():
+    ours = frame([math.nan, 100.0, 100.0])
+    theirs = frame([102.0, 101.0, 90.0])
+    rep = compare(ours, theirs, "MSFT", "1m")
+    worst = rep.largest_close()
+    assert worst is not None
+    assert worst.timestamp == IDX[2]
+    assert worst.diff == 10.0
+
+
+def test_non_finite_pairs_are_counted_and_excluded_from_price_discrepancies():
+    ours = frame([100.0, 100.0, 100.0])
+    theirs = frame([math.nan, 150.0, 100.0])
+    rep = compare(ours, theirs, "MSFT", "1m")
+    # bars_compared is about shared timestamps, unaffected by NaN values.
+    assert rep.bars_compared == 3
+    # The NaN close pair is not a price discrepancy -- it's a data-quality
+    # fact, kept in its own bucket so it can't inflate or hide in the count.
+    assert len(rep.non_finite) == 1
+    assert rep.non_finite[0].timestamp == IDX[0]
+    assert rep.non_finite[0].field == "close"
+    assert all(math.isfinite(d.diff) for d in rep.discrepancies)
+    close_discrepancies = [d for d in rep.discrepancies if d.field == "close"]
+    assert len(close_discrepancies) == 1
+    assert close_discrepancies[0].timestamp == IDX[1]
+
+
+def test_non_finite_count_is_surfaced_in_text_and_dict():
+    ours = frame([100.0, 100.0])
+    theirs = frame([math.nan, 102.0])
+    rep = compare(ours, theirs, "MSFT", "1m")
+    text = rep.to_text()
+    assert "non-finite" in text
+    assert "1" in text.split("non-finite")[1].splitlines()[0]
+
+    payload = rep.to_dict()
+    assert len(payload["non_finite_comparisons"]) == 1
+    assert payload["non_finite_comparisons"][0]["field"] == "close"
+    # Confirm json-serialisable (NaN is valid in Python's json despite not
+    # being valid JSON -- this just checks no exception and no crash on nan).
+    json.dumps(payload)
+
+
+def test_tolerance_boundary_is_inclusive():
+    # diff == tolerance exactly must NOT be counted as a discrepancy. Uses
+    # 0.5/0.5 rather than 0.01/0.01 because 0.5 is exactly representable in
+    # binary floating point, so abs(diff) lands on tolerance exactly rather
+    # than a hair over it. A regression to strict `<` would pass every other
+    # existing test but would fail this one.
+    rep = compare(frame([100.0]), frame([100.5]), "MSFT", "1m", tolerance=0.5)
+    assert rep.discrepancies == []
