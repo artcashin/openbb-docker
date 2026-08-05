@@ -237,7 +237,7 @@ class KdbSession:
         self._conn = None
         spawned = False
         try:
-            if self.config.embedded:
+            if self.config.may_spawn:
                 self._spawn()
                 spawned = True
                 self._conn = self._connect_with_retry()

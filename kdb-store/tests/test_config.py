@@ -10,16 +10,20 @@ from kdb_store.config import resolve_config
 def _unmade_qhome_decision(monkeypatch):
     """QHOME is decided once per PROCESS; give each test that decision unmade."""
     monkeypatch.setattr(config, "_qhome", None)
+    monkeypatch.setattr(config, "_qhome_decided", False)
 
 
-def test_defaults(monkeypatch):
+def test_defaults(monkeypatch, tmp_path):
     for var in ("KDB_HOST", "KDB_PORT", "KDB_EMBEDDED", "KDB_MEMORY_MB",
                 "KDB_CACHE_WATERMARK", "KDB_UPSTREAM"):
         monkeypatch.delenv(var, raising=False)
+    # No local q at this path: isolates the default from whatever the host
+    # machine happens to have sitting at /kdb.
+    monkeypatch.setenv("KDB_LOCAL_QHOME", str(tmp_path))
     cfg = resolve_config()
-    assert cfg.host == "127.0.0.1"
+    assert cfg.host is None
     assert cfg.port == 5000
-    assert cfg.embedded is True
+    assert cfg.may_spawn is False
     assert cfg.memory_mb == 8192
     assert cfg.watermark == 0.75
     assert cfg.upstream == "eodhd"
@@ -39,15 +43,17 @@ def test_credentials_beat_env(monkeypatch):
     assert cfg.upstream == "fmp"
 
 
-def test_pointing_at_an_external_server_disables_spawning(monkeypatch):
-    """A non-loopback host means the user brought their own kdb+."""
+def test_pointing_at_an_external_server_disables_spawning(monkeypatch, tmp_path):
+    """No local q means nothing to spawn, regardless of where KDB_HOST points."""
     monkeypatch.setenv("KDB_HOST", "kdb.internal")
-    assert resolve_config().embedded is False
+    monkeypatch.setenv("KDB_LOCAL_QHOME", str(tmp_path))
+    monkeypatch.delenv("KDB_EMBEDDED", raising=False)
+    assert resolve_config().may_spawn is False
 
 
 def test_explicit_embedded_false(monkeypatch):
     monkeypatch.setenv("KDB_EMBEDDED", "false")
-    assert resolve_config().embedded is False
+    assert resolve_config().may_spawn is False
 
 
 def test_workspace_is_25_percent_above_budget(monkeypatch):
@@ -77,7 +83,7 @@ def test_explicit_embedded_false_credential_is_honored(monkeypatch):
     """A credential of False must not be mistaken for 'not set'."""
     monkeypatch.delenv("KDB_EMBEDDED", raising=False)
     cfg = resolve_config({"kdb_embedded": False})
-    assert cfg.embedded is False
+    assert cfg.may_spawn is False
 
 
 def test_explicit_zero_memory_credential_raises(monkeypatch):
@@ -95,14 +101,23 @@ def test_explicit_zero_watermark_credential_raises(monkeypatch):
 
 
 def test_empty_env_host_falls_back_to_default(monkeypatch):
-    """An empty string is how a shell/compose env file expresses 'unset'."""
+    """An empty string is how a shell/compose env file expresses 'unset' --
+    and with no KDB_HOST there is no external kdb to fall back to."""
     monkeypatch.setenv("KDB_HOST", "")
-    assert resolve_config().host == "127.0.0.1"
+    assert resolve_config().host is None
 
 
-def test_ipv6_loopback_host_is_treated_as_embedded(monkeypatch):
+def test_ipv6_loopback_host_is_treated_as_embedded(monkeypatch, tmp_path):
+    """Host no longer gates spawning -- an ipv6-loopback KDB_HOST does not
+    disable it when a runnable local q is present."""
+    qbin = tmp_path / "bin" / "q"
+    qbin.parent.mkdir(parents=True)
+    qbin.write_text("#!/bin/sh\n")
+    qbin.chmod(0o755)
     monkeypatch.setenv("KDB_HOST", "::1")
-    assert resolve_config().embedded is True
+    monkeypatch.setenv("KDB_LOCAL_QHOME", str(tmp_path))
+    monkeypatch.delenv("KDB_EMBEDDED", raising=False)
+    assert resolve_config().may_spawn is True
 
 
 def test_qlic_env_var_is_carried_onto_config(monkeypatch):
@@ -130,3 +145,70 @@ def test_qlic_falls_back_to_qhome_when_unset(monkeypatch):
     monkeypatch.setenv("QHOME", "/opt/kx")
     cfg = resolve_config()
     assert cfg.qlic == cfg.qhome == "/opt/kx"
+
+
+def test_local_qhome_defaults_to_slash_kdb(monkeypatch):
+    monkeypatch.delenv("KDB_LOCAL_QHOME", raising=False)
+    monkeypatch.delenv("QHOME", raising=False)
+    assert resolve_config().local_qhome == "/kdb"
+
+
+def test_local_qhome_from_env(monkeypatch):
+    monkeypatch.setenv("KDB_LOCAL_QHOME", "/opt/mine")
+    assert resolve_config().local_qhome == "/opt/mine"
+
+
+def test_host_is_none_when_unset(monkeypatch):
+    """No KDB_HOST means there is no external kdb to fall back to."""
+    monkeypatch.delenv("KDB_HOST", raising=False)
+    assert resolve_config().host is None
+
+
+def test_host_from_env(monkeypatch):
+    monkeypatch.setenv("KDB_HOST", "host.docker.internal")
+    assert resolve_config().host == "host.docker.internal"
+
+
+def test_may_spawn_is_false_when_no_local_q(monkeypatch, tmp_path):
+    """Nothing to spawn: the chain should fall through to KDB_HOST."""
+    monkeypatch.setenv("KDB_LOCAL_QHOME", str(tmp_path))
+    monkeypatch.delenv("KDB_EMBEDDED", raising=False)
+    assert resolve_config().may_spawn is False
+
+
+def test_may_spawn_is_true_when_a_runnable_q_is_present(monkeypatch, tmp_path):
+    qbin = tmp_path / "bin" / "q"
+    qbin.parent.mkdir(parents=True)
+    qbin.write_text("#!/bin/sh\n")
+    qbin.chmod(0o755)
+    monkeypatch.setenv("KDB_LOCAL_QHOME", str(tmp_path))
+    monkeypatch.delenv("KDB_EMBEDDED", raising=False)
+    assert resolve_config().may_spawn is True
+
+
+def test_a_present_but_non_executable_q_does_not_count(monkeypatch, tmp_path):
+    qbin = tmp_path / "bin" / "q"
+    qbin.parent.mkdir(parents=True)
+    qbin.write_text("not executable")
+    qbin.chmod(0o644)
+    monkeypatch.setenv("KDB_LOCAL_QHOME", str(tmp_path))
+    monkeypatch.delenv("KDB_EMBEDDED", raising=False)
+    assert resolve_config().may_spawn is False
+
+
+def test_kdb_embedded_false_overrides_a_present_q(monkeypatch, tmp_path):
+    """live-grid sets this: two spawners in one namespace race for the port."""
+    qbin = tmp_path / "bin" / "q"
+    qbin.parent.mkdir(parents=True)
+    qbin.write_text("#!/bin/sh\n")
+    qbin.chmod(0o755)
+    monkeypatch.setenv("KDB_LOCAL_QHOME", str(tmp_path))
+    monkeypatch.setenv("KDB_EMBEDDED", "false")
+    assert resolve_config().may_spawn is False
+
+
+def test_kdb_embedded_true_forces_spawn_even_with_no_q(monkeypatch, tmp_path):
+    """An explicit true is a deliberate choice; let the spawn fail loudly."""
+    monkeypatch.setenv("KDB_LOCAL_QHOME", str(tmp_path))
+    monkeypatch.setenv("KDB_EMBEDDED", "true")
+    assert resolve_config().may_spawn is True

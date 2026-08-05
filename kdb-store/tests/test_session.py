@@ -12,8 +12,9 @@ from kdb_store.session import KdbSession, KdbUnavailable
 
 
 def cfg(**kw) -> KdbConfig:
-    base = dict(host="127.0.0.1", port=5000, embedded=True, memory_mb=1024,
-                watermark=0.75, upstream="eodhd", qhome="/opt/kx", qlic="/opt/kx")
+    base = dict(host="127.0.0.1", port=5000, may_spawn=True, memory_mb=1024,
+                watermark=0.75, upstream="eodhd", qhome="/opt/kx", qlic="/opt/kx",
+                local_qhome="/opt/kx")
     base.update(kw)
     return KdbConfig(**base)
 
@@ -101,7 +102,7 @@ def test_external_server_is_never_spawned(monkeypatch):
     spawns = []
     monkeypatch.setattr(KdbSession, "_spawn", lambda self: spawns.append(1))
     monkeypatch.setattr(KdbSession, "_connect", lambda self: FakeConn())
-    KdbSession(cfg(host="kdb.internal", embedded=False)).connection()
+    KdbSession(cfg(host="kdb.internal", may_spawn=False)).connection()
     assert spawns == []
 
 
