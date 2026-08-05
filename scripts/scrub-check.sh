@@ -18,13 +18,23 @@ PATTERNS=(
   'Basic [A-Za-z0-9+/]{16,}={0,2}'                               # baked basic-auth headers
 )
 
-EXCLUDES=(--exclude-dir=.git --exclude-dir=node_modules --exclude-dir=dist
-          --exclude-dir=target --exclude-dir=.reference-backend
-          # Virtualenvs are gitignored build debris, and third-party packages
-          # inside them legitimately contain RFC1918 example IPs and base64
-          # runs that trip the AKIA pattern.
-          --exclude-dir=.venv --exclude-dir=venv --exclude-dir=__pycache__
-          --exclude='scrub-check.sh' --exclude='scrub-private-patterns.txt')
+# Scan exactly the files git would ship: tracked, plus untracked ones that
+# are not ignored. Anything git ignores cannot be committed, so scanning it
+# only produces false positives -- and on a machine where the stack is
+# actually configured, ts.env / api-auth.env / credentials.env hold REAL
+# secrets by design and would fail this gate on every run, training whoever
+# sees it to ignore a red scrub check. That is the failure mode this avoids.
+# It also drops .venv and node_modules for free (both ignored), which is why
+# they no longer need naming here.
+#
+# This script and the private-pattern file are skipped because they contain
+# the patterns themselves and would match on their own text.
+scan() {
+  # scan <grep-args...> -- runs grep over the git-visible file set.
+  git ls-files -z --cached --others --exclude-standard \
+    | grep -zv -e '^scripts/scrub-check\.sh$' -e '^scripts/scrub-private-patterns\.txt$' \
+    | xargs -0 grep "$@" -- 2>/dev/null || true
+}
 
 # Known-benign literals (e.g. the CGNAT range constant itself, synthetic test
 # IPs) — exact strings, one per line, COMMITTED (unlike the private patterns).
@@ -44,15 +54,10 @@ fail=0
 # Not just `*.lic`: kdb+ honours kc.lic, k4.lic AND kx.lic, and the extension
 # is the easiest part to change. `k4.license`, `kc.lic.txt` and `kx.lic.b64`
 # are the same secret wearing a different suffix, so the stem is matched too.
-lic_hits=$(find . \
-    -path ./.git -prune -o \
-    -path ./kdb-license -prune -o \
-    -path ./node_modules -prune -o \
-    -path ./.venv -prune -o \
-    -path ./venv -prune -o \
-    \( -name '*.lic' -o -name '*.license' \
-       -o -name 'kc.lic*' -o -name 'k4.lic*' -o -name 'kx.lic*' \) \
-    -print | filter_allowed)
+# `grep` exits 1 when it matches nothing, which under `set -e -o pipefail`
+# would abort the whole script on the healthy path -- hence the `|| true`.
+lic_hits=$( { git ls-files --cached --others --exclude-standard \
+    | grep -E '(^|/)(kc|k4|kx)\.lic|\.lic$|\.license$' || true; } | filter_allowed)
 if [[ -n "$lic_hits" ]]; then
   echo "$lic_hits"
   echo "SCRUB FAIL: licence file in the tree (a kc.lic may not be redistributed)" >&2
@@ -67,8 +72,7 @@ fi
 # (verified), and anything that later does belongs in the allowlist with a
 # reason. This is a shape check, not a kdb-specific one, so it catches a
 # pasted key or certificate just as well.
-b64_hits=$( { grep -rInE "${EXCLUDES[@]}" -e '[A-Za-z0-9+/]{100,}={0,2}' . || true; } \
-            | cut -c1-160 | filter_allowed)
+b64_hits=$(scan -InE -e '[A-Za-z0-9+/]{100,}={0,2}' | cut -c1-160 | filter_allowed)
 if [[ -n "$b64_hits" ]]; then
   echo "$b64_hits"
   echo "SCRUB FAIL: long base64 run (an encoded licence/key blob?)" >&2
@@ -85,9 +89,8 @@ fi
 # in a *.env.example file, full stop. Known-safe non-secret defaults (e.g.
 # EODHD's published demo key) go in the allowlist below, same mechanism as
 # everywhere else in this script -- not a separate one.
-env_example_hits=$( { grep -rnH --include='*.env.example' "${EXCLUDES[@]}" \
-                       -E '^[A-Za-z_][A-Za-z0-9_]*=.+$' . || true; } \
-                     | filter_allowed)
+env_example_hits=$(scan -nH --include='*.env.example' \
+                     -E '^[A-Za-z_][A-Za-z0-9_]*=.+$' | filter_allowed)
 if [[ -n "$env_example_hits" ]]; then
   echo "$env_example_hits"
   echo "SCRUB FAIL: *.env.example has a non-empty value -- templates ship empty" >&2
@@ -95,7 +98,7 @@ if [[ -n "$env_example_hits" ]]; then
 fi
 
 for p in "${PATTERNS[@]}"; do
-  hits=$( { grep -rInE "${EXCLUDES[@]}" -e "$p" . || true; } | filter_allowed)
+  hits=$(scan -InE -e "$p" | filter_allowed)
   if [[ -n "$hits" ]]; then
     echo "$hits"
     echo "SCRUB FAIL: pattern matched: $p" >&2
@@ -106,7 +109,8 @@ done
 if [[ -f scripts/scrub-private-patterns.txt ]]; then
   while IFS= read -r p; do
     [[ -z "$p" || "$p" == \#* ]] && continue
-    if grep -rInE "${EXCLUDES[@]}" -e "$p" . ; then
+    if [[ -n "$(scan -InE -e "$p" | filter_allowed)" ]]; then
+      scan -InE -e "$p" | filter_allowed
       echo "SCRUB FAIL: private pattern matched" >&2
       fail=1
     fi

@@ -18,7 +18,7 @@ def test_defaults(monkeypatch, tmp_path):
                 "KDB_CACHE_WATERMARK", "KDB_UPSTREAM"):
         monkeypatch.delenv(var, raising=False)
     # No local q at this path: isolates the default from whatever the host
-    # machine happens to have sitting at /kdb.
+    # machine happens to have sitting at /opt/kx.
     monkeypatch.setenv("KDB_LOCAL_QHOME", str(tmp_path))
     cfg = resolve_config()
     assert cfg.host is None
@@ -147,10 +147,10 @@ def test_qlic_falls_back_to_qhome_when_unset(monkeypatch):
     assert cfg.qlic == cfg.qhome == "/opt/kx"
 
 
-def test_local_qhome_defaults_to_slash_kdb(monkeypatch):
+def test_local_qhome_defaults_to_opt_kx(monkeypatch):
     monkeypatch.delenv("KDB_LOCAL_QHOME", raising=False)
     monkeypatch.delenv("QHOME", raising=False)
-    assert resolve_config().local_qhome == "/kdb"
+    assert resolve_config().local_qhome == "/opt/kx"
 
 
 def test_local_qhome_from_env(monkeypatch):

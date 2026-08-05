@@ -23,7 +23,7 @@ _DEFAULTS = {
     "watermark": 0.75,
     "upstream": "eodhd",
     "qhome": "/opt/kx",
-    "local_qhome": "/kdb",
+    "local_qhome": "/opt/kx",
 }
 
 # q is given headroom above the cache budget. Crossing -w kills the process

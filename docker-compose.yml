@@ -73,8 +73,8 @@ services:
     # Ep. 10: the kdb+ read-through cache. This repo ships NO KX software --
     # the licence does not permit redistributing q. Bring your own:
     #
-    #   1. Drop a q binary into ./kdb (mounted below at /kdb:ro,
-    #      KDB_LOCAL_QHOME=/kdb) and this container spawns it as a CHILD on
+    #   1. Drop a q binary into ./kdb (mounted below at /opt/kx:ro,
+    #      KDB_LOCAL_QHOME=/opt/kx) and this container spawns it as a CHILD on
     #      127.0.0.1:5000 -- never 0.0.0.0. Every service here shares the
     #      tailscale network namespace, so loopback reaches all of them and
     #      no tailnet peer, while a 0.0.0.0 bind would publish an
@@ -92,11 +92,11 @@ services:
       - KDB_EMBEDDED=true
       - KDB_MEMORY_MB=8192
       - KDB_UPSTREAM=eodhd
-      - KDB_LOCAL_QHOME=/kdb
+      - KDB_LOCAL_QHOME=/opt/kx
       - QLIC=/opt/kx-license
     volumes:
       - openbb-data:/root/.openbb_platform
-      - ./kdb:/kdb:ro
+      - ./kdb:/opt/kx:ro
       - ./kdb-license:/opt/kx-license:ro
     # Cache budget (KDB_MEMORY_MB) is 8GB, but q's own -w ceiling is budget *
     # 1.25 = 10GB headroom -- see openbb_kdb/config.py's _WORKSPACE_HEADROOM.

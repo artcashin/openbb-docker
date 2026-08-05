@@ -14,7 +14,7 @@ kdb/
   l64/  or m64/  <- the architecture directory that came with it
 ```
 
-Nothing else is needed. `openbb-api` finds it at `/kdb`, starts it bound to
+Nothing else is needed. `openbb-api` finds it at `/opt/kx`, starts it bound to
 `127.0.0.1:5000`, and every service in the stack shares it.
 
 ## Option B — run your own kdb container
