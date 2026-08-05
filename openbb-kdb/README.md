@@ -42,6 +42,11 @@ cached) or `bypass` (kdb unavailable — served straight from upstream).
 
 ## Notes
 
+- **The shared session is built once per process, from the first caller's
+  credentials.** All five fetchers reuse one q session/cache for the life of
+  the process; a later call with different `kdb_*` credentials silently reuses
+  whatever the first call resolved. Restart the process to pick up new
+  credentials.
 - **The cache is memory-only.** A restart means a cold cache. It is a cache.
 - **q binds `127.0.0.1`.** Every service in this stack shares one network
   namespace, so a `0.0.0.0` bind would publish an unauthenticated q — which

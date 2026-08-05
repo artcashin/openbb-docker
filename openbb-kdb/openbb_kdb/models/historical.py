@@ -4,9 +4,11 @@ One shared session per process: the q child process and its connection are
 created once and reused by every fetcher.
 """
 
+import threading
 from datetime import date as dateType, datetime
 from typing import Any
 
+from openbb_core.app.model.abstract.error import OpenBBError
 from openbb_core.provider.abstract.annotated_result import AnnotatedResult
 from openbb_core.provider.abstract.fetcher import Fetcher
 from openbb_core.provider.standard_models.crypto_historical import (
@@ -32,10 +34,18 @@ from openbb_core.provider.standard_models.index_historical import (
 
 _SESSION = None
 _CACHE = None
+_LOCK = threading.Lock()
 
 
 def _cache(credentials: dict | None):
-    """Build (once) the shared session, store and cache."""
+    """Build (once) the shared session, store and cache.
+
+    Guarded by a lock so concurrent first-callers cannot both pass the
+    ``_CACHE is None`` check and each build a full config/session/cache; the
+    loser's objects would otherwise just be orphaned (the session does not
+    spawn q until its first `connection()` call, so this was waste rather
+    than corruption -- the lock makes it non-wasteful too).
+    """
     global _SESSION, _CACHE  # noqa: PLW0603
     from openbb_kdb.cache import ReadThroughCache
     from openbb_kdb.config import resolve_config
@@ -43,22 +53,56 @@ def _cache(credentials: dict | None):
     from openbb_kdb.store import KdbStore
 
     if _CACHE is None:
-        config = resolve_config(credentials)
-        _SESSION = KdbSession(config)
-        _CACHE = ReadThroughCache(KdbStore(_SESSION), config)
+        with _LOCK:
+            if _CACHE is None:
+                config = resolve_config(credentials)
+                _SESSION = KdbSession(config)
+                _CACHE = ReadThroughCache(KdbStore(_SESSION), config)
     return _CACHE
 
 
+def _as_date(value) -> dateType:
+    """Coerce a str/date/datetime query bound to a plain `date` for arithmetic."""
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, dateType):
+        return value
+    return datetime.fromisoformat(str(value)).date()
+
+
 def _default_window(params: dict) -> dict:
-    """Default to one year -- the window the demo chart opens on."""
+    """Fill in a missing start/end bound; one year back from today when neither is given.
+
+    A missing bound is derived from the OTHER bound, not from today: given only
+    `end_date`, `start_date` defaults to one year before it; given only
+    `start_date`, `end_date` defaults to today. Deriving both from "today"
+    regardless of an explicit `end_date` produced an inverted range for
+    end-only requests (e.g. `end_date=2015-06-01` paired with a `start_date`
+    of "now minus a year"), which `ranges.subtract` treats as trivially
+    satisfied -- a false cache "hit" with zero rows. With neither bound given,
+    behaviour is unchanged: one year back from today, the demo chart's opening
+    window.
+    """
     from dateutil.relativedelta import relativedelta
 
     out = dict(params)
+    start = out.get("start_date")
+    end = out.get("end_date")
     today = datetime.now().date()
-    if out.get("start_date") is None:
+
+    if start is None and end is None:
         out["start_date"] = today - relativedelta(years=1)
-    if out.get("end_date") is None:
         out["end_date"] = today
+    elif start is None:
+        out["start_date"] = _as_date(end) - relativedelta(years=1)
+    elif end is None:
+        out["end_date"] = today
+    else:
+        start_d, end_d = _as_date(start), _as_date(end)
+        if start_d > end_d:
+            raise OpenBBError(
+                f"start_date ({start_d}) must not be after end_date ({end_d})."
+            )
     return out
 
 
