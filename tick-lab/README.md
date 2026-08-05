@@ -99,12 +99,15 @@ retention limit is roughly the last 30 days — so a `compare` against
 a bug in `tick-lab`; it's the correct, informative failure, and it's the
 output worth showing a reader before the real thing:
 
+Illustrative shape (tick and bar counts depend on your sample; the `1m`
+retention line is quoted from a real yfinance response):
+
 ```
-rolled 78,412 ticks into 390 1-minute bars (session=regular)
+rolled <N> ticks into <M> 1-minute bars (session=regular)
 asking yfinance for 1m bars...
   1m: retention — $MSFT: possibly delisted; no price data found (Yahoo error =
-      "1m data not available ... must be within the last 30 days.")
-  ...
+      "1m data not available for startTime=... and endTime=.... The requested
+      range must be within the last 30 days.")
   falling back to 1d
 ```
 
