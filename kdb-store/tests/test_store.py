@@ -1,11 +1,24 @@
 """Store: q statement construction and eviction policy, against a fake connection."""
 
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from kdb_store.store import _INIT_SCHEMA, _PARAM_PREFIX, KdbStore
 
 D = lambda s: datetime.fromisoformat(s)  # noqa: E731
+
+
+def _ticks_frame(rows: int = 3):
+    """A trades-shaped batch."""
+    import pandas as pd
+
+    base = D("2025-06-10T14:00:00")
+    return pd.DataFrame({
+        "time": [base + timedelta(seconds=i) for i in range(rows)],
+        "sym": ["AAPL"] * rows,
+        "price": [100.0 + i for i in range(rows)],
+        "size": [1.0] * rows,
+    })
 
 
 class FakeConn:
@@ -332,3 +345,48 @@ def test_every_q_call_is_marshalled_onto_the_session_owner_thread():
     session = StrictSession(conn)
     exercise_every_statement(KdbStore(session))
     assert session.runs >= 8
+
+
+def test_schema_init_creates_the_trades_table():
+    s, conn = store_with()
+    s.write_ticks(_ticks_frame())
+    joined = " ".join(conn.queries)
+    assert "trades" in joined
+
+
+def test_write_ticks_sends_one_batch_not_one_insert_per_row():
+    """Per-tick IPC cannot keep up with a live feed."""
+    s, conn = store_with()
+    n = s.write_ticks(_ticks_frame(rows=50))
+    assert n == 50
+    inserts = [q for q in conn.queries if "insert" in q]
+    assert len(inserts) == 1, f"expected one batched insert, got {len(inserts)}"
+
+
+def test_prune_ticks_deletes_below_the_cutoff_and_collects():
+    s, conn = store_with({"count trades": 3})
+    s.prune_ticks(D("2025-06-10T14:00:00"))
+    joined = " ".join(conn.queries)
+    assert "delete" in joined and "trades" in joined
+    assert any(".Q.gc" in q for q in conn.queries)
+
+
+def test_tick_span_returns_none_when_no_ticks():
+    s, _ = store_with({"select min time": None})
+    assert s.tick_span("NOPE") is None
+
+
+def test_lambda_parameters_in_tick_queries_never_shadow_a_column():
+    """A q lambda parameter matching a column name silently returns wrong rows."""
+    import re
+
+    s, conn = store_with()
+    s.write_ticks(_ticks_frame())
+    s.prune_ticks(D("2025-06-10T14:00:00"))
+    s.tick_span("AAPL")
+    columns = {"time", "sym", "price", "size", "t", "open", "high", "low", "close", "volume"}
+    for query in conn.queries:
+        for params in re.findall(r"\{\[([^\]]*)\]", query):
+            for name in (p.strip() for p in params.split(";") if p.strip()):
+                assert name not in columns, f"parameter {name!r} shadows a column in: {query}"
+                assert name.startswith("qw"), f"parameter {name!r} lacks the qw prefix"

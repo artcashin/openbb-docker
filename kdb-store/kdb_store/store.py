@@ -62,7 +62,9 @@ _INIT_SCHEMA = (
     "if[not `cov in key `.cache; .cache.cov: "
     "([] sym:`symbol$(); iv:`symbol$(); s:`timestamp$(); e:`timestamp$())]; "
     "if[not `lru in key `.cache; .cache.lru: "
-    "([sym:`symbol$(); iv:`symbol$()] atime:`timestamp$())]"
+    "([sym:`symbol$(); iv:`symbol$()] atime:`timestamp$())]; "
+    "if[not `trades in key `.; trades: "
+    "([] time:`timestamp$(); sym:`symbol$(); price:`float$(); size:`float$())]"
 )
 
 
@@ -234,6 +236,57 @@ class KdbStore:
             "(heap=%s budget=%s)", heap, budget_bytes,
         )
         return evicted
+
+    def write_ticks(self, frame) -> int:
+        """Batch-insert ticks. One IPC round-trip per flush, never per tick.
+
+        The batch is conformed to the stored column types first: q's `insert`
+        rejects a type mismatch outright rather than coercing, and pandas
+        re-infers dtypes per batch (an all-null size column arrives as object
+        where the stored column is float).
+        """
+        if frame is None or getattr(frame, "empty", True):
+            return 0
+
+        def write(conn):
+            prototype = conn("0#trades").pd()
+            conn["incoming_ticks"] = _conform_dtypes(frame, prototype)
+            conn("`trades insert incoming_ticks")
+            conn("delete incoming_ticks from `.")
+            return len(frame)
+
+        return self._call(write)
+
+    def prune_ticks(self, cutoff: datetime) -> int:
+        """Drop ticks older than `cutoff` and return the row count remaining.
+
+        `delete` frees `used` but not `heap`; only `.Q.gc[]` returns it.
+        """
+        def prune(conn):
+            conn("{[qwcut] trades:: delete from trades where time < qwcut}", _q_timestamp(cutoff))
+            conn(".Q.gc[]")
+            remaining = conn("count trades").py()
+            return int(remaining) if remaining is not None else 0
+
+        return self._call(prune)
+
+    def tick_span(self, symbol: str):
+        """Earliest and latest tick held for a symbol, or None if there are none."""
+        import pandas as pd
+
+        def span(conn):
+            got = conn(
+                "{[qwsym] select lo: min time, hi: max time from trades where sym = qwsym}",
+                _q_symbol(symbol),
+            ).pd()
+            if got is None or got.empty:
+                return None
+            lo, hi = got["lo"].iloc[0], got["hi"].iloc[0]
+            if pd.isna(lo) or pd.isna(hi):
+                return None
+            return (lo.to_pydatetime(), hi.to_pydatetime())
+
+        return self._call(span)
 
 
 def _conform_dtypes(df, prototype):
