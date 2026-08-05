@@ -23,6 +23,11 @@ session = KdbSession(resolve_config())
 store = KdbStore(session)
 base = datetime(2025, 6, 10, 14, 0, 0)
 
+# Force a connection now so the resolved endpoint -- the link of the chain
+# that actually answered -- is known before anything else runs.
+session.connection()
+print(f"endpoint: {session.endpoint}")
+
 # Deliberately out of order: true open is 100 (at :05), true close is 101 (at :55).
 ticks = pd.DataFrame({
     "time": [base + timedelta(seconds=55), base + timedelta(seconds=5),
