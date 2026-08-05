@@ -18,7 +18,7 @@
 - **Session default:** `regular` = 09:30:00 inclusive to 16:00:00 exclusive, US Eastern (D9).
 - **Secrets:** no real credentials, hostnames, or tailnet names in any committed file. `scripts/scrub-check.sh` must pass before every commit.
 - **Base images:** pin explicit tags, never `latest`.
-- **Extension versions (D6):** `openbb-arcticdb` → `11.0.0`, `openbb-eodhd` `0.1.0` → `8.0.0`, `openbb-kdb` `0.1.0` → `10.0.0`.
+- **Extension versions (D6, partial):** `openbb-arcticdb` → `11.0.0`, `openbb-eodhd` `0.1.0` → `8.0.0`. `openbb-kdb`/`kdb-store` are DEFERRED — a concurrent Ep. 10 session is rewriting that package.
 - **Python style:** ruff, `line-length = 100`, `target-version = "py310"`, matching `openbb-kdb/pyproject.toml`.
 - **Licensing:** the FirstRate zip is third-party licensed data and is **never committed**. Tests use synthetic fixtures in the FirstRate format.
 
@@ -909,12 +909,11 @@ assert 'arcticdb' in obb.coverage.providers, 'arcticdb provider not registered';
 print('OpenBB Platform OK:', len(obb.coverage.providers), 'providers (incl. eodhd, kdb, arcticdb)')"
 ```
 
-- [ ] **Step 3: Apply the chapter-matched extension versions (D6)**
+- [ ] **Step 3: Apply the chapter-matched extension version to eodhd only (D6, partial)**
 
 In `openbb-eodhd/pyproject.toml`: `version = "0.1.0"` → `version = "8.0.0"`
-In `openbb-kdb/pyproject.toml`: `version = "0.1.0"` → `version = "10.0.0"`
 
-If Ep. 10's in-flight `kdb-store` split has landed by the time this runs, give `kdb-store` the same `10.0.0` — it is part of Ep. 10's deliverable. Version metadata only; change no behaviour.
+**Do NOT touch `openbb-kdb/pyproject.toml`.** A concurrent Ep. 10 session is splitting that package into a new `kdb-store` as this runs; bumping it here would guarantee a rebase conflict in a file being actively rewritten. `openbb-kdb` → `10.0.0` (and `kdb-store` likewise) is deferred to a follow-up once Ep. 10 settles. Version metadata only; change no behaviour.
 
 - [ ] **Step 4: Build the image**
 

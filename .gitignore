@@ -21,3 +21,6 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 .venv/
+
+# superpowers session scratch (progress ledger, briefs, review packages)
+.superpowers/
