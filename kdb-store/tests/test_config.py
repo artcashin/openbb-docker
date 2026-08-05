@@ -2,8 +2,8 @@
 
 import pytest
 
-import openbb_kdb.config as config
-from openbb_kdb.config import resolve_config
+import kdb_store.config as config
+from kdb_store.config import resolve_config
 
 
 @pytest.fixture(autouse=True)

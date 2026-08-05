@@ -5,9 +5,9 @@ import threading
 
 import pytest
 
-import openbb_kdb.session as session
-from openbb_kdb.config import KdbConfig
-from openbb_kdb.session import KdbSession, KdbUnavailable
+import kdb_store.session as session
+from kdb_store.config import KdbConfig
+from kdb_store.session import KdbSession, KdbUnavailable
 
 
 def cfg(**kw) -> KdbConfig:

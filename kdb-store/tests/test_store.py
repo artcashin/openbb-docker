@@ -3,7 +3,7 @@
 import re
 from datetime import datetime
 
-from openbb_kdb.store import _INIT_SCHEMA, _PARAM_PREFIX, KdbStore
+from kdb_store.store import _INIT_SCHEMA, _PARAM_PREFIX, KdbStore
 
 D = lambda s: datetime.fromisoformat(s)  # noqa: E731
 

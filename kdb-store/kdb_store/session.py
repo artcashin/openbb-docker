@@ -27,7 +27,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from openbb_kdb.config import KdbConfig
+from kdb_store.config import KdbConfig
 
 logger = logging.getLogger(__name__)
 

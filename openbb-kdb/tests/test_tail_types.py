@@ -28,8 +28,8 @@ import pandas as pd
 import pytest
 
 from openbb_kdb.cache import ReadThroughCache
-from openbb_kdb.config import KdbConfig
-from openbb_kdb.store import KdbStore
+from kdb_store.config import KdbConfig
+from kdb_store.store import KdbStore
 
 D = lambda s: datetime.fromisoformat(s)  # noqa: E731
 

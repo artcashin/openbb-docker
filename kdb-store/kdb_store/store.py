@@ -39,7 +39,7 @@ import logging
 import re
 from datetime import datetime
 
-from openbb_kdb.ranges import Range
+from kdb_store.ranges import Range
 
 logger = logging.getLogger(__name__)
 
