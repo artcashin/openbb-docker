@@ -6,6 +6,14 @@ reachable ArcticDB store configured through ARCTICDB_S3_* and the fixture
 ticks already loaded into library 'ticks' as symbol 'MSFT'.
 
     docker compose run --rm openbb-api python -m pytest /workspace/tests/integration -q
+
+The provider does NO session filtering -- unlike tick-lab's own
+`to_minute_bars(..., session="regular")` default, it returns every bar,
+extended hours included. That is the "all" shape, so this compares against
+golden_1m_bars_all.csv (5 bars: the pre-market 13:15Z print and the 20:00Z
+closing print included), not golden_1m_bars.csv (3 bars, regular session
+only) -- comparing against the regular-session golden here can never pass,
+since the provider has no session parameter to filter with.
 """
 
 import os
@@ -19,7 +27,7 @@ pytestmark = pytest.mark.skipif(
     reason="needs a reachable ArcticDB store; see tests/integration/README.md",
 )
 
-GOLDEN = Path(__file__).resolve().parents[2] / "tick-lab/tests/fixtures/golden_1m_bars.csv"
+GOLDEN = Path(__file__).resolve().parents[2] / "tick-lab/tests/fixtures/golden_1m_bars_all.csv"
 
 
 def load_golden() -> pd.DataFrame:
@@ -51,9 +59,10 @@ def test_provider_returns_the_golden_bars():
     assert len(got) == len(golden), (
         f"provider returned {len(got)} bars, golden has {len(golden)}"
     )
-    for column in ("open", "high", "low", "close"):
+    for column in ("open", "high", "low", "close", "volume"):
         pd.testing.assert_series_equal(
             got[column].reset_index(drop=True),
             golden[column].reset_index(drop=True),
             check_names=False,
+            check_dtype=False,
         )
