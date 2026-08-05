@@ -5,7 +5,9 @@ asserts against the same golden CSV tick-lab asserts against. Requires a
 reachable ArcticDB store configured through ARCTICDB_S3_* and the fixture
 ticks already loaded into library 'ticks' as symbol 'MSFT'.
 
-    docker compose run --rm openbb-api python -m pytest /workspace/tests/integration -q
+See tests/integration/README.md for the full setup (loading fixtures, then
+bind-mounting this checkout and installing pytest for a one-off run --
+neither the repo nor pytest ships in the image).
 
 The provider does NO session filtering -- unlike tick-lab's own
 `to_minute_bars(..., session="regular")` default, it returns every bar,

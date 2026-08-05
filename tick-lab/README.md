@@ -14,8 +14,8 @@ purpose, as a teaching contrast — see
 below.
 
 ```bash
-tick-lab load ./FirstRate_sample.zip
-tick-lab compare --symbol MSFT --date 2023-05-12
+.venv/bin/tick-lab load ./FirstRate_sample.zip
+.venv/bin/tick-lab compare --symbol MSFT --date 2023-05-12
 ```
 
 ## Install
@@ -71,8 +71,8 @@ git-ignore it if you unzip it inside `tick-lab/`).
 ## Load it
 
 ```bash
-tick-lab load ./FirstRate_sample.zip --dry-run   # reports what would be written, writes nothing
-tick-lab load ./FirstRate_sample.zip              # writes for real
+.venv/bin/tick-lab load ./FirstRate_sample.zip --dry-run   # reports what would be written, writes nothing
+.venv/bin/tick-lab load ./FirstRate_sample.zip              # writes for real
 ```
 
 `load` also accepts a path to an already-extracted directory, not just a
@@ -88,7 +88,7 @@ continues; the exit code is non-zero only if something failed.
 ## Compare
 
 ```bash
-tick-lab compare --symbol MSFT --date 2023-05-12
+.venv/bin/tick-lab compare --symbol MSFT --date 2023-05-12
 ```
 
 This reads your stored MSFT ticks for that day, rolls them into 1-minute
@@ -100,11 +100,20 @@ for what each one costs.
 
 ### Expected output
 
-`yfinance` cannot serve 1-minute bars for a date in 2023 — Yahoo's own
-retention limit is roughly the last 30 days — so a `compare` against
-`2023-05-12` **cannot** produce a clean per-minute report today. That's not
-a bug in `tick-lab`; it's the correct, informative failure, and it's the
-output worth showing a reader before the real thing:
+The command above (default `--reference eodhd-api`) returns a real
+per-minute comparison for MSFT on this date — EODHD has 2023 intraday
+history, so there's no ladder step-down to show and the transcript is just
+a normal report.
+
+`--reference yfinance` is the one that demonstrates the step-down: `yfinance`
+cannot serve 1-minute bars for a date in 2023 — Yahoo's own retention limit
+is roughly the last 30 days — so pointing `compare` at it **cannot** produce
+a clean per-minute report today. That's not a bug in `tick-lab`; it's the
+correct, informative failure, and it's worth seeing once:
+
+```bash
+.venv/bin/tick-lab compare --symbol MSFT --date 2023-05-12 --reference yfinance
+```
 
 Illustrative shape (tick and bar counts depend on your sample; the `1m`
 retention line is quoted from a real yfinance response):
@@ -119,18 +128,21 @@ asking yfinance for 1m bars...
 ```
 
 `tick-lab` prints Yahoo's own explanation rather than swallowing it into a
-generic "no data" message, then walks the interval ladder down
+generic "no data" message, then walks `yfinance`'s interval ladder down
 (`1m → 5m → 15m → 30m → 1h → 1d`) until it finds one `yfinance` can actually
-serve for a window this old, and says which one it picked. The report that
-follows still compares real numbers — just at daily resolution instead of
-per-minute. `--reference` is already a flag for exactly this reason: swapping
-in a source with real 2023 intraday history later is meant to be a small
-change, not a rewrite.
+serve for a window this old, and says which one it picked. The two EODHD
+adapters (`eodhd-api`, `eodhd-local`) support a shorter ladder —
+`1m, 5m, 1h, 1d` (no `15m`/`30m`) — which is why the default command above
+never needs to step down for MSFT on this date. When a step-down does
+happen, the report that follows still compares real numbers — just at
+daily resolution instead of per-minute. `--reference` is already a flag for
+exactly this reason: swapping in a source with real 2023 intraday history
+later is meant to be a small change, not a rewrite.
 
 ### `--session`
 
 ```bash
-tick-lab compare --symbol MSFT --date 2023-05-12 --session all
+.venv/bin/tick-lab compare --symbol MSFT --date 2023-05-12 --session all
 ```
 
 `--session regular` (the default) keeps only trades between **09:30
@@ -155,7 +167,7 @@ for `--session all` and compare like with like.
 ### `--tol`
 
 ```bash
-tick-lab compare --symbol MSFT --date 2023-05-12 --tol 0.05
+.venv/bin/tick-lab compare --symbol MSFT --date 2023-05-12 --tol 0.05
 ```
 
 `--tol` (default `0.01`) is in the **instrument's own price units** — for a
@@ -168,7 +180,7 @@ first if something looks off.
 ### `--json`
 
 ```bash
-tick-lab compare --symbol MSFT --date 2023-05-12 --json
+.venv/bin/tick-lab compare --symbol MSFT --date 2023-05-12 --json
 ```
 
 Emits the same report as structured JSON instead of the text summary above —
@@ -193,7 +205,7 @@ in this window?" — but they pay for the answer differently:
 |---|---|---|---|
 | `yfinance` (default before v11.1.0) | your laptop, hits Yahoo directly | nothing but `yfinance` (already a dependency) | no — Yahoo's own 1-minute retention is ~30 days, so a 2023 window steps down to `1d` |
 | `eodhd-api` (**the default**) | your laptop, hits *this stack's* OpenBB REST API | just `OPENBB_URL` + the Basic-auth pair — no provider credential, no `openbb` install | yes — the EODHD key lives on the server |
-| `eodhd-local` | your laptop, runs OpenBB **in-process** | `pip install openbb openbb-eodhd`, *and* an EODHD key present locally (e.g. `EODHD_API_KEY`) | yes, for symbols the key covers |
+| `eodhd-local` | your laptop, runs OpenBB **in-process** | `pip install openbb ../openbb-eodhd` (not on PyPI — installed from this checkout), *and* an EODHD key present locally (e.g. `EODHD_API_KEY`) | yes, for symbols the key covers |
 
 `eodhd-local` exists for the contrast, not because it's the recommended
 path: it makes the same request as `eodhd-api`, but locally, so you can see
@@ -204,8 +216,11 @@ running the stack at all: one Basic-auth pair replaces an installed SDK plus
 a credential on every laptop that wants to ask.
 
 ```bash
-pip install openbb openbb-eodhd   # not a tick-lab dependency -- opt in only if you use this adapter
-EODHD_API_KEY=<your key> tick-lab compare --symbol MSFT --date 2023-05-12 --reference eodhd-local
+# not a tick-lab dependency -- opt in only if you use this adapter.
+# openbb-eodhd isn't on PyPI (it's this repo's own extension), so install
+# it from the checkout, not by name -- more on this below.
+.venv/bin/pip install openbb ../openbb-eodhd
+EODHD_API_KEY=<your key> .venv/bin/tick-lab compare --symbol MSFT --date 2023-05-12 --reference eodhd-local
 ```
 
 ### The GOOG entitlement example
@@ -220,7 +235,7 @@ message — an `entitlement` error naming the 403 — rather than a silent
 empty frame:
 
 ```bash
-EODHD_API_KEY=<demo key> tick-lab compare --symbol GOOG --date 2023-05-12 --reference eodhd-local
+EODHD_API_KEY=<demo key> .venv/bin/tick-lab compare --symbol GOOG --date 2023-05-12 --reference eodhd-local
 ```
 
 ```
