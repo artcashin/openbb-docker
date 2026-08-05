@@ -15,6 +15,21 @@ timestamps are typically exchange-local or UTC. The boundary is consequently
 only as accurate as the container's timezone; it is deliberately conservative
 in the sense that being an hour "early" merely refetches one extra bar, and
 callers that care pass an explicit `now`.
+
+Coverage records what was ASKED FOR, not what came back. That is what lets an
+empty range -- a market holiday, or the pre-IPO prefix of a zoomed-out chart --
+be remembered instead of refetched forever. The trade-off: a provider that
+returns less than the range it was asked for leaves that hole permanently
+marked covered, and it will be served as an empty hit. Recording only up to the
+newest bar returned would trade this for the worse bug (sparse symbols become
+uncacheable), so a truncated response is treated as the provider contract
+violation it is. The cache is memory-only and process-lifetime, which bounds
+the damage.
+
+One known limit of the corporate-action backstop: its overlap is
+`_OVERLAP_BARS * step` of WALL CLOCK, so for intraday intervals that window
+falls inside the overnight gap and contains no bars -- the check quietly does
+not fire. Splits are detected on the daily series instead.
 """
 
 import asyncio
