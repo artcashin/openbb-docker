@@ -14,6 +14,9 @@
     },
     "8088": {
       "HTTPS": true
+    },
+    "6906": {
+      "HTTPS": true
     }
   },
   "Web": {
@@ -49,6 +52,13 @@
       "Handlers": {
         "/": {
           "Proxy": "http://127.0.0.1:8088"
+        }
+      }
+    },
+    "${TS_CERT_DOMAIN}:6906": {
+      "Handlers": {
+        "/": {
+          "Proxy": "http://127.0.0.1:6906"
         }
       }
     }

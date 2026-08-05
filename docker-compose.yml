@@ -197,6 +197,26 @@ services:
       - ./rss-ticker-config:/config:ro
       - rss-ticker-data:/data
 
+  # cache-chart (Ep. 10): the kdb+ cache demo — a Workspace chart widget and a
+  # standalone page whose scroll gesture shows only the missing range being
+  # fetched. Loopback :6906; Serve publishes it on :6906 — tailnet-only,
+  # NEVER funneled (it holds API credentials and has no auth of its own).
+  cache-chart:
+    build: ./cache-chart
+    image: openbb-cache-chart:latest
+    container_name: openbb-cache-chart
+    restart: unless-stopped
+    network_mode: service:tailscale
+    depends_on:
+      - tailscale
+      - openbb-api
+    environment:
+      - OPENBB_URL=http://127.0.0.1:6900
+    env_file:
+      # OPENBB_API_USERNAME / PASSWORD — the API enforces Basic auth.
+      - path: ./api-auth.env
+        required: true
+
 volumes:
   openbb-data:
   rss-ticker-data:
