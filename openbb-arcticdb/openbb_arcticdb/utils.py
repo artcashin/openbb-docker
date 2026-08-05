@@ -11,6 +11,30 @@ def default_uri() -> str:
     return f"lmdb://{os.path.join(home, 'arcticdb')}"
 
 
+def redact_uri(uri: str) -> str:
+    """Replace the `access`/`secret` query values in an ArcticDB URI with '***'.
+
+    An S3 URI carries the MinIO credentials in its query string (see
+    `s3_uri_from_env`), including the root/admin pair when that's what's
+    configured. `provider="arcticdb"` is served by openbb-api, which
+    `docker-compose.yml` documents may be published to the public internet
+    via Tailscale Funnel -- so the raw URI must never reach an exception
+    message or a log line. LMDB URIs have no query string and pass through
+    unchanged.
+    """
+    # pylint: disable=import-outside-toplevel
+    from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
+    parts = urlsplit(uri)
+    if not parts.query:
+        return uri
+    redacted = [
+        (k, "***" if k in ("access", "secret") else v)
+        for k, v in parse_qsl(parts.query, keep_blank_values=True)
+    ]
+    return urlunsplit(parts._replace(query=urlencode(redacted)))
+
+
 _S3_REQUIRED = (
     "ARCTICDB_S3_ENDPOINT",
     "ARCTICDB_S3_BUCKET",
@@ -190,7 +214,7 @@ def get_library(uri: str, library: str, create_if_missing: bool = True):
             ac = _arctic_cache[uri] = Arctic(uri)
     if not create_if_missing and not ac.has_library(library):
         raise FileNotFoundError(
-            f"ArcticDB library '{library}' does not exist at '{uri}'. "
+            f"ArcticDB library '{library}' does not exist at '{redact_uri(uri)}'. "
             "Write some data first with `result.arcticdb.write(...)`."
         )
     return ac.get_library(library, create_if_missing=create_if_missing)

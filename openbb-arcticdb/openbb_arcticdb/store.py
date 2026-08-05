@@ -83,12 +83,15 @@ class ArcticStore:
         prune_previous_versions: bool = False,
     ) -> dict[str, Any]:
         """Write any data as a new version of `key` (overwrites the symbol)."""
+        # pylint: disable=import-outside-toplevel
+        from openbb_arcticdb.utils import redact_uri
+
         df = self._to_frame(data)
         v = self._lib().write(
             key, df, metadata=metadata, prune_previous_versions=prune_previous_versions
         )
         return {
-            "uri": self.uri,
+            "uri": redact_uri(self.uri),
             "library": self.library,
             "symbol": key,
             "version": getattr(v, "version", None),
@@ -97,10 +100,13 @@ class ArcticStore:
 
     def append(self, key: str, data: Any) -> dict[str, Any]:
         """Append data to an existing symbol."""
+        # pylint: disable=import-outside-toplevel
+        from openbb_arcticdb.utils import redact_uri
+
         df = self._to_frame(data)
         v = self._lib().append(key, df)
         return {
-            "uri": self.uri,
+            "uri": redact_uri(self.uri),
             "library": self.library,
             "symbol": key,
             "version": getattr(v, "version", None),
@@ -153,8 +159,11 @@ class ArcticStore:
 
     def delete(self, key: str) -> dict[str, Any]:
         """Delete a symbol."""
+        # pylint: disable=import-outside-toplevel
+        from openbb_arcticdb.utils import redact_uri
+
         self._lib().delete(key)
-        return {"uri": self.uri, "library": self.library, "deleted": key}
+        return {"uri": redact_uri(self.uri), "library": self.library, "deleted": key}
 
     def read_metadata(self, key: str) -> Any:
         """Read just the metadata stored alongside `key`."""
