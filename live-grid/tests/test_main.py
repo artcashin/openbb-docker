@@ -73,6 +73,18 @@ def test_health_reports_per_feed_state():
     assert set(body["feeds"]) == {"us", "crypto", "forex"}
 
 
+def test_health_omits_ticks_key_when_chart_is_disabled(monkeypatch):
+    monkeypatch.setenv("LIVE_GRID_CHART", "false")
+    body = make_client().get("/health").json()
+    assert "ticks" not in body
+
+
+def test_health_includes_ticks_key_when_chart_is_enabled_by_default(monkeypatch):
+    monkeypatch.delenv("LIVE_GRID_CHART", raising=False)
+    body = make_client().get("/health").json()
+    assert set(body["ticks"]) == {"buffered", "written", "dropped"}
+
+
 def test_websocket_registers_params_and_streams_dirty_rows():
     client = make_client()
     with client.websocket_connect("/live_grid_ws") as ws:

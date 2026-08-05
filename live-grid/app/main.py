@@ -9,6 +9,7 @@ import logging
 import os
 import uuid
 from contextlib import asynccontextmanager
+from datetime import timedelta
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
@@ -45,9 +46,27 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
     """Build the app. Test seams: `seed_client` replaces the SDK REST client,
     `client_factory` is passed through to FeedManager (mock websockets)."""
     key = api_key if api_key is not None else _api_key()
-    quotes = QuoteTable()
+
+    recorder = None
+    if os.getenv("LIVE_GRID_CHART", "true").strip().lower() in ("1", "true", "yes", "on"):
+        try:
+            from kdb_store.config import resolve_config
+            from kdb_store.session import KdbSession
+            from kdb_store.store import KdbStore
+
+            from app.recorder import TickRecorder
+
+            config = resolve_config()
+            session = KdbSession(config)
+            window = timedelta(seconds=int(os.getenv("LIVE_TICK_WINDOW_SECONDS", "86400")))
+            recorder = TickRecorder(KdbStore(session), window=window)
+        except Exception as exc:  # noqa: BLE001 - the grid works without kdb
+            log.warning("tick recording disabled: %s", exc)
+            recorder = None
+
+    quotes = QuoteTable(on_tick=recorder.record if recorder else None)
     manager_kwargs = {} if client_factory is None else {"client_factory": client_factory}
-    manager = FeedManager(key or "", quotes, **manager_kwargs)
+    manager = FeedManager(key or "", quotes, recorder=recorder, **manager_kwargs)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -99,7 +118,10 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
 
     @app.get("/health")
     def health():
-        return {"status": "ok", "feeds": manager.status()}
+        body = {"status": "ok", "feeds": manager.status()}
+        if recorder is not None:
+            body["ticks"] = recorder.stats()
+        return body
 
     @app.websocket("/live_grid_ws")
     async def live_grid_ws(ws: WebSocket) -> None:

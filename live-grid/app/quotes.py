@@ -1,9 +1,12 @@
 """In-memory latest-quote table shared by REST seeding and websocket ticks."""
 
+import logging
 from datetime import datetime, timezone
 from typing import Any
 
 from app.classify import snapshot_ticker
+
+log = logging.getLogger("live-grid")
 
 
 def _f(value: Any) -> float | None:
@@ -33,9 +36,10 @@ def _blank_row(symbol: str) -> dict[str, Any]:
 class QuoteTable:
     """symbol -> latest row dict; prev-closes cached for change math."""
 
-    def __init__(self) -> None:
+    def __init__(self, on_tick=None) -> None:
         self.rows: dict[str, dict[str, Any]] = {}
         self._prev_close: dict[str, float] = {}
+        self._on_tick = on_tick
 
     def seed(self, symbols: list[str], client) -> list[dict[str, Any]]:
         """Fill rows from the SDK real-time snapshot; returns rows in request order."""
@@ -78,6 +82,7 @@ class QuoteTable:
         if not sym:
             return None
         row = self.rows.setdefault(sym, _blank_row(sym))
+        size = None
         if feed == "forex":
             bid, ask = _f(msg.get("b")), _f(msg.get("a"))
             if bid is None and ask is None:
@@ -108,4 +113,9 @@ class QuoteTable:
             else datetime.now(tz=timezone.utc)
         )
         row["updated_at"] = stamp.strftime("%H:%M:%S")
+        if self._on_tick is not None:
+            try:
+                self._on_tick(sym, price, size if feed != "forex" else None, stamp)
+            except Exception:  # noqa: BLE001 - recording must never break the grid
+                log.debug("tick recorder rejected a tick", exc_info=True)
         return sym

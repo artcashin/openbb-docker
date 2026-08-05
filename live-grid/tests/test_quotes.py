@@ -2,6 +2,8 @@
 
 from unittest.mock import MagicMock
 
+import pytest
+
 from app.quotes import QuoteTable
 
 
@@ -110,3 +112,36 @@ class TestApplyTick:
         q.apply_tick("crypto", {"s": "BTC-USD", "p": "50000.5", "q": "0.01"})
         assert q.rows["BTC-USD"]["price"] == 50000.5
         assert q.rows["BTC-USD"]["last_size"] == 0.01
+
+
+def test_apply_tick_reports_the_tick_to_the_recorder():
+    seen = []
+    table = QuoteTable(on_tick=lambda *a: seen.append(a))
+    table.apply_tick("us", {"s": "AAPL", "p": 100.5, "q": 3, "t": 1749565200000})
+    assert len(seen) == 1
+    sym, price, size, stamp = seen[0]
+    assert (sym, price, size) == ("AAPL", 100.5, 3)
+
+
+def test_forex_ticks_are_recorded_at_the_mid():
+    seen = []
+    table = QuoteTable(on_tick=lambda *a: seen.append(a))
+    table.apply_tick("forex", {"s": "EURUSD", "b": 1.08, "a": 1.10, "t": 1749565200000})
+    assert seen[0][1] == pytest.approx(1.09)
+
+
+def test_a_rejected_tick_is_not_recorded():
+    seen = []
+    table = QuoteTable(on_tick=lambda *a: seen.append(a))
+    table.apply_tick("us", {"s": "AAPL"})  # no price
+    assert seen == []
+
+
+def test_a_failing_recorder_never_breaks_the_grid():
+    """Episode 8's feature must survive anything the cache does."""
+    def boom(*_):
+        raise RuntimeError("kdb exploded")
+
+    table = QuoteTable(on_tick=boom)
+    assert table.apply_tick("us", {"s": "AAPL", "p": 100.5, "q": 3}) == "AAPL"
+    assert table.rows["AAPL"]["price"] == 100.5
