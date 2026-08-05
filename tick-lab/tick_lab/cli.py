@@ -18,6 +18,7 @@ import pandas as pd
 from tick_lab.config import ConfigError, from_env
 from tick_lab.firstrate import FirstRateFormatError, parse
 from tick_lab.reference.base import ReferenceError, fetch_finest
+from tick_lab.reference.eodhd_api import from_env as eodhd_api_from_env
 from tick_lab.reference.yfinance_adapter import YFinanceAdapter
 from tick_lab.report import compare as compare_frames
 from tick_lab.rollup import aggregate, to_minute_bars
@@ -26,6 +27,7 @@ from tick_lab.store import LibraryNotFoundError, StoreWriteError, TickStore
 # Later releases add entries here; the CLI needs no other change.
 ADAPTERS = {
     "yfinance": YFinanceAdapter,
+    "eodhd-api": eodhd_api_from_env,
 }
 
 TRADE_LIBRARY = "ticks"
@@ -195,7 +197,11 @@ def cmd_compare(args) -> int:
     print(f"rolled {len(trades):,} ticks into {len(ours_1m):,} 1-minute bars "
           f"(session={args.session})")
 
-    adapter = ADAPTERS[args.reference]()
+    try:
+        adapter = ADAPTERS[args.reference]()
+    except ReferenceError as err:
+        print(f"cannot use --reference {args.reference}: {err.detail}", file=sys.stderr)
+        return 1
     print(f"asking {adapter.name} for 1m bars...")
 
     try:
@@ -244,7 +250,7 @@ def build_parser() -> argparse.ArgumentParser:
     comp.add_argument("--symbol", required=True)
     comp.add_argument("--date", required=True, type=date_or_datetime, help="YYYY-MM-DD")
     comp.add_argument("--end", type=date_or_datetime, help="end date; defaults to --date")
-    comp.add_argument("--reference", default="yfinance", choices=sorted(ADAPTERS))
+    comp.add_argument("--reference", default="eodhd-api", choices=sorted(ADAPTERS))
     comp.add_argument("--session", default="regular", choices=["regular", "all"])
     comp.add_argument("--tol", type=float, default=0.01,
                       help="price tolerance in the instrument's units (default 0.01)")

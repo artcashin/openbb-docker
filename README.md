@@ -16,6 +16,7 @@ from later chapters is.
 | v9.0.0 | Ep. 9 — All the News That Fits, We Print | rss-ticker news wire joins the stack |
 | v10.0.0 | Ep. 10 — The Cache | kdb+ read-through cache (`provider="kdb"`) + cache-chart scroll demo |
 | v11.0.0 | Ep. 11 — The Shared Store | MinIO as its own tailnet node + ArcticDB (`provider="arcticdb"`) + `tick-lab` |
+| v11.1.0 | Ep. 11 — The Shared Store | `tick-lab`'s EODHD-through-the-API reference adapter — the per-minute 2023 comparison yfinance cannot serve |
 
 ## What you get (this release: v11.0.0)
 

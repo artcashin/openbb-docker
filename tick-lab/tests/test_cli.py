@@ -33,6 +33,19 @@ def test_yfinance_is_registered():
     assert "yfinance" in ADAPTERS
 
 
+def test_eodhd_api_is_registered():
+    assert "eodhd-api" in ADAPTERS
+
+
+def test_eodhd_api_is_the_default_reference():
+    # v11.1.0: the per-minute 2023 comparison yfinance cannot serve becomes
+    # possible through the stack's own OpenBB API, so that is now the
+    # default -- yfinance remains available via --reference yfinance.
+    parser = cli.build_parser()
+    args = parser.parse_args(["compare", "--symbol", "MSFT", "--date", "2023-05-12"])
+    assert args.reference == "eodhd-api"
+
+
 def test_no_subcommand_exits_nonzero(capsys):
     assert main([]) == 2
 
@@ -41,6 +54,26 @@ def test_unknown_reference_is_rejected(capsys):
     with pytest.raises(SystemExit):
         main(["compare", "--symbol", "MSFT", "--date", "2023-05-12",
               "--reference", "nope"])
+
+
+def test_missing_eodhd_api_env_is_reported_cleanly(capsys, monkeypatch):
+    # Step 4's requirement: constructing the default adapter with none of
+    # OPENBB_URL / OPENBB_API_USERNAME / OPENBB_API_PASSWORD set must not
+    # raise out of cmd_compare -- it must be reported like any other
+    # configuration problem, with the exit code main() already uses for one.
+    # Ticks must actually be found first, or cmd_compare returns 1 for that
+    # ("no ticks stored") before ever reaching adapter construction.
+    _set_dummy_arctic_env(monkeypatch)
+    for key in ("OPENBB_URL", "OPENBB_API_USERNAME", "OPENBB_API_PASSWORD"):
+        monkeypatch.delenv(key, raising=False)
+    _install_fake_store(monkeypatch, read_result=_fake_trades_two_days())
+
+    code = cli.main(["compare", "--symbol", "MSFT", "--date", "2023-05-12"])
+
+    assert code == 1
+    err = capsys.readouterr().err
+    assert "cannot use --reference eodhd-api" in err
+    assert "OPENBB_URL" in err
 
 
 def test_bad_config_is_reported_without_a_traceback(capsys, monkeypatch):
@@ -331,7 +364,8 @@ def test_compare_reads_our_ticks_over_the_full_requested_window(monkeypatch):
     monkeypatch.setitem(cli.ADAPTERS, "yfinance", _FakeAdapter)
 
     code = cli.main(
-        ["compare", "--symbol", "MSFT", "--date", "2023-05-12", "--end", "2023-05-13"]
+        ["compare", "--symbol", "MSFT", "--date", "2023-05-12", "--end", "2023-05-13",
+         "--reference", "yfinance"]
     )
 
     assert code == 0
@@ -370,7 +404,9 @@ def test_compare_uppercases_the_symbol_before_reading(monkeypatch):
     store = _install_fake_store(monkeypatch, read_result=_fake_trades_two_days())
     monkeypatch.setitem(cli.ADAPTERS, "yfinance", _FakeAdapter)
 
-    code = cli.main(["compare", "--symbol", "msft", "--date", "2023-05-12"])
+    code = cli.main(
+        ["compare", "--symbol", "msft", "--date", "2023-05-12", "--reference", "yfinance"]
+    )
 
     assert code == 0
     assert store.read_calls[0][1] == "MSFT"
