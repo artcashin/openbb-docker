@@ -227,66 +227,54 @@ services:
         required: true
 
   # --- Ep. 11: the shared store -------------------------------------------
-  # MinIO joins the tailnet as its OWN node rather than riding behind Serve on
-  # the openbb node. S3 SigV4 signs the Host header, so putting a reverse proxy
-  # in the signing path buys a failure mode for nothing -- the node's own
-  # tailnet address is the endpoint.
+  # MinIO, joined to the tailnet as its own node named "minio". No sidecar:
+  # tailscaled runs INSIDE this container because its control socket is a file
+  # and network_mode shares only the network namespace -- see minio/Dockerfile.
+  #
+  # NOTHING is published to the host. :9000 (S3) and :9001 (console) exist on
+  # the tailscale interface only.
   #
   # Before first start:
   #   cp minio.env.example minio.env && chmod 600 minio.env
-  minio-ts:
-    image: tailscale/tailscale:v1.98.9
-    container_name: openbb-minio-ts
-    hostname: minio
-    restart: unless-stopped
-    env_file:
-      - ./ts.env
-    environment:
-      - TS_HOSTNAME=minio
-      # Same reasoning as the openbb node: userspace mode would forward tailnet
-      # connections to 127.0.0.1 and make MinIO reachable around our intent.
-      - TS_USERSPACE=false
-      - TS_STATE_DIR=/var/lib/tailscale
-    volumes:
-      - minio-ts-state:/var/lib/tailscale
-    devices:
-      - /dev/net/tun:/dev/net/tun
-    cap_add:
-      - NET_ADMIN
-      - NET_RAW
-
-  # MinIO shares the sidecar's namespace. NOTHING is published to the host, so
-  # :9000/:9001 exist on the tailscale interface (and the docker bridge) only.
   minio:
     build: ./minio
     image: openbb-minio:11.0.0
     platform: linux/amd64
     container_name: openbb-minio
+    hostname: minio
     restart: unless-stopped
-    network_mode: service:minio-ts
-    depends_on:
-      - minio-ts
     env_file:
+      # TS_AUTHKEY -- the same reusable tagged key the openbb node uses.
+      - path: ./ts.env
+        required: true
       - path: ./minio.env
         required: true
     environment:
+      - TS_HOSTNAME=minio
+      - TS_STATE_DIR=/var/lib/tailscale
       # NOTE: the cert domain is NOT set here. Compose interpolates ${...} from
       # the shell or a root .env only -- never from env_file -- so referencing
       # ARCTICDB_S3_ENDPOINT here would silently expand to empty. The entrypoint
       # reads it from its own environment instead, where env_file did put it.
       - MINIO_CERT_RENEW_SECONDS=43200
     command: ["/data", "--console-address", ":9001"]
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
     volumes:
       - minio-data:/data
-      # The renewal loop talks to tailscaled over this socket.
-      - minio-ts-state:/var/lib/tailscale
+      # Persist node identity across restarts, same as the openbb node's
+      # ./ts-state -- otherwise every restart joins as a brand-new machine.
+      - ./ts-state-minio:/var/lib/tailscale
 
   # One-shot: ArcticDB will NOT create its own bucket, so `docker compose up`
   # would otherwise leave you with a store that 404s on first write.
   minio-init:
     image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z
     container_name: openbb-minio-init
-    network_mode: service:minio-ts
+    network_mode: service:minio
     depends_on:
       - minio
     env_file:
@@ -313,4 +301,3 @@ volumes:
   openbb-data:
   rss-ticker-data:
   minio-data:
-  minio-ts-state:
