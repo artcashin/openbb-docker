@@ -144,6 +144,14 @@ your side with nothing to compare against — not price discrepancies. If your
 gap count looks unexpectedly large, check which session you asked for before
 suspecting the data.
 
+**Expect this with `eodhd-api`/`eodhd-local`, measured:** EODHD returns **547**
+one-minute bars for MSFT on 2023-05-12, not 390 — it includes extended hours.
+So the default `--session regular` compares your ~390 regular-session bars
+against EODHD's 547, and roughly 157 of theirs have no counterpart on your
+side. Those land in **coverage gaps**, not price discrepancies — which is
+exactly why the report keeps the two apart. If you want them to line up, ask
+for `--session all` and compare like with like.
+
 ### `--tol`
 
 ```bash
