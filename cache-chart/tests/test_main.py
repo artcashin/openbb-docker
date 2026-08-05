@@ -63,6 +63,72 @@ def test_demo_page_registers_relayout_handler_once():
     assert text.count('chart.on("plotly_relayout"') == 1
 
 
+def _extract_braced_block(text, marker):
+    """Return `marker`'s following `{ ... }` block, matched by brace-depth
+    counting (the file has no unbalanced braces inside strings/comments, so
+    plain counting is safe here -- this is a test-only helper, not a JS
+    parser)."""
+    start = text.index(marker)
+    brace_start = text.index("{", start)
+    depth = 0
+    for i in range(brace_start, len(text)):
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return text[brace_start:i + 1]
+    raise ValueError(f"unbalanced braces after {marker!r}")
+
+
+def test_demo_page_binds_relayout_handler_only_after_first_plot():
+    """Regression test for the page being completely non-functional: Plotly
+    only attaches its `.on` event-emitter to the chart <div> once that div
+    has been plotted at least once (Plotly.newPlot/react). A previous fix for
+    listener accumulation (see test above) moved the single `chart.on(...)`
+    call into boot(), which runs synchronously before any plot exists -- so
+    `chart.on` was `undefined`, boot() threw a TypeError on its first
+    statement, and reload() (and thus the whole page) never ran.
+
+    A plain "does `chart.on(` come before `Plotly.react(` in the file text"
+    check does NOT catch this: `draw()` (which contains `Plotly.react`) is
+    *defined* earlier in the file than the `boot()` IIFE regardless of which
+    one actually calls `chart.on` first at runtime -- text position reflects
+    definition order, not execution order. So instead this test looks at
+    which *function body* the registration lives in: `boot()` runs
+    immediately, before `draw()` has ever run, so a `chart.on(` call directly
+    inside `boot()`'s body reproduces the crash; a `chart.on(` call inside
+    `draw()`'s body (necessarily after `Plotly.react`/`newPlot`, since that's
+    the only plot call in that function) only runs once a plot already
+    exists.
+
+    This test does NOT execute the JavaScript or a real Plotly -- it cannot
+    prove the page runs correctly end to end (see the live-page checks in the
+    fix report instead). It only proves the specific ordering bug that broke
+    the page cannot silently come back in this shape.
+    """
+    text = client.get("/demo").text
+
+    boot_body = _extract_braced_block(text, "async function boot()")
+    assert "chart.on(" not in boot_body, (
+        "chart.on(...) is called directly in boot(), which runs before any "
+        "plot exists -- on a bare <div>, Plotly has not attached `.on` yet, "
+        "so this throws a TypeError and the page never boots"
+    )
+
+    draw_body = _extract_braced_block(text, "function draw()")
+    plot_positions = [
+        i for i in (draw_body.find("Plotly.react(chart"), draw_body.find("Plotly.newPlot(chart"))
+        if i != -1
+    ]
+    on_position = draw_body.find("chart.on(")
+    if on_position != -1:
+        assert plot_positions and on_position > min(plot_positions), (
+            "chart.on(...) appears in draw() before the Plotly plot call -- "
+            "it must be bound only after the chart has actually been plotted"
+        )
+
+
 def test_demo_page_client_handles_request_failures():
     """The client must not assume a response body has a `cache` key -- an
     error payload (or an unparsable body) needs a safe fallback so hud()
