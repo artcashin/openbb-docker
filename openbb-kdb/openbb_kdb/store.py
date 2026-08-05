@@ -9,10 +9,13 @@ Two measured facts shape this file:
     it. Every eviction therefore ends in a collect.
 """
 
+import logging
 import re
 from datetime import datetime
 
 from openbb_kdb.ranges import Range
+
+logger = logging.getLogger(__name__)
 
 _SAFE = re.compile(r"[^A-Za-z0-9_]")
 
@@ -26,7 +29,7 @@ _INIT_SCHEMA = (
     "if[not `cov in key `.cache; .cache.cov: "
     "([] sym:`symbol$(); iv:`symbol$(); s:`timestamp$(); e:`timestamp$())]; "
     "if[not `lru in key `.cache; .cache.lru: "
-    "([] sym:`symbol$(); iv:`symbol$(); atime:`timestamp$())]"
+    "([sym:`symbol$(); iv:`symbol$()] atime:`timestamp$())]"
 )
 
 
@@ -130,10 +133,18 @@ class KdbStore:
         """Drop least-recently-used entries until heap is under budget.
 
         Preventive by necessity: crossing q's -w does not raise, it kills the
-        process. Returns the table names evicted.
+        process. Returns the table names actually evicted -- a name is only
+        appended once its table is confirmed to have existed, so a stale LRU
+        row naming an already-gone table isn't counted as an eviction.
+
+        Logs a warning (heap left over budget) if the LRU runs out before the
+        budget is reached, including if the LRU was empty to begin with:
+        crossing q's -w kills the process, so "we couldn't get under budget"
+        is exactly the condition an operator needs surfaced.
         """
         evicted: list[str] = []
-        if self.memory().get("heap", 0) <= budget_bytes:
+        heap = self.memory().get("heap", 0)
+        if heap <= budget_bytes:
             return evicted
         rows = self._conn()("select sym, iv, atime from .cache.lru").py() or []
         if isinstance(rows, dict):
@@ -141,10 +152,18 @@ class KdbStore:
         for sym, iv, _ in sorted(rows, key=lambda r: r[2]):
             sym = sym.decode() if isinstance(sym, bytes) else str(sym)
             iv = iv.decode() if isinstance(iv, bytes) else str(iv)
+            name = self.table_name(sym, iv)
+            existed = bool(self._conn()(f"`{name} in key `.").py())
             self.drop(sym, iv)
-            evicted.append(self.table_name(sym, iv))
-            if self.memory().get("heap", 0) <= budget_bytes:
-                break
+            if existed:
+                evicted.append(name)
+            heap = self.memory().get("heap", 0)
+            if heap <= budget_bytes:
+                return evicted
+        logger.warning(
+            "evict_until_below exhausted the LRU without reaching budget "
+            "(heap=%s budget=%s)", heap, budget_bytes,
+        )
         return evicted
 
 

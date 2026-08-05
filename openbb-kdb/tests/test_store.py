@@ -91,6 +91,8 @@ def test_evict_drops_oldest_first_and_collects_garbage():
                 return _Wrapped({"used": heap, "heap": heap, "wmax": 4000})
             if ".cache.lru" in query and "select" in query:
                 return _Wrapped([("OLD", "1d", 1.0), ("NEW", "1d", 99.0)])
+            if "in key" in query:  # bars_OLD_1d exists, so its eviction counts
+                return _Wrapped(True)
             return _Wrapped(None)
 
     conn = ShrinkingConn()
@@ -99,6 +101,47 @@ def test_evict_drops_oldest_first_and_collects_garbage():
     assert evicted == ["bars_OLD_1d"]
     assert any(".Q.gc" in q for q in conn.queries)
     assert any("delete" in q and "bars_OLD_1d" in q for q in conn.queries)
+
+
+def test_evict_warns_and_returns_empty_when_lru_is_empty_but_heap_over_budget(caplog):
+    """An empty LRU can't tell us anything to evict -- but crossing q's -w kills
+    the process, so failing to reach budget must be visible, not silent."""
+    s, conn = store_with({
+        ".Q.w[]": {"used": 900, "heap": 900, "wmax": 1000},
+        ".cache.lru": [],
+    })
+    with caplog.at_level("WARNING"):
+        evicted = s.evict_until_below(500)
+    assert evicted == []
+    assert any("budget" in r.message.lower() for r in caplog.records)
+    assert not any(".Q.gc" in q for q in conn.queries)
+
+
+def test_evict_does_not_count_a_stale_lru_row_whose_table_is_already_gone():
+    """A row in .cache.lru naming a table that no longer exists must not be
+    reported as an eviction -- callers use the return value to account for
+    freed memory, and a phantom entry would overstate what was actually freed."""
+    calls = {"n": 0}
+
+    class StaleRowConn(FakeConn):
+        def __call__(self, query, *args):
+            self.queries.append(query)
+            if ".Q.w[]" in query:
+                calls["n"] += 1
+                # heap never drops -- the phantom table was never really there
+                # to free, so this also exercises the "exhausted the LRU
+                # without reaching budget" warning path.
+                return _Wrapped({"used": 900, "heap": 900, "wmax": 4000})
+            if ".cache.lru" in query and "select" in query:
+                return _Wrapped([("GHOST", "1d", 1.0)])
+            if "in key" in query:  # bars_GHOST_1d does not exist
+                return _Wrapped(False)
+            return _Wrapped(None)
+
+    conn = StaleRowConn()
+    s = KdbStore(FakeSession(conn))
+    evicted = s.evict_until_below(500)
+    assert evicted == []
 
 
 def test_read_coverage_returns_ranges():
@@ -127,6 +170,15 @@ def test_schema_init_runs_before_first_coverage_read():
     s.read_coverage("AAPL", "1d")
     assert conn.queries[0] == _INIT_SCHEMA
     assert "select s, e from .cache.cov" in conn.queries[1]
+
+
+def test_lru_schema_is_keyed_so_touch_upsert_replaces_not_appends():
+    """.cache.lru must be keyed on (sym, iv): on an unkeyed table `upsert`
+    appends, so repeated touches of the same symbol pile up stale rows that
+    can outrank genuinely hot data during eviction."""
+    s, conn = store_with()
+    s.touch("AAPL", "1d")
+    assert "([sym:`symbol$(); iv:`symbol$()] atime:`timestamp$())" in conn.queries[0]
 
 
 def test_schema_init_runs_before_first_write():
