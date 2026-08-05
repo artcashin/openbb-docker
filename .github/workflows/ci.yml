@@ -3,6 +3,14 @@ on:
   push:
   pull_request:
 jobs:
+  # Limitation: this gate is strictly weaker here than on a workstation.
+  # scrub-check.sh's machine-specific half reads
+  # scripts/scrub-private-patterns.txt, which is gitignored and therefore
+  # always absent on a fresh checkout -- so only the generic regexes above
+  # ever fire in CI. It also greps the working tree, not history, so a
+  # leak committed and later removed would not be caught here. Not fixing
+  # this (the private-patterns file can't be committed without defeating
+  # its own purpose) -- just keeping it visible.
   scrub:
     runs-on: ubuntu-latest
     steps:
@@ -64,6 +72,42 @@ jobs:
         run: |
           pip install -e .[dev]
           pytest -q
+  openbb-arcticdb:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      # GitHub-hosted ubuntu-latest runners are x86_64, so the arcticdb
+      # wheel resolves the same way it does inside the Platform image.
+      - name: Test the ArcticDB provider extension (in-process store, no MinIO)
+        working-directory: openbb-arcticdb
+        run: |
+          pip install -e .[dev]
+          pytest -q
+  tick-lab:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      # Same x86_64-wheel note as openbb-arcticdb above.
+      - name: Test tick-lab (mocked reference adapters, no store, no network)
+        working-directory: tick-lab
+        run: |
+          pip install -e .[dev]
+          pytest -q
+  minio-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Test cert-sync.sh (fake tailscale + signal-catching subprocess, no real MinIO)
+        working-directory: minio
+        run: |
+          pip install pytest
+          pytest tests -q
   build-smoke:
     runs-on: ubuntu-latest
     steps:
