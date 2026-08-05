@@ -50,6 +50,15 @@ echo "entrypoint: bringing up node $NODE_NAME"
 tailscale up --authkey="$TS_AUTHKEY" --hostname="$NODE_NAME"
 
 echo "entrypoint: obtaining certificate for $DOMAIN"
+# /run is the container's writable layer, so a stale PID_FILE from a prior
+# life of this container survives `docker restart`. MinIO has not started
+# yet at this point -- if a stale entry were left in place and the
+# renewal below actually changed the certificate, cert-sync.sh would
+# `kill -HUP` whatever process now holds that recycled pid (plausibly
+# tailscaled, started moments ago above), not MinIO. Clearing it here means
+# cert-sync.sh's `[ -f "$PID_FILE" ]` guard correctly sees "MinIO isn't up
+# yet" until the real minio.pid is written below.
+rm -f "$PID_FILE"
 /usr/local/bin/cert-sync.sh "$CERT_DIR" "$DOMAIN" "$PID_FILE" || {
     echo "entrypoint: could not obtain a certificate; refusing to start plaintext" >&2
     exit 1

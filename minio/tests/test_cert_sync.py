@@ -98,3 +98,30 @@ def test_existing_cert_is_kept_when_renewal_fails(tmp_path, run_sync, fake_tails
     (fake_tailscale / "fail").write_text("")
     run_sync(certs, "minio.example.ts.net", tmp_path / "none.pid")
     assert (certs / "public.crt").read_text() == "CERT-A", "must not clobber a good cert"
+
+
+def test_recovers_a_key_left_out_of_sync_with_the_crt(tmp_path, run_sync, fake_tailscale):
+    """Simulates a crash between the two promotion writes: the crt on disk
+    already matches what tailscale would reissue, but the key does not (as
+    if the process died after promoting the crt but before the key). A
+    crt-only comparison would see "already up to date" and never touch the
+    key again -- permanently. Comparing both files must repair it, even
+    though nothing upstream (cert-body) changed.
+    """
+    certs = tmp_path / "certs"
+    certs.mkdir()
+    run_sync(certs, "minio.example.ts.net", tmp_path / "none.pid")
+    assert (certs / "private.key").read_text() == "KEY\n"
+
+    # Simulate the crash: leave a stale key behind without touching the crt
+    # or the upstream cert-body, so a crt-only comparison would see nothing
+    # to do.
+    (certs / "private.key").write_text("STALE-KEY-FROM-BEFORE-A-CRASH\n")
+
+    result = run_sync(certs, "minio.example.ts.net", tmp_path / "none.pid")
+    assert result.returncode == 0, result.stderr
+    assert (certs / "public.crt").read_text() == "CERT-A"
+    assert (certs / "private.key").read_text() == "KEY\n", (
+        "the mismatched key must be repaired even though the crt alone "
+        "looked unchanged"
+    )

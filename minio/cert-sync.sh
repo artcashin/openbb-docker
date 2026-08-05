@@ -8,6 +8,14 @@
 # usage: cert-sync.sh <cert-dir> <domain> <pid-file>
 set -eu
 
+# The private key must never be briefly world-readable. Setting the umask
+# before anything is created means the FIRST `cp` of private.key below lands
+# at 600 immediately -- no create-then-chmod window in this (traversable)
+# directory. (An overwrite of an already-600 file would keep 600 regardless,
+# but the very first write, before private.key exists, would not without
+# this.)
+umask 077
+
 CERT_DIR="${1:?usage: cert-sync.sh <cert-dir> <domain> <pid-file>}"
 DOMAIN="${2:?missing domain}"
 PID_FILE="${3:?missing pid file}"
@@ -22,16 +30,32 @@ if ! tailscale cert --cert-file "$STAGE/public.crt" --key-file "$STAGE/private.k
     exit 1
 fi
 
-if [ -f "$CERT_DIR/public.crt" ] && cmp -s "$STAGE/public.crt" "$CERT_DIR/public.crt"; then
+# Comparing ONLY public.crt to decide "nothing changed" is unsafe: promotion
+# writes two files, and a crash between them leaves one new, one stale. If
+# the crt is the one that landed, the crt-only check sees "already up to
+# date" forever after -- the key is never re-promoted, MinIO can't start
+# with a mismatched pair, and nothing about that state is self-healing.
+# Comparing both files means any incomplete promotion, however it happened
+# (including from a version of this script that promoted crt before key),
+# is retried on the next run instead of being mistaken for "done".
+if [ -f "$CERT_DIR/public.crt" ] && [ -f "$CERT_DIR/private.key" ] \
+    && cmp -s "$STAGE/public.crt" "$CERT_DIR/public.crt" \
+    && cmp -s "$STAGE/private.key" "$CERT_DIR/private.key"; then
     exit 0
 fi
 
 had_cert=0
 [ -f "$CERT_DIR/public.crt" ] && had_cert=1
 
-cp "$STAGE/public.crt" "$CERT_DIR/public.crt"
+# Key first: if promotion is interrupted here, the pair is not yet
+# reconciled either way, and the both-files check above will retry.
+# (Crt-then-key would risk a crash landing between the two writes at the
+# exact moment described above -- new crt promoted, old key not yet
+# touched -- which is the ordering that produced the bug in the first
+# place.)
 cp "$STAGE/private.key" "$CERT_DIR/private.key"
 chmod 600 "$CERT_DIR/private.key"
+cp "$STAGE/public.crt" "$CERT_DIR/public.crt"
 chmod 644 "$CERT_DIR/public.crt"
 
 # On the very first write MinIO has not started yet (or is starting with this
