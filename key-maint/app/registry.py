@@ -160,6 +160,7 @@ IGNORE: frozenset[str] = frozenset(
         "TRADIER_ACCOUNT_TYPE",
         "KDB_CONTAINER",
         "KDB_HOST",
+        "KDB_PORT",
         "S3_CONTAINER",
         "ARCTICDB_BUCKET",
         "ARCTICDB_LIBRARY",

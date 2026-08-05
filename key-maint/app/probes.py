@@ -14,7 +14,13 @@ TIMEOUT_S = 5.0
 
 @dataclass(frozen=True)
 class TestResult:
-    result: str  # ok | auth_failed | error | skipped
+    # ok | auth_failed | error | no_response | skipped
+    #
+    # `no_response` and `error` are deliberately distinct: the widget paints
+    # a vendor that never answered red, and one that answered with an error
+    # amber. Collapsing them (as this did) made an outage indistinguishable
+    # from a rejected request.
+    result: str
     detail: str
 
 
@@ -28,7 +34,7 @@ async def _probe_one(client: httpx.AsyncClient, env_var: str, values: dict[str, 
     try:
         resp = await client.send(request)
     except httpx.HTTPError as e:
-        return TestResult("error", type(e).__name__)
+        return TestResult("no_response", type(e).__name__)
     if resp.status_code in (401, 403):
         return TestResult("auth_failed", f"HTTP {resp.status_code}")
     if resp.is_success:
@@ -38,6 +44,13 @@ async def _probe_one(client: httpx.AsyncClient, env_var: str, values: dict[str, 
                 return TestResult("auth_failed", f"HTTP {resp.status_code}, rejected by body")
         return TestResult("ok", f"HTTP {resp.status_code}")
     return TestResult("error", f"HTTP {resp.status_code}")
+
+
+async def probe_one_provider(env_var: str, values: dict[str, str]) -> TestResult:
+    """Probe a single provider. Backs the widget's per-row 'Test this
+    service' action, which must not fire ~18 vendor requests to check one."""
+    async with httpx.AsyncClient(timeout=TIMEOUT_S) as client:
+        return await _probe_one(client, env_var, values)
 
 
 async def run_probes(
