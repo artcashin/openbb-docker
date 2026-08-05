@@ -2,8 +2,9 @@
 
 import pandas as pd
 import pytest
+from yfinance.exceptions import YFException
 
-from tick_lab.reference.base import ReferenceError
+from tick_lab.reference.base import ReferenceError, fetch_finest
 from tick_lab.reference.yfinance_adapter import YFinanceAdapter, classify
 
 RETENTION_1M = (
@@ -28,8 +29,16 @@ def test_classifies_the_1h_retention_message():
     assert classify(RETENTION_1H).kind == "retention"
 
 
-def test_classifies_an_unknown_message_as_empty():
-    assert classify("something else entirely").kind == "empty"
+def test_classifies_an_unknown_message_as_transport():
+    """Unrecognized messages default to a NON-steppable kind, not `empty`.
+
+    Stepping down the ladder is a privilege earned only by messages we
+    positively recognise (retention), plus the genuinely-empty-frame case
+    handled separately in `fetch`.
+    """
+    err = classify("something else entirely")
+    assert err.kind == "transport"
+    assert err.kind not in ("retention", "empty")
 
 
 def test_supported_intervals_cover_the_ladder():
@@ -57,3 +66,68 @@ def test_empty_frame_becomes_a_classified_error(monkeypatch):
     with pytest.raises(ReferenceError) as exc:
         adapter.fetch("MSFT", "2023-05-12", "2023-05-13", "1m")
     assert exc.value.kind == "empty"
+
+
+def _raising(exc):
+    def _history(*args, **kwargs):
+        raise exc
+
+    return _history
+
+
+def test_fetch_classifies_a_raised_retention_message_as_steppable(monkeypatch):
+    adapter = YFinanceAdapter()
+    monkeypatch.setattr(adapter, "_history", _raising(YFException(RETENTION_1M)))
+
+    with pytest.raises(ReferenceError) as exc:
+        adapter.fetch("MSFT", "2023-05-12", "2023-05-13", "1m")
+
+    assert exc.value.kind == "retention"
+    assert "last 30 days" in exc.value.detail
+    assert exc.value.kind in ("retention", "empty")  # steppable
+
+
+def test_fetch_classifies_an_unrecognized_yfinance_error_as_non_steppable(monkeypatch):
+    adapter = YFinanceAdapter()
+    monkeypatch.setattr(
+        adapter,
+        "_history",
+        _raising(YFException("Too Many Requests. Rate limited. Try after a while.")),
+    )
+
+    with pytest.raises(ReferenceError) as exc:
+        adapter.fetch("MSFT", "2023-05-12", "2023-05-13", "1m")
+
+    assert exc.value.kind not in ("retention", "empty")
+
+
+def test_fetch_propagates_a_programming_error_unclassified(monkeypatch):
+    """A coding bug (e.g. a typo'd attribute) must never masquerade as a
+    data-availability problem -- it is outside yfinance's own exception
+    hierarchy and must come straight through."""
+    adapter = YFinanceAdapter()
+    monkeypatch.setattr(
+        adapter, "_history", _raising(AttributeError("'NoneType' object has no attribute 'json'"))
+    )
+
+    with pytest.raises(AttributeError):
+        adapter.fetch("MSFT", "2023-05-12", "2023-05-13", "1m")
+
+
+def test_fetch_finest_stops_immediately_on_a_non_steppable_adapter_error(monkeypatch):
+    """An unrecognized yfinance failure must halt the ladder at the first
+    interval tried, not walk it to exhaustion."""
+    adapter = YFinanceAdapter()
+    calls: list[str] = []
+
+    def _history(symbol, start, end, interval):
+        calls.append(interval)
+        raise YFException("Too Many Requests. Rate limited. Try after a while.")
+
+    monkeypatch.setattr(adapter, "_history", _history)
+
+    with pytest.raises(ReferenceError) as exc:
+        fetch_finest(adapter, "MSFT", "2023-05-12", "2023-05-13")
+
+    assert exc.value.kind not in ("retention", "empty")
+    assert calls == ["1m"]

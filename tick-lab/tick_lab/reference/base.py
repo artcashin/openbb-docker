@@ -22,11 +22,17 @@ INTERVAL_LADDER = ("1m", "5m", "15m", "30m", "1h", "1d")
 # Anything else is a real problem and must surface, not be stepped past.
 _STEPPABLE = ("retention", "empty")
 
+# The documented closed set a ReferenceError.kind may take. auth, entitlement
+# and transport are never steppable -- see fetch_finest below.
+_KINDS = _STEPPABLE + ("auth", "entitlement", "transport")
+
 
 class ReferenceError(Exception):
     """A classified failure from a reference source."""
 
     def __init__(self, kind: str, detail: str):
+        if kind not in _KINDS:
+            raise ValueError(f"unknown ReferenceError kind {kind!r}; expected one of {_KINDS}")
         super().__init__(f"{kind}: {detail}")
         self.kind = kind
         self.detail = detail
