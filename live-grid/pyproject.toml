@@ -16,6 +16,7 @@ dependencies = [
     "eodhd @ https://github.com/EodHistoricalData/EODHD-APIs-Python-Financial-Library/archive/f98e69d797140ca03f16fa7451046d84aab9643e.tar.gz",
     "kdb-store",
     "pandas",
+    "httpx>=0.27",
 ]
 
 [project.optional-dependencies]

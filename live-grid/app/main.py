@@ -9,15 +9,18 @@ import logging
 import os
 import uuid
 from contextlib import asynccontextmanager
-from datetime import timedelta
+from datetime import date, timedelta
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.classify import split_by_feed
 from app.feeds import FeedManager
+from app.figure import build_figure
+from app.openbb_client import fetch_series
 from app.quotes import QuoteTable
 
 log = logging.getLogger("live-grid")
@@ -40,6 +43,39 @@ def _rest_client(api_key: str):
 
 def _parse_symbols(raw: str) -> list[str]:
     return [s.strip().upper() for s in raw.split(",") if s.strip()]
+
+
+async def build_series(symbol, interval, start, end, recorder, window, provider="kdb"):
+    """History joined to tick-derived bars at the first fully-covered bar."""
+    from app.series import seam_boundary, stitch, tick_capable
+
+    history, meta = await fetch_series(symbol, interval, start, end, provider)
+    meta = dict(meta)
+    meta["rows_from_ticks"] = 0
+    meta["seam"] = None
+
+    if recorder is None or not tick_capable(interval, window):
+        return history, meta
+
+    try:
+        from kdb_store.aggregate import aggregate_ticks
+
+        span = recorder.store.tick_span(symbol)
+        if span is None:
+            return history, meta
+        boundary = seam_boundary(span[0], interval)
+        ticks = await asyncio.to_thread(
+            aggregate_ticks, recorder.store, symbol, interval, boundary, span[1]
+        )
+    except Exception as exc:  # noqa: BLE001 - the chart still works without ticks
+        log.warning("tick aggregation unavailable for %s: %s", symbol, exc)
+        return history, meta
+
+    if not ticks:
+        return history, meta
+    meta["rows_from_ticks"] = len(ticks)
+    meta["seam"] = boundary.isoformat()
+    return stitch(history, ticks, boundary), meta
 
 
 def create_app(*, api_key: str | None = None, seed_client=None, client_factory=None) -> FastAPI:
@@ -107,6 +143,16 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
             seed_client = _rest_client(key)
         return seed_client
 
+    _STATIC = Path(__file__).parent / "static"
+    app.mount("/static", StaticFiles(directory=_STATIC), name="static")
+
+    def _window(start: str | None, end: str | None) -> tuple[str, str]:
+        today = date.today()
+        return (start or str(today - timedelta(days=365)), end or str(today))
+
+    def _tick_window() -> timedelta:
+        return recorder.window if recorder is not None else timedelta(0)
+
     @app.get("/widgets.json")
     def widgets() -> JSONResponse:
         return JSONResponse(json.loads(WIDGETS_PATH.read_text()))
@@ -118,6 +164,47 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
             return []
         client = _seed_client()
         return quotes.seed(symbols, client)
+
+    @app.get("/series")
+    async def series(symbol: str = "AAPL", interval: str = "1d",
+                     start: str | None = None, end: str | None = None,
+                     provider: str = "kdb"):
+        s, e = _window(start, end)
+        try:
+            bars, meta = await build_series(
+                symbol, interval, s, e, recorder, _tick_window(), provider
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("series failed for %s: %s", symbol, exc)
+            return JSONResponse(
+                {"symbol": symbol, "interval": interval, "start": s, "end": e, "bars": [],
+                 "cache": {"cache": "error", "error": str(exc), "rows_from_cache": 0,
+                           "rows_from_upstream": 0, "rows_from_ticks": 0,
+                           "gaps_fetched": 0, "upstream_ms": 0.0, "kdb_ms": 0.0,
+                           "seam": None}},
+                status_code=502,
+            )
+        return {"symbol": symbol, "interval": interval, "start": s, "end": e,
+                "bars": bars, "cache": meta}
+
+    @app.get("/chart")
+    async def chart(symbol: str = "AAPL", interval: str = "1d",
+                    start: str | None = None, end: str | None = None,
+                    provider: str = "kdb"):
+        s, e = _window(start, end)
+        try:
+            bars, _ = await build_series(
+                symbol, interval, s, e, recorder, _tick_window(), provider
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("chart failed for %s: %s", symbol, exc)
+            return JSONResponse({"data": [], "layout": {"title": {"text": f"{symbol}: {exc}"}}},
+                                status_code=502)
+        return JSONResponse(build_figure(symbol, bars))
+
+    @app.get("/demo", response_class=HTMLResponse)
+    async def demo():
+        return HTMLResponse((_STATIC / "demo.html").read_text())
 
     @app.get("/health")
     def health():
