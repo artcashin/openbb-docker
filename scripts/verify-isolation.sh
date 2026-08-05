@@ -26,12 +26,13 @@ if timeout 5 bash -c "cat < /dev/null > /dev/tcp/$host/5000" 2>/dev/null; then
 fi
 echo "   OK: :5000 refused"
 
-# Ep. 11: MinIO is its own node. Its S3 API must be TLS-only, and its console
-# must never be reachable from outside the tailnet.
+# Ep. 11: MinIO is its own node. Its S3 API must be TLS-only. The console is
+# deliberately reachable from tailnet devices (checked below). Neither the API nor
+# console is published to the Docker host or LAN—verified in `docker compose config`.
 if [ -n "$minio_host" ]; then
-  echo "4/5 the MinIO S3 API answers over TLS with a real certificate..."
+  echo "4/5 the MinIO S3 API answers over TLS with a valid certificate..."
   curl -fsS --max-time 10 "https://$minio_host:9000/minio/health/live" >/dev/null \
-    && echo "   OK: valid certificate, health endpoint live"
+    && echo "   OK: valid certificate, endpoint reachable over TLS"
 
   echo "5/5 the MinIO S3 API refuses plaintext..."
   if curl -fsS --max-time 5 "http://$minio_host:9000/minio/health/live" >/dev/null 2>&1; then
