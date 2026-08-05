@@ -116,6 +116,13 @@ s3s://<endpoint>:<bucket>?port=<port>&access=<key>&secret=<secret>&use_virtual_a
 
 `host:port:bucket` looks plausible and is not valid ArcticDB syntax.
 
+**`ARCTICDB_S3_ACCESS`/`_SECRET` are `MINIO_ROOT_USER`/`_PASSWORD` — the
+root/admin credential, not a scoped one.** The same value that authenticates
+`openbb-api` and `tick-lab` to the S3 API also logs into the MinIO console
+on `:9001`, reachable by every tailnet peer. A bucket-scoped key would be
+better posture; this is a deliberate trade-off to keep the reader's setup to
+one credential instead of provisioning IAM policies for a demo store.
+
 One wrinkle this convention runs into: Compose interpolates `${...}` only
 from the shell environment or a root `.env` file, **never** from a service's
 `env_file:` entries. So `minio/entrypoint.sh` cannot be handed
