@@ -76,6 +76,7 @@ class KdbSession:
     def __init__(self, config: KdbConfig):
         self.config = config
         self._conn = None
+        self.endpoint: str | None = None
         self._proc: subprocess.Popen | None = None
         self._proc_log_path: str | None = None
         # Monotonic deadline before which a connect is not re-attempted. 0.0
@@ -115,7 +116,7 @@ class KdbSession:
         """Argument vector for the q server."""
         cfg = self.config
         return [
-            f"{cfg.qhome}/bin/q",
+            f"{cfg.local_qhome}/bin/q",
             "-p", f"127.0.0.1:{cfg.port}",
             "-w", str(cfg.q_workspace_mb),
             "-q",
@@ -140,7 +141,7 @@ class KdbSession:
         if self._proc is not None and self._proc.poll() is None:
             return
         self._cleanup_log_file()
-        env = dict(os.environ, QHOME=self.config.qhome, QLIC=self.config.qlic)
+        env = dict(os.environ, QHOME=self.config.local_qhome, QLIC=self.config.qlic)
         log_file = tempfile.NamedTemporaryFile(
             prefix="openbb-kdb-q-", suffix=".log", delete=False
         )
@@ -152,7 +153,7 @@ class KdbSession:
                 stdout=log_file,
                 stderr=subprocess.STDOUT,
                 env=env,
-                cwd=self.config.qhome,
+                cwd=self.config.local_qhome,
             )
         finally:
             log_file.close()
@@ -179,11 +180,24 @@ class KdbSession:
             pass
         self._proc_log_path = None
 
-    def _connect(self):
-        """Open a PyKX IPC connection (unlicensed client mode -- no license needed)."""
+    def _connect(self, host: str | None = None):
+        """Open a PyKX IPC connection (unlicensed client mode -- no licence needed).
+
+        `connection_timeout` is load-bearing, not decorative: PyKX's default
+        (`None`) never times out the socket. The chain's step 2 always probes
+        loopback, and on a machine where something else already owns that
+        port (observed in the wild: macOS's AirPlay receiver squats on 5000)
+        a bare TCP accept with no kdb+ handshake reply hangs `_init` forever
+        -- on the session's ONE owner thread, wedging every future call, kdb+
+        or not, for the rest of the process. Bounding it to the same budget
+        as the spawn retry loop turns that hang into an ordinary fall-through
+        to the next link in the chain.
+        """
         import pykx as kx
 
-        return kx.SyncQConnection(self.config.host, self.config.port)
+        return kx.SyncQConnection(
+            host or "127.0.0.1", self.config.port, connection_timeout=_CONNECT_BUDGET_S
+        )
 
     def _connect_with_retry(self):
         """Connect to a just-spawned q, retrying until it's listening or we give up.
@@ -235,25 +249,51 @@ class KdbSession:
         if self._conn is not None and self._is_alive():
             return self._conn
         self._conn = None
+        self.endpoint = None
         spawned = False
-        try:
-            if self.config.may_spawn:
+        errors: list[str] = []
+
+        # 1. A q the operator supplied and we can run ourselves.
+        if self.config.may_spawn:
+            try:
                 self._spawn()
                 spawned = True
                 self._conn = self._connect_with_retry()
-            else:
-                self._conn = self._connect()
-        except Exception as exc:
-            if spawned:
-                # We own this process; a q we started must never be left
-                # running unsupervised just because we failed to connect.
-                self._stop_proc()
+                self.endpoint = "spawned"
+            except Exception as exc:  # noqa: BLE001 - fall through to the next link
+                errors.append(f"spawn: {exc}")
+                if spawned:
+                    # We own this process; never leave a q we started running
+                    # unsupervised just because we could not connect to it.
+                    self._stop_proc()
+                    spawned = False
+
+        # 2. Loopback: in this stack every service shares one network
+        #    namespace, so a q another service already spawned is right here.
+        if self._conn is None:
+            try:
+                self._conn = self._connect("127.0.0.1")
+                self.endpoint = "loopback"
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"loopback: {exc}")
+
+        # 3. A kdb container the operator runs themselves, same machine.
+        if self._conn is None and self.config.host:
+            try:
+                self._conn = self._connect(self.config.host)
+                self.endpoint = f"{self.config.host}:{self.config.port}"
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"{self.config.host}: {exc}")
+
+        if self._conn is None:
             self._retry_after = time.monotonic() + _RETRY_AFTER_S
+            detail = "; ".join(errors) or "no kdb+ endpoint configured"
             logger.warning(
                 "kdb+ unavailable, falling back to upstream (retrying in %.0fs): %s",
-                _RETRY_AFTER_S, exc,
+                _RETRY_AFTER_S, detail,
             )
-            raise KdbUnavailable(str(exc)) from exc
+            raise KdbUnavailable(detail)
+
         # A connect that succeeded clears the latch: the next failure gets its
         # own full interval rather than inheriting a stale deadline.
         self._retry_after = 0.0

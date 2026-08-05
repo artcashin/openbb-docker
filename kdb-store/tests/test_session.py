@@ -101,7 +101,7 @@ def test_respawns_after_death(monkeypatch):
 def test_external_server_is_never_spawned(monkeypatch):
     spawns = []
     monkeypatch.setattr(KdbSession, "_spawn", lambda self: spawns.append(1))
-    monkeypatch.setattr(KdbSession, "_connect", lambda self: FakeConn())
+    monkeypatch.setattr(KdbSession, "_connect", lambda self, host=None: FakeConn())
     KdbSession(cfg(host="kdb.internal", may_spawn=False)).connection()
     assert spawns == []
 
@@ -326,3 +326,93 @@ def test_close_does_not_kill_a_process_that_exits_on_terminate():
     assert fake_proc.terminated is True
     assert fake_proc.wait_calls == 1
     assert fake_proc.killed is False
+
+
+def test_chain_spawns_first_when_a_local_q_is_available(monkeypatch):
+    calls = []
+    monkeypatch.setattr(KdbSession, "_spawn", lambda self: calls.append("spawn"))
+    monkeypatch.setattr(KdbSession, "_connect_with_retry", lambda self: FakeConn())
+    monkeypatch.setattr(KdbSession, "_connect", lambda self, host=None: FakeConn())
+    s = KdbSession(cfg(may_spawn=True, host="elsewhere"))
+    s.connection()
+    assert calls == ["spawn"]
+    assert s.endpoint == "spawned"
+
+
+def test_chain_tries_loopback_before_the_external_host(monkeypatch):
+    """live-grid picks up the q that openbb-api spawned in the shared namespace."""
+    tried = []
+
+    def fake_connect(self, host=None):
+        tried.append(host)
+        return FakeConn()
+
+    monkeypatch.setattr(KdbSession, "_connect", fake_connect)
+    s = KdbSession(cfg(may_spawn=False, host="host.docker.internal"))
+    s.connection()
+    assert tried == ["127.0.0.1"]
+    assert s.endpoint == "loopback"
+
+
+def test_chain_falls_through_to_the_external_host(monkeypatch):
+    tried = []
+
+    def fake_connect(self, host=None):
+        tried.append(host)
+        if host == "127.0.0.1":
+            raise OSError("connection refused")
+        return FakeConn()
+
+    monkeypatch.setattr(KdbSession, "_connect", fake_connect)
+    s = KdbSession(cfg(may_spawn=False, host="host.docker.internal"))
+    s.connection()
+    assert tried == ["127.0.0.1", "host.docker.internal"]
+    assert s.endpoint == "host.docker.internal:5000"
+
+
+def test_a_failed_spawn_still_falls_through_to_the_external_host(monkeypatch):
+    """A broken local q must not cost the operator their external one."""
+    tried = []
+
+    def boom(self):
+        raise OSError("q exited immediately")
+
+    def fake_connect(self, host=None):
+        tried.append(host)
+        if host == "127.0.0.1":
+            raise OSError("connection refused")
+        return FakeConn()
+
+    monkeypatch.setattr(KdbSession, "_spawn", boom)
+    monkeypatch.setattr(KdbSession, "_connect", fake_connect)
+    s = KdbSession(cfg(may_spawn=True, host="host.docker.internal"))
+    s.connection()
+    assert s.endpoint == "host.docker.internal:5000"
+
+
+def test_no_local_q_and_no_host_raises(monkeypatch):
+    def fake_connect(self, host=None):
+        raise OSError("connection refused")
+
+    monkeypatch.setattr(KdbSession, "_connect", fake_connect)
+    s = KdbSession(cfg(may_spawn=False, host=None))
+    with pytest.raises(KdbUnavailable):
+        s.connection()
+
+
+def test_a_failed_spawn_leaves_no_orphan_process(monkeypatch):
+    stopped = []
+    monkeypatch.setattr(KdbSession, "_spawn", lambda self: None)
+    monkeypatch.setattr(KdbSession, "_stop_proc", lambda self: stopped.append(1))
+    monkeypatch.setattr(
+        KdbSession, "_connect_with_retry",
+        lambda self: (_ for _ in ()).throw(OSError("no listener")),
+    )
+    monkeypatch.setattr(
+        KdbSession, "_connect",
+        lambda self, host=None: (_ for _ in ()).throw(OSError("refused")),
+    )
+    s = KdbSession(cfg(may_spawn=True, host=None))
+    with pytest.raises(KdbUnavailable):
+        s.connection()
+    assert stopped, "a q we started must never be left running unsupervised"

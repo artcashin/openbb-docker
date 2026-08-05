@@ -221,6 +221,7 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
         body = {"status": "ok", "feeds": manager.status()}
         if recorder is not None:
             body["ticks"] = recorder.stats()
+            body["ticks"]["endpoint"] = getattr(recorder.store.session, "endpoint", None)
         return body
 
     @app.websocket("/live_grid_ws")
