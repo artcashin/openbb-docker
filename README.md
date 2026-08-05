@@ -151,6 +151,7 @@ cp ts.env.example ts.env            # paste a tagged, reusable auth key; chmod 6
 cp api-auth.env.example api-auth.env         # REQUIRED — set a strong password; chmod 600
 cp credentials.env.example credentials.env   # optional — keyless providers work with none
 cp minio.env.example minio.env     # REQUIRED for the store; chmod 600
+cp rss-ticker.env.example rss-ticker.env     # REQUIRED — admin key; chmod 600
 
 # 2. Build and start
 docker compose up -d --build
