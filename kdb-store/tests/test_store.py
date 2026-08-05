@@ -254,6 +254,8 @@ def exercise_every_statement(store):
     store.memory()
     store.evict_until_below(10**9)
     store.aggregate_frame("AAPL", "1m", D("2024-01-01"), D("2024-01-02"))
+    store.write_snapshot("AAPL", {"close": 100.0, "volume": 10.0})
+    store.read_snapshot("AAPL", 60.0)
 
 
 def test_every_parameterised_statement_is_a_lambda():
@@ -391,3 +393,15 @@ def test_lambda_parameters_in_tick_queries_never_shadow_a_column():
             for name in (p.strip() for p in params.split(";") if p.strip()):
                 assert name not in columns, f"parameter {name!r} shadows a column in: {query}"
                 assert name.startswith("qw"), f"parameter {name!r} lacks the qw prefix"
+
+
+def test_write_snapshot_stores_a_fetch_time():
+    s, conn = store_with()
+    s.write_snapshot("AAPL", {"close": 100.0, "volume": 10.0})
+    joined = " ".join(conn.queries)
+    assert "snap" in joined
+
+
+def test_read_snapshot_returns_none_when_absent():
+    s, _ = store_with({"select from snap": None})
+    assert s.read_snapshot("NOPE", 60.0) is None

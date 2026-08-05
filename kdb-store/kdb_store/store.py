@@ -64,7 +64,9 @@ _INIT_SCHEMA = (
     "if[not `lru in key `.cache; .cache.lru: "
     "([sym:`symbol$(); iv:`symbol$()] atime:`timestamp$())]; "
     "if[not `trades in key `.; trades: "
-    "([] time:`timestamp$(); sym:`symbol$(); price:`float$(); size:`float$())]"
+    "([] time:`timestamp$(); sym:`symbol$(); price:`float$(); size:`float$())]; "
+    "if[not `snap in key `.; snap: "
+    "([sym:`symbol$()] fetched:`timestamp$(); payload:())]"
 )
 
 
@@ -314,6 +316,45 @@ class KdbStore:
             ).pd()
 
         return self._call(agg)
+
+    def write_snapshot(self, symbol: str, payload: dict) -> None:
+        """Store a REST snapshot with its fetch time, for TTL reuse."""
+        import json
+
+        def write(conn):
+            conn(
+                "{[qwsym;qwpayload] snap:: snap upsert (qwsym; .z.p; qwpayload)}",
+                _q_symbol(symbol),
+                json.dumps(payload),
+            )
+
+        self._call(write)
+
+    def read_snapshot(self, symbol: str, max_age: float) -> dict | None:
+        """Return a snapshot fetched within `max_age` seconds, else None."""
+        import json
+
+        def read(conn):
+            got = conn(
+                "{[qwsym] select fetched, payload from snap where sym = qwsym}",
+                _q_symbol(symbol),
+            ).pd()
+            if got is None or got.empty:
+                return None
+            import pandas as pd
+
+            fetched = got["fetched"].iloc[0]
+            if pd.isna(fetched):
+                return None
+            age = (pd.Timestamp.now() - pd.Timestamp(fetched)).total_seconds()
+            if age > max_age:
+                return None
+            raw = got["payload"].iloc[0]
+            if isinstance(raw, bytes):
+                raw = raw.decode()
+            return json.loads(raw)
+
+        return self._call(read)
 
 
 def _conform_dtypes(df, prototype):

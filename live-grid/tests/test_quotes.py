@@ -145,3 +145,56 @@ def test_a_failing_recorder_never_breaks_the_grid():
     table = QuoteTable(on_tick=boom)
     assert table.apply_tick("us", {"s": "AAPL", "p": 100.5, "q": 3}) == "AAPL"
     assert table.rows["AAPL"]["price"] == 100.5
+
+
+def test_seed_reuses_a_fresh_cached_snapshot_instead_of_calling_the_vendor():
+    """A debounced rebuild must not re-hit the vendor for a symbol we just fetched."""
+    class Cache:
+        def read_snapshot(self, symbol, max_age):
+            return {"close": 100.0, "volume": 5.0}
+
+        def write_snapshot(self, symbol, payload):
+            raise AssertionError("should not write when the cache was fresh")
+
+    calls = []
+
+    class Client:
+        def get_live_stock_prices(self, ticker):
+            calls.append(ticker)
+            return {"close": 1.0}
+
+    table = QuoteTable(snapshots=Cache())
+    table.seed(["AAPL"], Client())
+    assert calls == []
+
+
+def test_seed_falls_back_to_the_vendor_on_a_cache_miss():
+    class Cache:
+        def read_snapshot(self, symbol, max_age):
+            return None
+
+        def write_snapshot(self, symbol, payload):
+            self.written = payload
+
+    calls = []
+
+    class Client:
+        def get_live_stock_prices(self, ticker):
+            calls.append(ticker)
+            return {"close": 1.0}
+
+    table = QuoteTable(snapshots=Cache())
+    table.seed(["AAPL"], Client())
+    assert len(calls) == 1
+
+
+def test_seed_works_with_no_snapshot_cache_at_all():
+    calls = []
+
+    class Client:
+        def get_live_stock_prices(self, ticker):
+            calls.append(ticker)
+            return {"close": 1.0}
+
+    QuoteTable().seed(["AAPL"], Client())
+    assert len(calls) == 1

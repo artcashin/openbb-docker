@@ -64,7 +64,10 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
             log.warning("tick recording disabled: %s", exc)
             recorder = None
 
-    quotes = QuoteTable(on_tick=recorder.record if recorder else None)
+    quotes = QuoteTable(
+        on_tick=recorder.record if recorder else None,
+        snapshots=recorder.store if recorder else None,
+    )
     manager_kwargs = {} if client_factory is None else {"client_factory": client_factory}
     manager = FeedManager(key or "", quotes, recorder=recorder, **manager_kwargs)
 

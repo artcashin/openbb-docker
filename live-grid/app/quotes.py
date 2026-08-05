@@ -8,6 +8,8 @@ from app.classify import snapshot_ticker
 
 log = logging.getLogger("live-grid")
 
+SNAPSHOT_TTL = 60.0  # seconds a cached REST snapshot may be reused before re-fetching
+
 
 def _f(value: Any) -> float | None:
     """Coerce EODHD numerics (often strings, sometimes 'NA') to float or None."""
@@ -36,20 +38,33 @@ def _blank_row(symbol: str) -> dict[str, Any]:
 class QuoteTable:
     """symbol -> latest row dict; prev-closes cached for change math."""
 
-    def __init__(self, on_tick=None) -> None:
+    def __init__(self, on_tick=None, snapshots=None) -> None:
         self.rows: dict[str, dict[str, Any]] = {}
         self._prev_close: dict[str, float] = {}
         self._on_tick = on_tick
+        self._snapshots = snapshots
 
     def seed(self, symbols: list[str], client) -> list[dict[str, Any]]:
         """Fill rows from the SDK real-time snapshot; returns rows in request order."""
         out: list[dict[str, Any]] = []
         for sym in symbols:
             row = self.rows.setdefault(sym, _blank_row(sym))
-            try:
-                snap: Any = client.get_live_stock_prices(ticker=snapshot_ticker(sym))
-            except Exception:  # noqa: BLE001 -- degrade to a blank row, don't fail the GET
-                snap = None
+            snap = None
+            if self._snapshots is not None:
+                try:
+                    snap = self._snapshots.read_snapshot(sym, SNAPSHOT_TTL)
+                except Exception:  # noqa: BLE001 - the vendor call is the fallback
+                    snap = None
+            if snap is None:
+                try:
+                    snap = client.get_live_stock_prices(ticker=snapshot_ticker(sym))
+                except Exception:  # noqa: BLE001 -- degrade to a blank row, don't fail the GET
+                    snap = None
+                if self._snapshots is not None and isinstance(snap, dict):
+                    try:
+                        self._snapshots.write_snapshot(sym, snap)
+                    except Exception:  # noqa: BLE001
+                        pass
             if isinstance(snap, list):
                 snap = snap[0] if snap else None
             if isinstance(snap, dict):
