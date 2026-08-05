@@ -26,9 +26,13 @@ if timeout 5 bash -c "cat < /dev/null > /dev/tcp/$host/5000" 2>/dev/null; then
 fi
 echo "   OK: :5000 refused"
 
-# Ep. 11: MinIO is its own node. Its S3 API must be TLS-only. The console is
-# deliberately reachable from tailnet devices (checked below). Neither the API nor
-# console is published to the Docker host or LAN—verified in `docker compose config`.
+# Ep. 11: MinIO is its own node, so unlike :6900 and :5000 above there is no
+# "port must be refused" wall to test here -- MinIO binds normally and its
+# tailnet address is SUPPOSED to answer. What we can prove from a tailnet
+# device is that the S3 API is TLS-only. The console on :9001 is deliberately
+# reachable from here, so this script cannot test it; the property that matters
+# for :9001 is that it is not published to the Docker host or LAN, which
+# `docker compose config` shows (no `ports:` on the minio service).
 if [ -n "$minio_host" ]; then
   echo "4/5 the MinIO S3 API answers over TLS with a valid certificate..."
   curl -fsS --max-time 10 "https://$minio_host:9000/minio/health/live" >/dev/null \
