@@ -6,6 +6,8 @@ variables point at a disposable MinIO. See tick-lab/README.md.
 
 import os
 import uuid
+from datetime import date
+from types import SimpleNamespace
 
 import pandas as pd
 import pytest
@@ -29,6 +31,23 @@ def test_datetime_end_is_exact():
     assert end == pd.Timestamp("2023-05-12 15:00:00")
 
 
+def test_iso_datetime_midnight_with_t_separator_is_widened():
+    # The plausible "I typed a datetime where a date was wanted" mistake:
+    # midnight, spelled the codebase's own ISO way, must mean the whole day.
+    _, end = to_bounds(None, "2023-05-12T00:00:00")
+    assert end == pd.Timestamp("2023-05-12 23:59:59.999999999")
+
+
+def test_datetime_midnight_with_space_separator_is_widened():
+    _, end = to_bounds(None, "2023-05-12 00:00:00")
+    assert end == pd.Timestamp("2023-05-12 23:59:59.999999999")
+
+
+def test_date_object_end_is_widened():
+    _, end = to_bounds(None, date(2023, 5, 12))
+    assert end == pd.Timestamp("2023-05-12 23:59:59.999999999")
+
+
 def test_none_bounds_stay_none():
     assert to_bounds(None, None) == (None, None)
 
@@ -36,6 +55,15 @@ def test_none_bounds_stay_none():
 def test_start_is_parsed():
     start, _ = to_bounds("2023-05-12", None)
     assert start == pd.Timestamp("2023-05-12 00:00:00")
+
+
+def test_read_on_missing_library_raises_clear_error():
+    store = TickStore.__new__(TickStore)
+    store._cfg = None
+    store._arctic = SimpleNamespace(has_library=lambda library: False)
+
+    with pytest.raises(ValueError, match="no-such-library"):
+        store.read("no-such-library", "MSFT")
 
 
 @pytestmark_integration
