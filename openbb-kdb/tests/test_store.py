@@ -3,7 +3,7 @@
 import re
 from datetime import datetime
 
-from openbb_kdb.store import _INIT_SCHEMA, KdbStore
+from openbb_kdb.store import _INIT_SCHEMA, _PARAM_PREFIX, KdbStore
 
 D = lambda s: datetime.fromisoformat(s)  # noqa: E731
 
@@ -264,8 +264,23 @@ def test_every_parameterised_statement_is_a_lambda():
 
 def test_lambda_parameters_never_shadow_a_column_name():
     """Inside select/delete, a table's own columns shadow the lambda's
-    parameters: `{[s;e] ... where sym = s}` against .cache.cov (columns s, e)
-    would compare a column with itself and match every row."""
+    parameters -- the query keeps running and returns wrong rows, no error.
+
+    A hardcoded list of "known" columns can't prove a parameter is safe:
+    bar-table columns are NOT a fixed schema, they come from whatever the
+    upstream data provider returns (`cache.py` renames only the timestamp
+    column to `t`), so a provider emitting a column literally named `a`
+    would shadow a same-named parameter with no warning. (Verified against a
+    real q before this fix: a bar table carrying a column named `a` made
+    `read_bars` return 9 rows instead of 3 -- the wrong window, silently.)
+
+    The only thing that provably can't collide with an arbitrary provider
+    column is a name reserved under a prefix no provider would plausibly
+    emit -- so this asserts every declared parameter lives under
+    `_PARAM_PREFIX`, not merely that it avoids a list of columns seen so
+    far. A future edit reintroducing a short name like `a` or `s` fails
+    this test immediately, regardless of what table it touches.
+    """
     s, conn = store_with({
         ".cache.cov": [], ".cache.lru": [],
         ".Q.w[]": {"used": 1, "heap": 1, "wmax": 10},
@@ -273,13 +288,17 @@ def test_lambda_parameters_never_shadow_a_column_name():
     })
     exercise_every_statement(s)
 
-    columns = {"sym", "iv", "s", "e", "atime", "t", "open", "high", "low", "close",
-               "volume"}
-    for query, args in conn.calls:
-        if not args:
-            continue
-        declared = {p.strip() for p in query[2:query.index("]")].split(";")}
-        assert not declared & columns, f"parameter shadows a column: {query}"
+    parameterised = [(q, args) for q, args in conn.calls if args]
+    assert parameterised, "no statement passed arguments -- the check is vacuous"
+    for query, args in parameterised:
+        declared = [p.strip() for p in query[2:query.index("]")].split(";")]
+        for p in declared:
+            assert p.startswith(_PARAM_PREFIX), (
+                f"parameter {p!r} is not namespaced under the reserved prefix "
+                f"{_PARAM_PREFIX!r} -- it could collide with a provider-supplied "
+                f"column: {query}"
+            )
+            assert len(p) > len(_PARAM_PREFIX), f"parameter {p!r} is just the prefix: {query}"
 
 
 def test_every_q_call_is_marshalled_onto_the_session_owner_thread():

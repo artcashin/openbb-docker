@@ -12,10 +12,17 @@ Three measured facts shape this file:
     unbound `x` and q answers `'x` -- which the cache catches and degrades to
     a bypass, so the whole cache silently did nothing while looking healthy.
     Every parameterised statement here is therefore an explicit-parameter
-    lambda `{[a;b] ...}`. Parameter names are deliberately NOT `s`, `e`, `t`,
-    `sym`, `iv`, `atime` or any bar column: inside a `select`/`delete` the
-    table's own columns shadow the lambda's parameters, so a collision would
-    compare a column against itself and match every row.
+    lambda `{[qwlo;qwhi] ...}`. Inside a `select`/`delete`, a lambda
+    parameter whose name matches a column is silently SHADOWED by that
+    column -- the query keeps running and returns wrong rows, no error. This
+    isn't just `.cache.cov`/`.cache.lru` (`sym`, `iv`, `s`, `e`, `atime`,
+    fixed schemas this code controls): bar-table columns come from whatever
+    an upstream data provider returns (`cache.py` renames only the timestamp
+    column to `t`), so a short parameter name like `a` or `b` can collide
+    with a real provider column with no warning. Every parameter name here
+    is therefore namespaced under the `qw` prefix (`_PARAM_PREFIX` below) --
+    a string no market-data provider would ever emit as a column name -- so
+    the whole class of collision is closed, not patched case by case.
 
 Nothing in here may run off the session's owner thread -- see session.py.
 Every query, every K-object construction (`_q_symbol`, `_q_timestamp`) and
@@ -32,6 +39,13 @@ from openbb_kdb.ranges import Range
 logger = logging.getLogger(__name__)
 
 _SAFE = re.compile(r"[^A-Za-z0-9_]")
+
+# Every lambda parameter in this module is namespaced under this prefix so
+# that no bar-table column -- which comes from an arbitrary upstream data
+# provider, not a schema this code controls -- can ever collide with, and
+# silently shadow, a parameter inside a select/delete. See the module
+# docstring for the full hazard.
+_PARAM_PREFIX = "qw"
 
 # `.cache.cov` / `.cache.lru` don't exist on a fresh q process, and a q that
 # crosses its -w gets silently respawned empty (see session.py) -- so this
@@ -90,9 +104,11 @@ class KdbStore:
         def read(conn):
             if not conn(f"`{name} in key `.").py():
                 return None
-            # `a`/`b`, not `x`/`y`: bar tables have no such columns to shadow them.
+            # qwlo/qwhi, not a/b: bar-table columns are whatever the upstream
+            # provider returned, and a provider-emitted column named `a` or
+            # `b` would silently shadow a same-named parameter here.
             return conn(
-                f"{{[a;b] select from {name} where t >= a, t <= b}}",
+                f"{{[qwlo;qwhi] select from {name} where t >= qwlo, t <= qwhi}}",
                 _q_timestamp(start),
                 _q_timestamp(end),
             ).pd()
@@ -120,7 +136,7 @@ class KdbStore:
     def read_coverage(self, symbol: str, interval: str) -> list[Range]:
         """Ranges already fetched for this (symbol, interval)."""
         rows = self._call(lambda conn: conn(
-            "{[a;b] select s, e from .cache.cov where sym = a, iv = b}",
+            "{[qwsym;qwiv] select s, e from .cache.cov where sym = qwsym, iv = qwiv}",
             _q_symbol(symbol), _q_symbol(interval),
         ).py())
         if not rows:
@@ -136,7 +152,7 @@ class KdbStore:
         inside a lambda amends the global table, not a function local.
         """
         self._call(lambda conn: conn(
-            "{[a;b;c;d] .cache.cov: .cache.cov upsert (a; b; c; d)}",
+            "{[qwsym;qwiv;qws;qwe] .cache.cov: .cache.cov upsert (qwsym; qwiv; qws; qwe)}",
             _q_symbol(symbol), _q_symbol(interval),
             _q_timestamp(r[0]), _q_timestamp(r[1]),
         ))
@@ -144,7 +160,7 @@ class KdbStore:
     def touch(self, symbol: str, interval: str) -> None:
         """Record an access for LRU ordering."""
         self._call(lambda conn: conn(
-            "{[a;b] .cache.lru: .cache.lru upsert (a; b; .z.p)}",
+            "{[qwsym;qwiv] .cache.lru: .cache.lru upsert (qwsym; qwiv; .z.p)}",
             _q_symbol(symbol), _q_symbol(interval),
         ))
 
@@ -157,11 +173,11 @@ class KdbStore:
             # `delete from `.cache.cov` amends the global table in place, which
             # is why these lambdas need no assignment back.
             conn(
-                "{[a;b] delete from `.cache.cov where sym = a, iv = b}",
+                "{[qwsym;qwiv] delete from `.cache.cov where sym = qwsym, iv = qwiv}",
                 _q_symbol(symbol), _q_symbol(interval),
             )
             conn(
-                "{[a;b] delete from `.cache.lru where sym = a, iv = b}",
+                "{[qwsym;qwiv] delete from `.cache.lru where sym = qwsym, iv = qwiv}",
                 _q_symbol(symbol), _q_symbol(interval),
             )
             conn(".Q.gc[]")
