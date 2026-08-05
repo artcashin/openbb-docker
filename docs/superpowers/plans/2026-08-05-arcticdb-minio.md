@@ -3798,3 +3798,219 @@ git tag -a v11.1.1 -m "v11.1.1: the in-process OpenBB path (Ep. 11)"
 **Known gap, stated rather than hidden.** Task 3 tests cert renewal against a stubbed `tailscale` and a stub child process, not against real MinIO under load. The spec flags this as the least-tested path because it only fires every ~60 days; the plan does not close that gap, and pretending otherwise would be worse than saying so.
 
 **Interval ladder.** `to_minute_bars` always produces 1-minute bars; `aggregate` steps them up to whatever interval the reference actually served. `INTERVAL_LADDER` and `rollup._RULES` cover the same six intervals, so any interval `fetch_finest` can return is one `aggregate` accepts.
+
+---
+
+### Task 20: Rework — run tailscaled inside the MinIO container
+
+**Supersedes the architecture of Tasks 4 and 5.** Execute this immediately after Task 5; Tasks 6+ are unaffected.
+
+**Why.** Tasks 4–5 gave MinIO a Tailscale *sidecar* and shared only `/var/lib/tailscale` between them. That cannot work: `tailscaled`'s socket lives at `/tmp/tailscaled.sock` inside the sidecar's own filesystem (`/var/run/tailscale/tailscaled.sock` is a symlink to it — verified on a live sidecar), and `network_mode` shares the network namespace, **not the filesystem**. MinIO's `tailscale` CLI therefore could never reach the daemon: the entrypoint would spin for 60s and exit 1, and `minio-init` would exhaust its retries. Rather than relocate the socket, the daemon moves in with the process that needs it — the CLI, the daemon, and the process to SIGHUP now share one filesystem and one lifecycle.
+
+This node is still its own tailnet node (design decision D1 is intact); it simply has no sidecar.
+
+**Files:**
+- Modify: `minio/Dockerfile`, `minio/entrypoint.sh`, `docker-compose.yml`
+- Unchanged: `minio/cert-sync.sh` and its tests — with `tailscaled` listening on the CLI's default socket path, the bare `tailscale cert` call in that script works as written. Do not modify it.
+
+**Interfaces:**
+- Consumes: `minio/cert-sync.sh` (unchanged contract: `cert-sync.sh <cert-dir> <domain> <pid-file>`).
+- Produces: a single `minio` service that joins the tailnet itself. Env it honours: `TS_AUTHKEY` (required, from `ts.env`), `TS_HOSTNAME` (default `minio`), `TS_STATE_DIR` (default `/var/lib/tailscale`), `MINIO_CERT_DOMAIN` (defaults from `ARCTICDB_S3_ENDPOINT`), `MINIO_CERT_DIR`, `MINIO_CERT_RENEW_SECONDS`.
+
+- [ ] **Step 1: Add the daemon to the image**
+
+Replace `minio/Dockerfile` with:
+
+```dockerfile
+# MinIO joined to the tailnet, serving S3 over a Tailscale-issued certificate.
+#
+# tailscaled runs in THIS container rather than a sidecar. Its control socket
+# is a file, and network_mode shares only the network namespace -- so a sidecar
+# daemon is unreachable from here no matter what is mounted. Co-locating the
+# daemon, the CLI, and the process that must be SIGHUP'd on renewal makes all
+# three share one filesystem and one lifecycle.
+FROM tailscale/tailscale:v1.98.9 AS ts
+
+FROM quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+
+COPY --from=ts /usr/local/bin/tailscaled /usr/local/bin/tailscaled
+COPY --from=ts /usr/local/bin/tailscale /usr/local/bin/tailscale
+COPY cert-sync.sh /usr/local/bin/cert-sync.sh
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/cert-sync.sh /usr/local/bin/entrypoint.sh
+
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+CMD ["/data"]
+```
+
+- [ ] **Step 2: Rewrite the entrypoint to own the daemon**
+
+Replace `minio/entrypoint.sh` with:
+
+```sh
+#!/bin/sh
+# Join the tailnet, obtain a certificate, serve S3 over TLS, keep the
+# certificate fresh -- all in one container.
+#
+# tailscaled listens on the CLI's DEFAULT socket path, which is what lets
+# cert-sync.sh call a bare `tailscale cert` with no --socket flag.
+set -eu
+
+CERT_DIR="${MINIO_CERT_DIR:-/root/.minio/certs}"
+RENEW_SECONDS="${MINIO_CERT_RENEW_SECONDS:-43200}"
+STATE_DIR="${TS_STATE_DIR:-/var/lib/tailscale}"
+SOCKET=/var/run/tailscale/tailscaled.sock
+NODE_NAME="${TS_HOSTNAME:-minio}"
+PID_FILE=/run/minio.pid
+
+# The certificate must be issued for this node's MagicDNS name, which is the
+# same host ArcticDB clients connect to. Default from ARCTICDB_S3_ENDPOINT so
+# minio.env stays the single source of truth: compose CANNOT interpolate an
+# env_file value into the compose file, so this defaulting happens here.
+DOMAIN="${MINIO_CERT_DOMAIN:-${ARCTICDB_S3_ENDPOINT:-}}"
+if [ -z "$DOMAIN" ]; then
+    echo "entrypoint: set ARCTICDB_S3_ENDPOINT (or MINIO_CERT_DOMAIN) in minio.env," \
+         "e.g. minio.<your-tailnet>.ts.net" >&2
+    exit 1
+fi
+if [ -z "${TS_AUTHKEY:-}" ]; then
+    echo "entrypoint: TS_AUTHKEY must be set (it comes from ts.env)" >&2
+    exit 1
+fi
+
+mkdir -p "$STATE_DIR" /var/run/tailscale "$CERT_DIR" /run
+
+echo "entrypoint: starting tailscaled"
+tailscaled --state="$STATE_DIR/tailscaled.state" --socket="$SOCKET" --tun=tailscale0 &
+TAILSCALED_PID=$!
+
+echo "entrypoint: waiting for tailscaled..."
+i=0
+until tailscale status --json >/dev/null 2>&1; do
+    i=$((i + 1))
+    if [ "$i" -ge 60 ]; then
+        echo "entrypoint: tailscaled did not come up within 60s" >&2
+        exit 1
+    fi
+    sleep 1
+done
+
+# Idempotent: on a restart with persisted state this is a no-op re-auth.
+echo "entrypoint: bringing up node $NODE_NAME"
+tailscale up --authkey="$TS_AUTHKEY" --hostname="$NODE_NAME"
+
+echo "entrypoint: obtaining certificate for $DOMAIN"
+/usr/local/bin/cert-sync.sh "$CERT_DIR" "$DOMAIN" "$PID_FILE" || {
+    echo "entrypoint: could not obtain a certificate; refusing to start plaintext" >&2
+    exit 1
+}
+
+term() {
+    kill -TERM "$MINIO_PID" 2>/dev/null || true
+    wait "$MINIO_PID" 2>/dev/null || true
+    kill -TERM "$RENEW_PID" 2>/dev/null || true
+    kill -TERM "$TAILSCALED_PID" 2>/dev/null || true
+    exit 0
+}
+trap term TERM INT
+
+minio server --certs-dir "$CERT_DIR" "$@" &
+MINIO_PID=$!
+echo "$MINIO_PID" > "$PID_FILE"
+
+(
+    while true; do
+        sleep "$RENEW_SECONDS"
+        /usr/local/bin/cert-sync.sh "$CERT_DIR" "$DOMAIN" "$PID_FILE" || true
+    done
+) &
+RENEW_PID=$!
+
+wait "$MINIO_PID"
+```
+
+- [ ] **Step 3: Collapse the two compose services into one**
+
+In `docker-compose.yml`, **delete the entire `minio-ts:` service**, and replace the `minio:` service with:
+
+```yaml
+  # MinIO, joined to the tailnet as its own node named "minio". No sidecar:
+  # tailscaled runs INSIDE this container because its control socket is a file
+  # and network_mode shares only the network namespace -- see minio/Dockerfile.
+  #
+  # NOTHING is published to the host. :9000 (S3) and :9001 (console) exist on
+  # the tailscale interface only.
+  #
+  # Before first start:
+  #   cp minio.env.example minio.env && chmod 600 minio.env
+  minio:
+    build: ./minio
+    image: openbb-minio:11.0.0
+    platform: linux/amd64
+    container_name: openbb-minio
+    hostname: minio
+    restart: unless-stopped
+    env_file:
+      # TS_AUTHKEY -- the same reusable tagged key the openbb node uses.
+      - path: ./ts.env
+        required: true
+      - path: ./minio.env
+        required: true
+    environment:
+      - TS_HOSTNAME=minio
+      - TS_STATE_DIR=/var/lib/tailscale
+      # NOTE: the cert domain is NOT set here. Compose interpolates ${...} from
+      # the shell or a root .env only -- never from env_file -- so referencing
+      # ARCTICDB_S3_ENDPOINT here would silently expand to empty. The entrypoint
+      # reads it from its own environment instead, where env_file did put it.
+      - MINIO_CERT_RENEW_SECONDS=43200
+    command: ["/data", "--console-address", ":9001"]
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    volumes:
+      - minio-data:/data
+      # Persist node identity across restarts, same as the openbb node's
+      # ./ts-state -- otherwise every restart joins as a brand-new machine.
+      - ./ts-state-minio:/var/lib/tailscale
+```
+
+Change `minio-init`'s `network_mode` to `service:minio` and its `depends_on` to `- minio`.
+
+In the `volumes:` block, **remove `minio-ts-state`** and keep `minio-data`.
+
+- [ ] **Step 4: Ignore the new state directory**
+
+Add to `.gitignore` beside the existing `ts-state/` entry:
+
+```
+ts-state-minio/
+```
+
+- [ ] **Step 5: Build and re-verify fail-closed behaviour**
+
+```bash
+docker build --platform linux/amd64 -t openbb-minio:test ./minio
+docker run --rm --platform linux/amd64 openbb-minio:test; echo "EXIT=$?"
+docker run --rm --platform linux/amd64 -e ARCTICDB_S3_ENDPOINT=minio.example.ts.net openbb-minio:test; echo "EXIT=$?"
+```
+
+Expected: build succeeds. The first run exits 1 naming `ARCTICDB_S3_ENDPOINT`. The second run gets past the domain check and exits 1 naming `TS_AUTHKEY` — proving both guards fire in order and neither starts MinIO. Paste both transcripts verbatim.
+
+- [ ] **Step 6: Confirm cert-sync tests still pass and nothing is published**
+
+```bash
+python3 -m pytest minio/tests -q
+docker compose config | grep -c "published" || echo "0 published ports — correct"
+```
+
+Expected: 7 passed; no published ports.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add minio docker-compose.yml .gitignore
+git commit -m "fix(minio): run tailscaled in the container -- a sidecar's socket is unreachable"
+```
