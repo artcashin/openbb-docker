@@ -94,11 +94,25 @@ def aggregate(bars: pd.DataFrame, interval: str) -> pd.DataFrame:
     """Roll 1-minute bars up to a coarser interval.
 
     `1d` buckets on Eastern calendar days rather than UTC days: bars are
-    converted to America/New_York before resampling and the result is
-    converted back to UTC. A US session can straddle UTC midnight (e.g. an
-    after-hours print past 20:00 ET) while still belonging to one Eastern
-    trading day, so bucketing on the raw UTC index could split or mislabel a
-    session that a daily reference feed treats as a single date.
+    converted to America/New_York before resampling. A US session can
+    straddle UTC midnight (e.g. an after-hours print past 20:00 ET) while
+    still belonging to one Eastern trading day, so bucketing on the raw UTC
+    index could split or mislabel a session that a daily reference feed
+    treats as a single date. That bucketing (which trades land in which
+    daily bar) is untouched by the labeling choice below.
+
+    The resulting *label*, however, is normalized to UTC midnight of that
+    same Eastern calendar date -- e.g. the 2023-05-12 bar is labeled
+    2023-05-12 00:00:00+00:00, not the Eastern midnight's UTC clock time
+    (04:00Z in EDT). This matches both EODHD adapters
+    (`reference/eodhd_api.py`, `reference/eodhd_local.py`), which localize a
+    naive daily date straight to UTC midnight: a daily bar is conventionally
+    keyed by its calendar date, not a specific instant. `tz_convert("UTC")`
+    here would instead shift the Eastern midnight by the UTC offset (04:00Z
+    in EDT, 05:00Z in EST) and never line up with either adapter, which is
+    exactly the bug this fixed -- `report.compare()` intersects on the
+    index, so the two sides shared no timestamps at all and every 1d
+    comparison silently reported zero bars compared.
     """
     if interval not in _RULES:
         raise ValueError(
@@ -109,6 +123,11 @@ def aggregate(bars: pd.DataFrame, interval: str) -> pd.DataFrame:
 
     if interval == "1d":
         local = bars.tz_convert(EASTERN)
-        return _resample_ohlc(local, "1D").tz_convert("UTC")
+        out = _resample_ohlc(local, "1D")
+        # Re-label at UTC midnight for the same calendar date, rather than
+        # converting the Eastern midnight's clock time to UTC -- see the
+        # docstring above.
+        out.index = out.index.tz_localize(None).tz_localize("UTC")
+        return out
 
     return _resample_ohlc(bars, _RULES[interval])

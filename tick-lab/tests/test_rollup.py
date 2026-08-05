@@ -134,7 +134,11 @@ def test_aggregate_to_daily_keeps_after_hours_trade_crossing_utc_midnight():
     )
     daily = aggregate(bars, "1d")
     assert len(daily) == 1
-    assert daily.index[0] == pd.Timestamp("2023-05-12 04:00:00", tz="UTC")
+    # The bucketing is unchanged (this trade still lands in the 2023-05-12
+    # Eastern session day); only the label changed, from the Eastern
+    # midnight's UTC clock time (04:00Z in EDT) to UTC midnight of that same
+    # calendar date -- see aggregate()'s docstring.
+    assert daily.index[0] == pd.Timestamp("2023-05-12 00:00:00", tz="UTC")
     row = daily.iloc[0]
     assert (row.open, row.high, row.low, row.close) == (310.55, 312.00, 305.00, 305.00)
     assert row.volume == 1900

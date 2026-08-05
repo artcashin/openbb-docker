@@ -6,6 +6,7 @@ import math
 import pandas as pd
 
 from tick_lab.report import compare
+from tick_lab.rollup import aggregate, to_minute_bars
 
 IDX = pd.date_range("2023-05-12 13:30:00Z", periods=3, freq="1min")
 
@@ -170,4 +171,50 @@ def test_tolerance_boundary_is_inclusive():
     # than a hair over it. A regression to strict `<` would pass every other
     # existing test but would fail this one.
     rep = compare(frame([100.0]), frame([100.5]), "MSFT", "1m", tolerance=0.5)
+    assert rep.discrepancies == []
+
+
+def _adapter_shaped_daily_frame(day: str, ohlcv: dict) -> pd.DataFrame:
+    """Build a one-row daily frame the way both EODHD adapters do: a naive
+    calendar date localized straight to UTC midnight (`reference/eodhd_api.py`
+    and `reference/eodhd_local.py` both do `tz_localize("UTC")` on a naive
+    `pd.to_datetime(date)` index) -- never America/New_York.
+    """
+    index = pd.DatetimeIndex([pd.Timestamp(day)]).tz_localize("UTC")
+    return pd.DataFrame([ohlcv], index=index)
+
+
+def test_daily_rollup_actually_intersects_an_adapter_shaped_daily_frame():
+    """End-to-end regression for the 1d label mismatch: aggregate(bars, "1d")
+    used to label a daily bar at the Eastern midnight's UTC clock time
+    (04:00Z in EDT), while both EODHD adapters label a daily bar at UTC
+    midnight (00:00Z) for the same calendar date. report.compare() diffs by
+    intersecting the two indexes, so that mismatch meant a 1d comparison
+    always reported zero bars compared -- silently, since 0 discrepancies
+    also looks like a passing comparison. This is the "the report ran and
+    found nothing" scenario made concrete.
+    """
+    ticks = pd.DataFrame(
+        {"price": [310.55, 312.00, 308.97], "volume": [500, 100, 400]},
+        index=pd.DatetimeIndex(
+            ["2023-05-12 09:30:00", "2023-05-12 12:00:00", "2023-05-12 15:59:00"]
+        )
+        .tz_localize("America/New_York")
+        .tz_convert("UTC"),
+    )
+    ours_1m = to_minute_bars(ticks, session="regular")
+    ours_daily = aggregate(ours_1m, "1d")
+
+    theirs_daily = _adapter_shaped_daily_frame(
+        "2023-05-12",
+        {"open": 310.55, "high": 312.00, "low": 308.97, "close": 308.97, "volume": 1000},
+    )
+
+    rep = compare(ours_daily, theirs_daily, "MSFT", "1d")
+    assert rep.bars_compared == 1, (
+        f"expected the single daily bar to intersect; got {rep.bars_compared} "
+        f"(ours={list(ours_daily.index)}, theirs={list(theirs_daily.index)})"
+    )
+    assert rep.ours_only == []
+    assert rep.theirs_only == []
     assert rep.discrepancies == []
