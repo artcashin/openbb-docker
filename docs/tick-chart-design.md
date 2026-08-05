@@ -79,9 +79,29 @@ Forex carries no trades, only bid/ask, so it records the same mid-price rule
 ### Retention is a rolling window
 
 A pruning pass drops ticks older than `LIVE_TICK_WINDOW` and runs `.Q.gc[]`.
-Ticks are bounded by their own policy rather than competing with historical
-bars under the existing LRU watermark, so a busy feed cannot evict the
-historical cache.
+Ticks are bounded by their own policy — a time window — rather than by the
+LRU watermark that governs cached bars.
+
+**This is a retention policy, not isolation, and the distinction matters.**
+`trades` lives in the same q process as every `bars_*` table, and `.Q.w[]`
+`heap` — the number the watermark is measured against — is per *process*. So
+the two do share one budget after all:
+
+- A busy feed grows `heap`, which can push it past
+  `KDB_CACHE_WATERMARK × KDB_MEMORY_MB` and **trigger eviction of cached
+  bars**, even though the bars did nothing.
+- Eviction cannot reach `trades`: `KdbStore.evict_until_below` walks
+  `.cache.lru`, which only ever holds `(symbol, interval)` bar tables. If the
+  ticks are what put the heap over budget, eviction drops every bar table it
+  has, still fails to get under, and logs
+  `evict_until_below exhausted the LRU without reaching budget`.
+
+The containment that actually holds is q's `-w` (budget × 1.25) plus the
+window: `LIVE_TICK_WINDOW` is what bounds `trades`, so sizing it — not the
+LRU — is how an operator keeps a busy feed from evicting their cache. The
+honest summary is that ticks are **exempt from** eviction rather than
+isolated from it, which cuts the opposite way from what this section
+originally claimed.
 
 ### Aggregation happens in q
 
@@ -162,6 +182,7 @@ marker where live data meets cached history.
 | Tick burst | Buffer drops oldest, counts drops, reports on `/health` |
 | Write batch type mismatch | Batches are conformed to the stored schema before upsert |
 | Watchlist churn | Ticks for unsubscribed symbols simply stop; pruning reclaims them |
+| Feed busy enough to grow the heap past the watermark | Cached bar tables are evicted oldest-first; `trades` is not evictable, so eviction can exhaust the LRU and still log that it is over budget. Shrink `LIVE_TICK_WINDOW` or raise `KDB_MEMORY_MB` |
 
 The dtype hazard is not hypothetical: q's `upsert` demands exact column-type
 matches and pandas re-infers dtypes per batch. That combination made every live
@@ -196,5 +217,5 @@ sufficient.
 | A second PyKX client inside live-grid | Duplicates the thread-affinity handling whose bugs were the most expensive to find; the next person to fix one copy will not know about the other. |
 | Aggregate ticks in pandas | Moves the work away from the data and discards the single best argument for kdb+ being in this stack. |
 | Roll ticks straight into bars and discard them | Smaller footprint, but re-aggregating at a finer interval afterwards becomes impossible. |
-| Let ticks compete under the existing LRU | A busy feed could evict the historical cache; eviction granularity is per `(symbol, interval)`, which does not fit a single growing trades table. |
+| Let ticks compete under the existing LRU | Eviction granularity is per `(symbol, interval)`, which does not fit a single growing trades table — there is no meaningful "least recently used" slice of it to drop. Note this buys *retention* control, not heap isolation: `heap` is per q process and `trades` shares it, so a busy feed can still push the cache past its watermark (see "Retention is a rolling window"). |
 | Keep `cache-chart` alongside | Two services and two charts to maintain and explain, for one feature. |

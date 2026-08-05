@@ -25,7 +25,14 @@
 # per build platform. Ep. 11 pins platform: linux/amd64 (ArcticDB ships no
 # aarch64 Linux wheels), which is exactly the case that broke.
 FROM ghcr.io/artcashin/kdb-x:1.0 AS kdbx
-RUN rm -f /root/.kx/kc.lic
+# Every *.lic, not the one filename we happen to know: kdb+ also honours
+# k4.lic and kx.lic, the COPY below is wholesale (`/root/.kx`, not a file
+# list), and a base image is free to add another one on any rebuild. Then
+# assert the delete actually emptied the tree -- an `rm` that matched nothing
+# exits 0, so without this the whole guarantee rests on a glob nobody checks.
+RUN find /root/.kx -type f -name '*.lic' -delete \
+    && ! find /root/.kx -type f -name '*.lic' -print | grep -q . \
+    && echo "kdbx builder stage: no *.lic remains"
 
 FROM python:3.12-slim
 
@@ -99,6 +106,21 @@ RUN pip install /opt/openbb-eodhd
 # q runtime, minus the license (already removed in the kdbx stage above, so
 # nothing here can carry it).
 COPY --from=kdbx /root/.kx /opt/kx
+
+# Prove it, in the image that actually ships. The deletion above is in a stage
+# whose layers are discarded, so this is the only place the published
+# filesystem is checked -- and shipping a licence is a licensing violation,
+# not a bug worth discovering after a `docker push`. Scanning the whole
+# filesystem (not just /opt/kx) also catches a licence arriving from any other
+# COPY. CI additionally checks that no *layer tar* carries one, which is the
+# stronger property: a file deleted in a later layer is still extractable from
+# an earlier one via `docker save`.
+RUN found=$(find / -xdev -type f \( -name '*.lic' -o -name '*.license' \) -print) \
+    && if [ -n "$found" ]; then \
+         echo "REFUSING TO SHIP: licence file(s) in the image:" >&2; \
+         echo "$found" >&2; exit 1; \
+       fi \
+    && echo "licence scan: no *.lic / *.license in the image filesystem"
 
 # Shared kdb+ session/store plumbing (Ep. 10): openbb-kdb and live-grid both
 # depend on the "kdb-store" distribution now, and it is not published to

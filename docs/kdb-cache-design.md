@@ -198,6 +198,25 @@ The real budget is enforced by the extension: when `.Q.w[]``heap` exceeds
 `KDB_CACHE_WATERMARK` × `KDB_MEMORY_MB`, whole `(symbol, interval)` tables are
 dropped oldest-first, each followed by `.Q.gc[]`.
 
+**Amended in Ep. 10: eviction no longer sees everything in the heap.** This
+section was written when `bars_*` tables were the only thing in the q
+process. `live-grid` now records ticks into a `trades` table in that *same*
+process (see [docs/tick-chart-design.md](tick-chart-design.md)), and `.Q.w[]`
+`heap` is per process — so the number the watermark is measured against now
+includes tick data that eviction has no way to drop. `evict_until_below`
+walks `.cache.lru`, which holds only bar tables. Two consequences:
+
+- A busy tick feed can trigger eviction of cached bars that did nothing to
+  earn it.
+- If the ticks are what put the heap over budget, eviction drops every bar
+  table it has and *still* cannot get under; it exhausts the LRU and logs
+  `evict_until_below exhausted the LRU without reaching budget`. That warning
+  therefore does not always mean "the cache is too small" — check
+  `LIVE_TICK_WINDOW` before raising `KDB_MEMORY_MB`.
+
+`trades` is bounded by its rolling window instead, which is a retention
+policy and not a share of this budget.
+
 ### Surviving a dead q
 
 Because q *can* die, the extension treats a dead connection as a normal state,
@@ -206,15 +225,29 @@ process (`KDB_EMBEDDED=true`), reconnects, and serves the request by
 pass-through in the meantime. A cold cache after a death is correct behaviour —
 the cache was never persisted anyway.
 
-**With one deliberate exception: a failed *initial* connect latches.** If the
-first attempt to reach q fails — the overwhelmingly common cause being no
-licence — the session sets a `_given_up` flag and never tries again for the
-lifetime of the process; every subsequent request goes straight to
-pass-through. The alternative is paying a doomed process spawn and a five-
-second connect budget on *every* request for a reader who simply has no
+**With one deliberate exception: a failed connect suppresses the next
+attempts.** If reaching q fails — the overwhelmingly common cause being no
+licence — the session records a deadline (`_retry_after`, `_RETRY_AFTER_S` =
+60s) and every request inside that interval goes straight to pass-through
+without touching q. The alternative is paying a doomed process spawn and a
+five-second connect budget on *every* request for a reader who simply has no
 licence, which is the configuration the stack is explicitly designed to
-tolerate. The cost is that recovery from that state needs a container restart:
-mounting a licence into a running container does not re-arm the cache.
+tolerate.
+
+**Amended in Ep. 10: the latch expires; it used to be permanent.** A
+permanent latch cost a real failure once `live-grid` joined the same q. On a
+cold `docker compose up`, `openbb-api` spawns q lazily — on the first
+`provider=kdb` request — while `live-grid`'s drain loop reaches out about
+0.2 s after start. Nothing has bound `:5000` yet, so live-grid's one refused
+connect turned tick recording and the tick half of the chart off for its
+whole process lifetime, recoverable only by restarting that container by hand
+after something else warmed q. A deadline keeps the property that mattered
+(attempts are capped at one per interval, however hot the caller's loop) and
+drops the one that did not (never again). It is a deadline rather than an
+attempt count because the hazard is a rate, not a total: a counter would
+either exhaust itself during the very startup race it needs to survive, or
+never expire at all. Mounting a licence into a running container now re-arms
+the cache within a minute, no restart required.
 
 ### Concurrency
 

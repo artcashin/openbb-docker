@@ -192,6 +192,15 @@ services:
       # the default watchlist for testing).
       - path: ./credentials.env
         required: false
+      # /chart and /series are CLIENTS of openbb-api, which enforces Basic
+      # auth (OPENBB_API_AUTH=true, api-auth.env below is `required: true` on
+      # that service). Without the SAME credentials here, OPENBB_API_USERNAME
+      # is unset, app/openbb_client.py sends no auth header, every historical
+      # fetch comes back 401 and the chart renders as an error title. The
+      # deleted `cache-chart` service loaded this file for exactly this
+      # reason; folding it into live-grid must not drop it.
+      - path: ./api-auth.env
+        required: true
     volumes:
       - ./kdb-license:/opt/kx-license:ro
 

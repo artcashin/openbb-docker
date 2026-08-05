@@ -47,7 +47,7 @@ def _parse_symbols(raw: str) -> list[str]:
 
 async def build_series(symbol, interval, start, end, recorder, window, provider="kdb"):
     """History joined to tick-derived bars at the first fully-covered bar."""
-    from app.series import seam_boundary, stitch, tick_capable
+    from app.series import seam_boundary, stitch, tick_capable, window_end
 
     history, meta = await fetch_series(symbol, interval, start, end, provider)
     meta = dict(meta)
@@ -60,12 +60,22 @@ async def build_series(symbol, interval, start, end, recorder, window, provider=
     try:
         from kdb_store.aggregate import aggregate_ticks
 
-        span = recorder.store.tick_span(symbol)
+        # tick_span is a blocking IPC round-trip; off the loop like the
+        # aggregation below it, or a chart request stalls the grid's
+        # websocket flush.
+        span = await asyncio.to_thread(recorder.store.tick_span, symbol)
         if span is None:
             return history, meta
         boundary = seam_boundary(span[0], interval)
+        # Ticks are only ever as recent as *now*, so a window that ended in
+        # the past must not have them tacked on. Clip to whichever of the two
+        # ends first; if that leaves nothing at or after the seam, the request
+        # is purely historical.
+        hi = min(span[1], window_end(end))
+        if hi < boundary:
+            return history, meta
         ticks = await asyncio.to_thread(
-            aggregate_ticks, recorder.store, symbol, interval, boundary, span[1]
+            aggregate_ticks, recorder.store, symbol, interval, boundary, hi
         )
     except Exception as exc:  # noqa: BLE001 - the chart still works without ticks
         log.warning("tick aggregation unavailable for %s: %s", symbol, exc)

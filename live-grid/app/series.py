@@ -11,6 +11,29 @@ from datetime import datetime, timedelta
 EPOCH = datetime(1970, 1, 1)
 
 
+def window_end(end: str) -> datetime:
+    """The last instant the requested window covers.
+
+    Ticks are held for a rolling window that always ends *now*, so without
+    clipping, a request for a window that closed months ago
+    (`?start=2024-01-01&end=2024-06-01`) gets today's tick-derived bars
+    appended to it -- a chart whose right edge is years past its own axis.
+
+    A date-only `end` is INCLUSIVE of that whole day: the historical provider
+    returns that day's bar, so treating it as midnight would drop the final
+    day's ticks. An unparseable value clips nothing, which is exactly the
+    behaviour that existed before this function.
+    """
+    text = str(end).strip()
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return datetime.max
+    if len(text) == 10:  # YYYY-MM-DD -- a whole day, not its first instant
+        return parsed + timedelta(days=1) - timedelta(microseconds=1)
+    return parsed
+
+
 def seam_boundary(first_tick: datetime, interval: str) -> datetime:
     """The first bar boundary at or after `first_tick`."""
     from kdb_store.aggregate import bucket_ns

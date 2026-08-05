@@ -43,6 +43,28 @@ _CONNECT_POLL_INTERVAL_S = 0.15
 _TERMINATE_WAIT_S = 3.0
 _KILL_WAIT_S = 2.0
 
+# How long a failed connect suppresses the next attempt.
+#
+# A failed connect must not be retried per request: the common cause is a
+# missing licence, and re-paying a doomed spawn plus the 5s connect budget on
+# EVERY call would make openbb-kdb's hot path unusable for a reader who simply
+# has no licence -- the configuration this stack is explicitly built to
+# tolerate. That is what the original permanent latch protected.
+#
+# But permanent was too strong, and it cost a real failure: on a cold
+# `docker compose up`, live-grid's drain loop reaches q ~0.2s in, before
+# openbb-api (which owns the spawn) has bound :5000. One refused connect
+# latched tick recording off for the whole process lifetime, recoverable only
+# by restarting live-grid by hand.
+#
+# An EXPIRING latch keeps both properties and needs no extra state: attempts
+# are capped at one per interval no matter how hot the caller's loop is, and a
+# q that appears later is picked up on the next request after the interval.
+# The choice is a deadline rather than an attempt COUNT because the hazard is
+# a rate (spawns per second), not a total -- a counter would either exhaust
+# itself during the very startup race it exists to survive, or never expire.
+_RETRY_AFTER_S = 60.0
+
 
 class KdbUnavailable(Exception):
     """No usable kdb+ connection. Callers degrade to upstream pass-through."""
@@ -56,7 +78,9 @@ class KdbSession:
         self._conn = None
         self._proc: subprocess.Popen | None = None
         self._proc_log_path: str | None = None
-        self._given_up = False
+        # Monotonic deadline before which a connect is not re-attempted. 0.0
+        # means "never failed yet". See _RETRY_AFTER_S.
+        self._retry_after = 0.0
         # One worker, forever: PyKX needs the SAME thread every time, not just
         # one thread at a time. `_owner_ident` is stamped by the worker itself
         # on its first task so `run()` can recognise a re-entrant call.
@@ -203,8 +227,11 @@ class KdbSession:
         return self.run(self._connection)
 
     def _connection(self):
-        if self._given_up:
-            raise KdbUnavailable("kdb+ previously unreachable; not retrying")
+        remaining = self._retry_after - time.monotonic()
+        if remaining > 0:
+            raise KdbUnavailable(
+                f"kdb+ unreachable; not retrying for another {remaining:.0f}s"
+            )
         if self._conn is not None and self._is_alive():
             return self._conn
         self._conn = None
@@ -221,9 +248,15 @@ class KdbSession:
                 # We own this process; a q we started must never be left
                 # running unsupervised just because we failed to connect.
                 self._stop_proc()
-            self._given_up = True
-            logger.warning("kdb+ unavailable, falling back to upstream: %s", exc)
+            self._retry_after = time.monotonic() + _RETRY_AFTER_S
+            logger.warning(
+                "kdb+ unavailable, falling back to upstream (retrying in %.0fs): %s",
+                _RETRY_AFTER_S, exc,
+            )
             raise KdbUnavailable(str(exc)) from exc
+        # A connect that succeeded clears the latch: the next failure gets its
+        # own full interval rather than inheriting a stale deadline.
+        self._retry_after = 0.0
         return self._conn
 
     def _stop_proc(self) -> None:

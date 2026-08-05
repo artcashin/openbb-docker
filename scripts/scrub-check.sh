@@ -40,16 +40,38 @@ fail=0
 # binary files -- so a committed kdb+ licence blob would sail straight through
 # them. A licence is caught by its NAME, not its bytes. The operator's own
 # kdb-license/ directory is git-ignored and is the one place a kc.lic belongs.
+#
+# Not just `*.lic`: kdb+ honours kc.lic, k4.lic AND kx.lic, and the extension
+# is the easiest part to change. `k4.license`, `kc.lic.txt` and `kx.lic.b64`
+# are the same secret wearing a different suffix, so the stem is matched too.
 lic_hits=$(find . \
     -path ./.git -prune -o \
     -path ./kdb-license -prune -o \
     -path ./node_modules -prune -o \
     -path ./.venv -prune -o \
     -path ./venv -prune -o \
-    -name '*.lic' -print | filter_allowed)
+    \( -name '*.lic' -o -name '*.license' \
+       -o -name 'kc.lic*' -o -name 'k4.lic*' -o -name 'kx.lic*' \) \
+    -print | filter_allowed)
 if [[ -n "$lic_hits" ]]; then
   echo "$lic_hits"
   echo "SCRUB FAIL: licence file in the tree (a kc.lic may not be redistributed)" >&2
+  fail=1
+fi
+
+# Content gate for an ENCODED blob. Renaming is not the only way round the
+# name gate: base64 a kc.lic into a README, a .env.example or a test fixture
+# and every check above passes -- the bytes are gone but the secret is not.
+# A licence is a few hundred bytes, so its base64 is one unbroken run of
+# hundreds of characters; nothing legitimate in this repo has a run over 100
+# (verified), and anything that later does belongs in the allowlist with a
+# reason. This is a shape check, not a kdb-specific one, so it catches a
+# pasted key or certificate just as well.
+b64_hits=$( { grep -rInE "${EXCLUDES[@]}" -e '[A-Za-z0-9+/]{100,}={0,2}' . || true; } \
+            | cut -c1-160 | filter_allowed)
+if [[ -n "$b64_hits" ]]; then
+  echo "$b64_hits"
+  echo "SCRUB FAIL: long base64 run (an encoded licence/key blob?)" >&2
   fail=1
 fi
 

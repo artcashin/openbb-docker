@@ -68,12 +68,74 @@ jobs:
         run: |
           pip install -e .[dev]
           pytest -q
+  # The Dockerfile's first stage is ghcr.io/artcashin/kdb-x:1.0, which is a
+  # PRIVATE package: an anonymous manifest request gets a 403, so build-smoke
+  # cannot build at all without a registry token. Rather than show every fork
+  # and every secret-less run a red build for a credential they were never
+  # given, the build job is gated on the secret being present.
+  #
+  # This has to be its own job: the `secrets` context is NOT available in a
+  # job-level `if:` (only github/needs/vars/inputs are), so the check must run
+  # inside a job and come back as an output.
+  registry-token:
+    runs-on: ubuntu-latest
+    outputs:
+      available: ${{ steps.check.outputs.available }}
+    steps:
+      - id: check
+        env:
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+        run: |
+          if [ -n "$REGISTRY_TOKEN" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::REGISTRY_TOKEN is not set - skipping build-smoke. \
+            The Dockerfile's kdb-x base image is private; set the secret (a PAT \
+            with read:packages), or see the README for building against your own \
+            q runtime."
+          fi
+
   build-smoke:
     runs-on: ubuntu-latest
+    needs: registry-token
+    if: needs.registry-token.outputs.available == 'true'
     steps:
       - uses: actions/checkout@v4
+      - name: Log in to the container registry (kdb-x is private)
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.REGISTRY_TOKEN }}
       - name: Build the image
         run: docker build -t openbb-local:ci .
+      - name: No image layer carries a kdb+ licence
+        run: |
+          # Layers are ADDITIVE. Deleting the licence in a later layer leaves
+          # an intact copy in the earlier one, which anyone who pulls the image
+          # can extract with `docker save` even though the flattened filesystem
+          # looks clean. That exact bug already shipped once on this branch, so
+          # it gets a regression guard rather than a comment.
+          #
+          # A kc.lic may not be redistributed, so this is a licensing gate, not
+          # a hygiene check -- it fails the build rather than warning.
+          docker save openbb-local:ci -o /tmp/image.tar
+          mkdir -p /tmp/image && tar -xf /tmp/image.tar -C /tmp/image
+          # Layout differs between the classic (<hash>/layer.tar) and OCI
+          # (blobs/sha256/<digest>, gzipped) formats, so try every regular file
+          # as a tar, both compressed and not, and ignore whatever isn't one.
+          find /tmp/image -type f -print0 \
+            | xargs -0 -I{} sh -c 'tar -tzf "{}" 2>/dev/null || tar -tf "{}" 2>/dev/null' \
+            > /tmp/entries.txt || true
+          echo "scanned $(wc -l < /tmp/entries.txt) layer entries"
+          test -s /tmp/entries.txt  # an empty scan would pass vacuously
+          if grep -Eiq '\.(lic|license)$' /tmp/entries.txt; then
+            grep -Ei '\.(lic|license)$' /tmp/entries.txt
+            echo "::error::a kdb+ licence survives in an image layer"
+            exit 1
+          fi
+          echo "no licence entry in any layer"
       - name: The bundled q matches the image architecture and executes
         run: |
           # COPY --from cannot fail on an architecture mismatch -- it copies

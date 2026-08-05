@@ -44,9 +44,11 @@ and not merely whited-out of the flattened filesystem, which is what
 `docker save` would still hand a puller. Bring your own `kc.lic` (drop it in
 `kdb-license/`, git-ignored, and point `QLIC` at the mount) — without one, or
 without a reachable q, the provider passes straight through to the upstream
-and reports `cache: "bypass"`, so the stack still works, just uncached (that
-pass-through latches for the process, so add a licence and restart the
-container). q runs as a child of the API container bound to
+and reports `cache: "bypass"`, so the stack still works, just uncached (a
+failed connect suppresses retries for 60 s so a licence-less reader doesn't
+pay a doomed spawn per request — then it tries again, so mounting a licence
+into a running container re-arms the cache within a minute). q runs as a
+child of the API container bound to
 **`127.0.0.1:5000`**, never `0.0.0.0` — every service here shares the
 tailscale network namespace, so a loopback bind reaches its siblings and no
 tailnet peer, while `0.0.0.0` would publish an unauthenticated q (which
@@ -66,6 +68,26 @@ on :6903, tailnet-only. See [openbb-kdb/README.md](openbb-kdb/README.md),
 [docs/tick-chart-design.md](docs/tick-chart-design.md) (which supersedes
 [docs/kdb-cache-design.md](docs/kdb-cache-design.md) for anything
 chart-related).
+
+**Building the image needs `kdb-x`.** The Dockerfile's first stage is
+`ghcr.io/artcashin/kdb-x:1.0`, and the only thing it contributes is the q
+server binary (`/opt/kx`) — kdb+ is not on PyPI and KX ships no public
+`docker pull` of the runtime, so it has to come from somewhere. **That
+package is currently private**, so `docker build .` will fail on an
+anonymous pull with a 403; CI skips its build job unless a registry token
+secret is configured. Two ways round it if you are building this yourself:
+
+- Point the stage at your own image — install
+  [kdb-x](https://kx.com/kdb-x/) (or kdb+ Personal Edition) into any base
+  image so that `q` and its `l64`/`m64` directory land under one root, and
+  change that one `FROM` line to it; or
+- drop the `FROM ... AS kdbx` stage and the `COPY --from=kdbx` line
+  entirely, and run q as a separate container, pointing `KDB_HOST` at it with
+  `KDB_EMBEDDED=false`. The cache does not care whether it spawned q.
+
+Either way the licence stays yours: no `*.lic` is ever copied into this
+image, the builder stage deletes every one it finds, and the build fails if
+any survives into the final stage.
 
 **New in v9.0.0 (Ep. 9):** the wire. The
 **[rss-ticker](https://github.com/artcashin/rss-ticker)** news service joins

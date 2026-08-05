@@ -2,6 +2,7 @@
 
 import subprocess
 import threading
+import time
 
 import pytest
 
@@ -129,6 +130,43 @@ def test_repeated_failure_is_not_retried_every_call(monkeypatch):
         with pytest.raises(KdbUnavailable):
             s.connection()
     assert len(attempts) == 1
+
+
+def test_a_session_that_failed_once_can_connect_later(monkeypatch):
+    """The give-up latch must EXPIRE, not last for the process lifetime.
+
+    On a cold `docker compose up`, live-grid's drain loop reaches q about
+    0.2s in -- before openbb-api, which owns the spawn, has bound :5000. That
+    single refused connect used to latch tick recording (and the tick half of
+    the chart) off permanently, recoverable only by restarting live-grid by
+    hand after something else warmed q. Within the interval the latch still
+    holds, so a hot caller never re-pays a doomed spawn; past it, a q that has
+    since come up is picked up on its own.
+    """
+    attempts = []
+    conn = FakeConn()
+
+    def refuse_once(self):
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise OSError("connection refused")
+        return conn
+
+    monkeypatch.setattr(KdbSession, "_spawn", lambda self: None)
+    monkeypatch.setattr(KdbSession, "_connect", refuse_once)
+    monkeypatch.setattr(session, "_RETRY_AFTER_S", 0.05)
+
+    s = KdbSession(cfg())
+    with pytest.raises(KdbUnavailable):
+        s.connection()
+    with pytest.raises(KdbUnavailable):  # inside the interval: still suppressed
+        s.connection()
+    assert len(attempts) == 1, "the latch must suppress a retry inside the interval"
+
+    time.sleep(0.06)
+    assert s.connection() is conn, "q came up later; the session must find it"
+    assert len(attempts) == 2
+    s.close()
 
 
 def test_q_command_binds_loopback_and_sets_workspace():

@@ -116,3 +116,130 @@ def test_demo_page_registers_relayout_handler_once(client):
     gap fetch leaks a listener per zoom."""
     text = client.get("/demo").text
     assert text.count('chart.on("plotly_relayout"') == 1
+
+
+# -- the tick/history join ---------------------------------------------------
+#
+# The headline of this phase, and previously covered only in its degraded
+# (no-recorder) form -- which is why the missing `end` clip went unnoticed.
+# These drive the real join through /series with a fake recorder: a known
+# tick span and known aggregated bars, so what is under test is the seam
+# arithmetic and the clipping, not q.
+
+SPAN = (D("2025-06-10T14:00:30"), D("2025-06-10T14:03:30"))
+SEAM = "2025-06-10T14:01:00"
+
+# 14:01 is deliberately present in BOTH: history must lose it to the ticks.
+TICK_HISTORY = [bar(D("2025-06-10T13:58:00")), bar(D("2025-06-10T13:59:00")),
+                bar(D("2025-06-10T14:00:00")), bar(D("2025-06-10T14:01:00"), close=9.0)]
+TICK_BARS = [bar(D("2025-06-10T14:01:00"), close=5.0),
+             bar(D("2025-06-10T14:02:00"), close=6.0),
+             bar(D("2025-06-10T14:03:00"), close=7.0)]
+
+
+class FakeStore:
+    """Stands in for KdbStore. Records the range each aggregation asked for."""
+
+    def __init__(self):
+        self.aggregate_calls = []
+
+    def tick_span(self, symbol):
+        return SPAN
+
+    def prune_ticks(self, cutoff):
+        return 0
+
+    def write_ticks(self, frame):
+        return 0
+
+
+@pytest.fixture
+def tick_client(monkeypatch):
+    """live-grid wired to a fake recorder rather than a real q."""
+    store = FakeStore()
+
+    async def fake_history(symbol, interval, start, end, provider="kdb"):
+        return (list(TICK_HISTORY),
+                {"cache": "hit", "rows_from_cache": len(TICK_HISTORY),
+                 "rows_from_upstream": 0, "gaps_fetched": 0,
+                 "upstream_ms": 0.0, "kdb_ms": 1.0})
+
+    def fake_aggregate_ticks(st, symbol, interval, start, end):
+        st.aggregate_calls.append((start, end))
+        return [b for b in TICK_BARS if start <= b["date"] <= end]
+
+    monkeypatch.setattr("app.main.fetch_series", fake_history)
+    monkeypatch.setattr("kdb_store.aggregate.aggregate_ticks", fake_aggregate_ticks)
+    monkeypatch.setattr("kdb_store.config.resolve_config", lambda: object())
+    monkeypatch.setattr("kdb_store.session.KdbSession", lambda config: object())
+    monkeypatch.setattr("kdb_store.store.KdbStore", lambda session: store)
+
+    client = TestClient(create_app(api_key="test-key"))
+    client.store = store
+    return client
+
+
+def _series(client, **params):
+    params.setdefault("symbol", "AAPL")
+    params.setdefault("interval", "1m")
+    return client.get("/series", params=params).json()
+
+
+def test_the_seam_is_the_first_boundary_at_or_after_the_first_tick(tick_client):
+    """14:00:30 is mid-bar -- that bar is missing its own opening trades, so
+    ticks may not own it. 14:01 is the first bar they cover whole."""
+    body = _series(tick_client, start="2025-06-10", end="2025-06-10")
+    assert body["cache"]["seam"] == SEAM
+
+
+def test_history_at_or_after_the_seam_is_dropped(tick_client):
+    """Otherwise 14:01 appears twice, once per source."""
+    body = _series(tick_client, start="2025-06-10", end="2025-06-10")
+    at_seam = [b for b in body["bars"] if b["date"] == SEAM]
+    assert len(at_seam) == 1
+    assert at_seam[0]["close"] == 5.0, "the seam bar must come from ticks, not history"
+
+
+def test_the_join_has_no_duplicate_timestamps_and_is_strictly_increasing(tick_client):
+    body = _series(tick_client, start="2025-06-10", end="2025-06-10")
+    stamps = [b["date"] for b in body["bars"]]
+    assert stamps == sorted(stamps)
+    assert len(stamps) == len(set(stamps))
+    assert stamps == ["2025-06-10T13:58:00", "2025-06-10T13:59:00",
+                      "2025-06-10T14:00:00", SEAM,
+                      "2025-06-10T14:02:00", "2025-06-10T14:03:00"]
+
+
+def test_rows_from_ticks_counts_only_the_tick_derived_bars(tick_client):
+    body = _series(tick_client, start="2025-06-10", end="2025-06-10")
+    assert body["cache"]["rows_from_ticks"] == len(TICK_BARS)
+    assert body["cache"]["rows_from_cache"] == len(TICK_HISTORY)
+
+
+def test_tick_bars_are_clipped_to_the_requested_end(tick_client):
+    """Ticks are only ever as recent as now; the caller's `end` still bounds
+    them. Without this the aggregation ran to the end of the tick span and
+    returned bars past the window the caller asked for."""
+    body = _series(tick_client, start="2025-06-10", end="2025-06-10T14:02:00")
+    stamps = [b["date"] for b in body["bars"]]
+    assert max(stamps) == "2025-06-10T14:02:00"
+    assert body["cache"]["rows_from_ticks"] == 2
+    _, hi = tick_client.store.aggregate_calls[-1]
+    assert hi == D("2025-06-10T14:02:00"), "the aggregation itself must be clipped"
+
+
+def test_a_window_that_closed_in_the_past_gets_no_ticks_at_all(tick_client):
+    """The reported bug: `?start=2024-01-01&end=2024-06-01` came back with
+    today's tick-derived bars appended to a window that ended months earlier."""
+    body = _series(tick_client, start="2024-01-01", end="2024-06-01")
+    assert body["cache"]["rows_from_ticks"] == 0
+    assert body["cache"]["seam"] is None
+    assert body["bars"] == [dict(b, date=b["date"].isoformat()) for b in TICK_HISTORY]
+    assert tick_client.store.aggregate_calls == [], "no aggregation should have run"
+
+
+def test_a_date_only_end_covers_that_whole_day(tick_client):
+    """A date-only `end` is inclusive of the day -- the historical provider
+    returns that day's bar, so midnight would clip the final day's ticks."""
+    body = _series(tick_client, start="2025-06-10", end="2025-06-10")
+    assert body["cache"]["rows_from_ticks"] == len(TICK_BARS)
