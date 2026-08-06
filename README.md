@@ -19,6 +19,11 @@ from later chapters is.
 | v11.1.0 | Ep. 11 — The Shared Store | `tick-lab`'s EODHD-through-the-API reference adapter — the per-minute 2023 comparison yfinance cannot serve |
 | v11.1.1 | Ep. 11 — The Shared Store | `tick-lab`'s in-process OpenBB reference adapter (`--reference eodhd-local`) — the same call made locally, and what it costs versus `eodhd-api` |
 
+Ep. 11's three tags point at the same commit. The chapter was built and
+verified as one body of work — the rows above describe what each release
+*adds*, not three separate states of the code, and the two later reference
+adapters are `--reference` options you select at runtime.
+
 ## What you get (this release: v11.1.1)
 
 Eight services across two tailnet nodes, zero exposed ports. The backbone,
