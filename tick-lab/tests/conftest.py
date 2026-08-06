@@ -14,7 +14,7 @@ tests are unaffected -- they take their settings from the shell, not a file.
 
 import pytest
 
-import tick_lab.config as config
+from tick_lab import config
 
 
 @pytest.fixture(autouse=True)

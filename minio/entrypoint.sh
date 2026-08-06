@@ -8,6 +8,16 @@ set -eu
 
 CERT_DIR="${MINIO_CERT_DIR:-/root/.minio/certs}"
 RENEW_SECONDS="${MINIO_CERT_RENEW_SECONDS:-43200}"
+# Validate now, not in twelve hours. An unvalidated value only fails when the
+# renewal loop first wakes, so a typo looks like a healthy container until the
+# certificate quietly stops being renewed.
+case "$RENEW_SECONDS" in
+    ''|*[!0-9]*)
+        echo "entrypoint: MINIO_CERT_RENEW_SECONDS must be a whole number of seconds," \
+             "got '$RENEW_SECONDS'" >&2
+        exit 1
+        ;;
+esac
 STATE_DIR="${TS_STATE_DIR:-/var/lib/tailscale}"
 SOCKET=/var/run/tailscale/tailscaled.sock
 NODE_NAME="${TS_HOSTNAME:-minio}"
