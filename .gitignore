@@ -26,3 +26,6 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 .venv/
+
+# Finder metadata
+.DS_Store
