@@ -55,6 +55,9 @@ services:
   openbb-api:
     build: .
     image: openbb-local:1.0.0
+    # ArcticDB publishes no aarch64 Linux wheels, so the image is amd64.
+    # On Apple Silicon this runs under emulation -- correct, but slower.
+    platform: linux/amd64
     container_name: openbb-api
     restart: unless-stopped
     network_mode: service:tailscale
@@ -70,6 +73,9 @@ services:
       # purpose: without it the API would come up unauthenticated.
       - path: ./api-auth.env
         required: true
+      # Ep. 11: ARCTICDB_S3_* -- the MinIO store, shared with tick-lab.
+      - path: ./minio.env
+        required: false
     # Ep. 10: the kdb+ read-through cache. This repo ships NO KX software --
     # the licence does not permit redistributing q. Bring your own:
     #
@@ -114,6 +120,9 @@ services:
   openbb-mcp:
     build: .
     image: openbb-local:6.0.0
+    # ArcticDB publishes no aarch64 Linux wheels, so the image is amd64.
+    # On Apple Silicon this runs under emulation -- correct, but slower.
+    platform: linux/amd64
     container_name: openbb-mcp
     restart: unless-stopped
     network_mode: service:tailscale
@@ -137,6 +146,15 @@ services:
       - OPENBB_MCP_DEFAULT_SKILLS_DIR=
     env_file:
       - path: ./credentials.env
+        required: false
+      # Ep. 11: ARCTICDB_S3_* -- this server wraps the same Platform app as
+      # openbb-api in-process, so its equity/etf/crypto/currency/index
+      # historical-price tools accept provider="arcticdb" too. Without this,
+      # ARCTICDB_S3_* is unset here and the provider falls back silently to a
+      # local LMDB store instead of the shared MinIO bucket (see
+      # openbb_arcticdb.utils.resolve_config) -- same store, no auth of its
+      # own either way, so it's safe to share the file.
+      - path: ./minio.env
         required: false
     volumes:
       - openbb-data:/root/.openbb_platform
@@ -240,6 +258,85 @@ services:
       - ./rss-ticker-config:/config:ro
       - rss-ticker-data:/data
 
+  # --- Ep. 11: the shared store -------------------------------------------
+  # MinIO, joined to the tailnet as its own node named "minio". No sidecar:
+  # tailscaled runs INSIDE this container because its control socket is a file
+  # and network_mode shares only the network namespace -- see minio/Dockerfile.
+  #
+  # NOTHING is published to the host, so :9000/:9001 exist on the tailscale
+  # interface (and the docker bridge) only.
+  #
+  # Before first start:
+  #   cp minio.env.example minio.env && chmod 600 minio.env
+  minio:
+    build: ./minio
+    image: openbb-minio:11.0.0
+    platform: linux/amd64
+    container_name: openbb-minio
+    hostname: minio
+    restart: unless-stopped
+    env_file:
+      # TS_AUTHKEY -- the same reusable tagged key the openbb node uses.
+      - path: ./ts.env
+        required: true
+      - path: ./minio.env
+        required: true
+    environment:
+      - TS_HOSTNAME=minio
+      - TS_STATE_DIR=/var/lib/tailscale
+      # NOTE: the cert domain is NOT set here. Compose interpolates ${...} from
+      # the shell or a root .env only -- never from env_file -- so referencing
+      # ARCTICDB_S3_ENDPOINT here would silently expand to empty. The entrypoint
+      # reads it from its own environment instead, where env_file did put it.
+      - MINIO_CERT_RENEW_SECONDS=43200
+    command: ["/data", "--console-address", ":9001"]
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    volumes:
+      - minio-data:/data
+      # Persist node identity across restarts, same as the openbb node's
+      # ./ts-state -- otherwise every restart joins as a brand-new machine.
+      - ./ts-state-minio:/var/lib/tailscale
+
+  # One-shot: ArcticDB will NOT create its own bucket, so `docker compose up`
+  # would otherwise leave you with a store that 404s on first write.
+  minio-init:
+    image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z
+    container_name: openbb-minio-init
+    network_mode: service:minio
+    depends_on:
+      - minio
+    env_file:
+      - path: ./minio.env
+        required: true
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        # tailscaled does NOT take over DNS inside these containers -- resolv.conf
+        # still points at Docker's resolver -- so the MagicDNS name does not
+        # resolve in here, even though every tailnet client outside resolves it
+        # fine. We share minio's network namespace, so map the name to loopback
+        # and keep FULL certificate verification: the cert is issued for exactly
+        # this name, so TLS still validates.
+        echo "127.0.0.1 $${ARCTICDB_S3_ENDPOINT}" >> /etc/hosts
+        for i in $$(seq 1 60); do
+          if mc alias set store "https://$${ARCTICDB_S3_ENDPOINT}:$${ARCTICDB_S3_PORT}" \
+               "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}" >/dev/null 2>&1; then
+            mc mb --ignore-existing "store/$${ARCTICDB_S3_BUCKET}"
+            echo "minio-init: bucket $${ARCTICDB_S3_BUCKET} ready"
+            exit 0
+          fi
+          sleep 2
+        done
+        echo "minio-init: MinIO did not become reachable" >&2
+        exit 1
+    restart: "no"
+
 volumes:
   openbb-data:
   rss-ticker-data:
+  minio-data:

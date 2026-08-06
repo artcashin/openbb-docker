@@ -95,6 +95,14 @@ RUN pip install --no-cache-dir /tmp/kdb-store && rm -rf /tmp/kdb-store
 COPY openbb-kdb /tmp/openbb-kdb
 RUN pip install --no-cache-dir /tmp/openbb-kdb && rm -rf /tmp/openbb-kdb
 
+# ArcticDB store + provider extension (Ep. 11). Bars and ticks persisted to
+# S3/MinIO can stand in for an upstream API call via provider="arcticdb".
+#
+# ArcticDB ships manylinux x86_64 wheels ONLY -- no aarch64. That is why the
+# compose services pin platform: linux/amd64.
+COPY openbb-arcticdb /tmp/openbb-arcticdb
+RUN pip install --no-cache-dir /tmp/openbb-arcticdb && rm -rf /tmp/openbb-arcticdb
+
 # Official OpenBB MCP server (Ep. 6): wraps the Platform FastAPI app
 # in-process and serves MCP over streamable-http. PIP_CONSTRAINT still
 # applies, so it cannot drag shared libs anywhere the stack doesn't tolerate.
@@ -106,7 +114,8 @@ RUN python -c "import openbb_mcp_server; print('openbb-mcp-server import OK')"
 RUN python -c "import openbb; openbb.build(); from openbb import obb; \
 assert 'eodhd' in obb.coverage.providers, 'eodhd provider not registered'; \
 assert 'kdb' in obb.coverage.providers, 'kdb provider not registered'; \
-print('OpenBB Platform OK:', len(obb.coverage.providers), 'providers (incl. eodhd, kdb)')"
+assert 'arcticdb' in obb.coverage.providers, 'arcticdb provider not registered'; \
+print('OpenBB Platform OK:', len(obb.coverage.providers), 'providers (incl. eodhd, kdb, arcticdb)')"
 
 WORKDIR /workspace
 
