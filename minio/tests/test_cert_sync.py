@@ -1,9 +1,7 @@
 """cert-sync.sh: fetch a cert, and HUP the server only when it actually changed."""
 
-import signal
 import subprocess
 import time
-from pathlib import Path
 
 HUP_CATCHER = (
     "import signal, sys, time\n"

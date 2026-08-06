@@ -107,9 +107,18 @@ class YFinanceAdapter:
                 "empty", f"yfinance returned no rows for {symbol} at {interval}"
             )
 
-        frame = raw.rename(columns=_YAHOO_COLUMNS)[BAR_COLUMNS]
+        frame = raw.rename(columns=_YAHOO_COLUMNS)
+        # Same guard the EODHD adapters carry: if Yahoo ever changes its column
+        # names, say so as a classified error rather than letting a bare
+        # KeyError escape with a traceback. All three adapters share one
+        # contract; this one was the odd sibling.
+        missing = [c for c in BAR_COLUMNS if c not in frame.columns]
+        if missing:
+            raise ReferenceError(
+                "transport", f"yfinance response is missing column(s): {', '.join(missing)}"
+            )
         index = pd.DatetimeIndex(frame.index)
         frame.index = (
             index.tz_convert("UTC") if index.tz is not None else index.tz_localize("UTC")
         )
-        return frame
+        return frame[BAR_COLUMNS].sort_index()

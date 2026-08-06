@@ -148,3 +148,39 @@ def test_end_with_a_time_of_day_is_passed_through():
 
 def test_none_end_stays_none():
     assert exclusive_end(None) is None
+
+
+def test_missing_columns_become_a_classified_error(monkeypatch):
+    """A shape surprise from Yahoo must not escape as a bare KeyError.
+
+    Both EODHD adapters classify this; yfinance was the odd sibling.
+    """
+    adapter = YFinanceAdapter()
+    monkeypatch.setattr(
+        adapter, "_history",
+        lambda *a, **k: pd.DataFrame(
+            {"Open": [1.0], "Close": [1.5]},
+            index=pd.DatetimeIndex(["2023-05-12 09:30:00"], tz="America/New_York"),
+        ),
+    )
+    with pytest.raises(ReferenceError) as exc:
+        adapter.fetch("MSFT", "2023-05-12", "2023-05-13", "1m")
+    assert exc.value.kind == "transport"
+    assert "high" in exc.value.detail
+
+
+def test_rows_come_back_sorted(monkeypatch):
+    adapter = YFinanceAdapter()
+    idx = pd.DatetimeIndex(
+        ["2023-05-12 09:31:00", "2023-05-12 09:30:00"], tz="America/New_York"
+    )
+    monkeypatch.setattr(
+        adapter, "_history",
+        lambda *a, **k: pd.DataFrame(
+            {"Open": [2.0, 1.0], "High": [2.0, 1.0], "Low": [2.0, 1.0],
+             "Close": [2.0, 1.0], "Volume": [2, 1]},
+            index=idx,
+        ),
+    )
+    out = adapter.fetch("MSFT", "2023-05-12", "2023-05-13", "1m")
+    assert out.index.is_monotonic_increasing
