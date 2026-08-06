@@ -150,10 +150,14 @@ def create_app(role: str, cred_file: str, auth_file: str) -> FastAPI:
             set_value(cred_file, env_var, value)
         except ValueError as e:
             # Class name only, same reasoning as the OSError branch below.
-            # In practice the round-trip check above already rejects any
-            # value containing a line break (parse_text splits on the same
-            # separators set_value does), so this is defense in depth rather
-            # than a path this endpoint is expected to hit.
+            # This branch is load-bearing, not unreachable: the round-trip
+            # check above only guards against parse_text/set_value
+            # disagreeing on what a value parses back to, and a lone
+            # surrogate (e.g. "\ud800") passes that check -- json.loads
+            # accepts it and it round-trips through parse_text unchanged --
+            # but then fails utf-8 encoding when set_value writes the file,
+            # raising UnicodeEncodeError (a ValueError subclass). That case
+            # reaches this handler in production.
             return JSONResponse(
                 {"detail": f"invalid value: {type(e).__name__}"}, status_code=400
             )

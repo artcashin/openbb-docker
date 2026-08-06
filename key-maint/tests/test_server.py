@@ -167,6 +167,7 @@ class TestWriteKey:
     def test_response_never_echoes_the_value(self, files):
         c = client(files, "admin")
         r = c.put("/keys/FMP_API_KEY", headers=AUTH, json={"value": "supersecret999"})
+        assert r.status_code == 200
         assert "supersecret999" not in r.text
 
     def test_a_rejected_write_never_echoes_the_value(self, files):
@@ -193,6 +194,64 @@ class TestWriteKey:
     def test_requires_auth(self, files):
         c = client(files, "admin")
         assert c.put("/keys/FMP_API_KEY", json={"value": "x"}).status_code == 401
+
+    # --- Malformed-body branch (the reason this endpoint hand-parses the
+    # request body instead of using a Pydantic model: FastAPI's 422 response
+    # echoes the offending input, which would print the secret). Every test
+    # above sends a well-formed {"value": <str>}, so without these the
+    # 400 branch below is unexercised and a future Pydantic-model refactor
+    # could reintroduce the leak with a green suite. Use the admin client so
+    # the request reaches the body-parse branch rather than being refused
+    # earlier by the tier gate.
+
+    def test_wrong_typed_value_is_rejected(self, files):
+        c = client(files, "admin")
+        r = c.put(
+            "/keys/FMP_API_KEY", headers=AUTH, json={"value": {"k": "supersecret999"}}
+        )
+        assert r.status_code == 400
+        assert "supersecret999" not in r.text
+
+    def test_missing_value_key_is_rejected(self, files):
+        c = client(files, "admin")
+        r = c.put("/keys/FMP_API_KEY", headers=AUTH, json={"other": "x"})
+        assert r.status_code == 400
+
+    def test_body_that_is_not_valid_json_is_rejected(self, files):
+        c = client(files, "admin")
+        r = c.put(
+            "/keys/FMP_API_KEY",
+            headers={**AUTH, "Content-Type": "application/json"},
+            content=b"{",
+        )
+        assert r.status_code == 400
+
+    def test_body_that_is_not_a_json_object_is_rejected(self, files):
+        c = client(files, "admin")
+        r = c.put("/keys/FMP_API_KEY", headers=AUTH, json=["supersecret999"])
+        assert r.status_code == 400
+        assert "supersecret999" not in r.text
+
+    def test_lone_surrogate_reaches_set_value_and_is_rejected_safely(self, files):
+        # A lone surrogate is accepted by json.loads and survives the
+        # round-trip check (parse_text does not reject it), so it reaches
+        # set_value's write -- which raises UnicodeEncodeError (a ValueError
+        # subclass) because utf-8 cannot encode it. This is the case the
+        # ValueError handler exists for; it is not unreachable defense in
+        # depth.
+        #
+        # Sent as a raw body (not json=): httpx's json encoder refuses to
+        # serialize a lone surrogate to utf-8 bytes, but \uXXXX-escaped text
+        # is standard, valid JSON that json.loads decodes back to the same
+        # surrogate character -- this is how a real client would send it.
+        c = client(files, "admin")
+        r = c.put(
+            "/keys/FMP_API_KEY",
+            headers={**AUTH, "Content-Type": "application/json"},
+            content=b'{"value": "\\ud800"}',
+        )
+        assert r.status_code == 400
+        assert "\\ud800" not in r.text
 
     # --- Round-trip safety (Task 4 hazard: parse_text does not round-trip
     # every string -- see app/credfile.py's set_value docstring). Decision:
@@ -234,12 +293,18 @@ class TestWriteKey:
         # (e.g. a future edge case not covered by parse_text), set_value's
         # own line-break guard must still fail safely -- caught and turned
         # into a 400, never a 500 with a traceback, and never echoing the
-        # value.
-        monkeypatch.setattr("app.server.parse_text", lambda text: {"FMP_API_KEY": "a\nb"})
+        # value. The sentinel is a printable string alongside the break (not
+        # just "a\nb"): JSON-encoding a bare newline renders it as "\n", so
+        # the raw substring could never appear in the response body even if
+        # the endpoint did echo it -- that would make the no-echo assertion
+        # vacuous.
+        monkeypatch.setattr(
+            "app.server.parse_text", lambda text: {"FMP_API_KEY": "supersecret999\nX"}
+        )
         c = client(files, "admin")
-        r = c.put("/keys/FMP_API_KEY", headers=AUTH, json={"value": "a\nb"})
+        r = c.put("/keys/FMP_API_KEY", headers=AUTH, json={"value": "supersecret999\nX"})
         assert r.status_code == 400
-        assert "a\nb" not in r.text
+        assert "supersecret999" not in r.text
 
 
 class TestPanelWidget:
