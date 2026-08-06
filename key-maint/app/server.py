@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.auth import make_guard
-from app.credfile import load_with_warnings
+from app.credfile import load_with_warnings, parse_text, set_value
 from app.probes import probe_one_provider, run_probes
 from app.registry import PROVIDERS
 from app.rows import build_rows
@@ -39,7 +39,24 @@ WIDGETS = {
                 "(tailnet/admin connections only).",
             }
         ],
-    }
+    },
+    # A second view of the same endpoint for BDOBB, which renders type
+    # "keys" natively (pills, reachability dots, per-row test, tier-3
+    # editing). Workspace does not know this type, which is exactly why the
+    # table above stays: this is additive.
+    "provider_api_keys_panel": {
+        "name": "Provider API Keys (panel)",
+        "description": "Key state and vendor reachability, with per-row test "
+        "and (admin only) editing.",
+        "category": "Admin",
+        "type": "keys",
+        "endpoint": "keys",
+        "gridData": {"w": 30, "h": 14},
+        "data": {"dataKey": "rows"},
+        # No raw view: it would expose every value the tier returns.
+        "raw": False,
+        "params": [],
+    },
 }
 
 
@@ -96,11 +113,61 @@ def create_app(role: str, cred_file: str, auth_file: str) -> FastAPI:
         return JSONResponse({"result": result.result, "detail": result.detail})
 
     @app.put("/keys/{env_var}")
-    def put_key(env_var: str) -> Response:
-        # Phase 2 TODO: this route must be gated to the admin role (tier 3)
-        # before writes are implemented — see spec's "Phase 2 seam".
-        return JSONResponse(
-            {"detail": "editing is phase 2; not implemented"}, status_code=501
-        )
+    async def put_key(env_var: str, request: Request) -> Response:
+        # Deliberately NOT a Pydantic body model: FastAPI's 422 response
+        # echoes the offending input, which would print the secret. The body
+        # is parsed by hand and never reflected.
+        if env_var not in PROVIDERS:
+            return JSONResponse({"detail": "unknown provider"}, status_code=404)
+        if _tier(role, request) < 3:
+            return JSONResponse({"detail": "not permitted"}, status_code=403)
+        try:
+            payload = await request.json()
+            value = payload["value"]
+            if not isinstance(value, str):
+                raise ValueError
+        except Exception:
+            # No exception detail: the parsed body holds the secret.
+            return JSONResponse({"detail": "body must be {\"value\": string}"}, status_code=400)
+
+        # credentials.env is dotenv-with-compose-semantics (see
+        # app.credfile's module docstring): a value containing " #" is cut
+        # as an inline comment on the NEXT read, and leading/trailing
+        # whitespace is stripped. Writing one of those would leave this
+        # response's "set" status lying about what the container actually
+        # loads on restart, so reject rather than silently write something
+        # different from what the admin typed.
+        if parse_text(f"{env_var}={value}").get(env_var) != value:
+            return JSONResponse(
+                {
+                    "detail": "value would not round-trip through credentials.env "
+                    "(no leading/trailing whitespace, no ' #')"
+                },
+                status_code=400,
+            )
+
+        try:
+            set_value(cred_file, env_var, value)
+        except ValueError as e:
+            # Class name only, same reasoning as the OSError branch below.
+            # In practice the round-trip check above already rejects any
+            # value containing a line break (parse_text splits on the same
+            # separators set_value does), so this is defense in depth rather
+            # than a path this endpoint is expected to hit.
+            return JSONResponse(
+                {"detail": f"invalid value: {type(e).__name__}"}, status_code=400
+            )
+        except OSError as e:
+            # Class name only — the message could carry the path, and a
+            # traceback could carry the value.
+            return JSONResponse(
+                {"detail": f"write failed: {type(e).__name__}"}, status_code=500
+            )
+
+        # The running openbb-api cannot see this: OpenBB fills Credentials
+        # from os.environ, a container's environ is frozen at process start,
+        # and UserService is a singleton read once per process. Say so rather
+        # than letting the user think the change took effect.
+        return JSONResponse({"status": "set" if value else "empty", "restart_required": True})
 
     return app

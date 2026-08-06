@@ -93,10 +93,6 @@ class TestContract:
         names = [p["paramName"] for p in entry["params"]]
         assert names == ["run_tests"]
 
-    def test_put_returns_501(self, files):
-        r = client(files, "admin").put("/keys/FMP_API_KEY", headers=AUTH)
-        assert r.status_code == 501
-
     def test_missing_cred_file_still_200(self, files, tmp_path):
         _, auth = files
         c = TestClient(create_app(role="admin", cred_file=str(tmp_path / "x.env"), auth_file=auth))
@@ -148,3 +144,110 @@ class TestSingleProviderTest:
     def test_requires_auth(self, files):
         c = client(files, "admin")
         assert c.get("/keys/EODHD_API_KEY/test").status_code == 401
+
+
+class TestWriteKey:
+    def test_network_role_is_refused_even_from_the_tailnet(self, files):
+        c = client(files, "network")
+        r = c.put(
+            "/keys/FMP_API_KEY",
+            headers={**AUTH, "X-Forwarded-For": "100.100.100.100"},  # tier 2
+            json={"value": "nope"},
+        )
+        assert r.status_code == 403
+
+    def test_admin_writes_and_reports_restart_required(self, files):
+        cred, _ = files
+        c = client(files, "admin")
+        r = c.put("/keys/FMP_API_KEY", headers=AUTH, json={"value": "written123"})
+        assert r.status_code == 200
+        assert r.json() == {"status": "set", "restart_required": True}
+        assert "FMP_API_KEY=written123" in open(cred).read()
+
+    def test_response_never_echoes_the_value(self, files):
+        c = client(files, "admin")
+        r = c.put("/keys/FMP_API_KEY", headers=AUTH, json={"value": "supersecret999"})
+        assert "supersecret999" not in r.text
+
+    def test_a_rejected_write_never_echoes_the_value(self, files):
+        # FastAPI's 422 body echoes the offending input, so the value must not
+        # be validated by a Pydantic constraint. Send a wrong-typed value and
+        # assert the secret-shaped sibling never appears in the response.
+        c = client(files, "admin")
+        r = c.put("/keys/NOT_A_PROVIDER", headers=AUTH, json={"value": "supersecret999"})
+        assert r.status_code == 404
+        assert "supersecret999" not in r.text
+
+    def test_unknown_env_var_is_rejected(self, files):
+        cred, _ = files
+        c = client(files, "admin")
+        r = c.put("/keys/EVIL_VAR", headers=AUTH, json={"value": "x"})
+        assert r.status_code == 404
+        assert "EVIL_VAR" not in open(cred).read()
+
+    def test_empty_value_reports_empty(self, files):
+        c = client(files, "admin")
+        r = c.put("/keys/FMP_API_KEY", headers=AUTH, json={"value": ""})
+        assert r.json()["status"] == "empty"
+
+    def test_requires_auth(self, files):
+        c = client(files, "admin")
+        assert c.put("/keys/FMP_API_KEY", json={"value": "x"}).status_code == 401
+
+    # --- Round-trip safety (Task 4 hazard: parse_text does not round-trip
+    # every string -- see app/credfile.py's set_value docstring). Decision:
+    # reject with 400 rather than silently strip or accept, because a
+    # silent rewrite would make the "set" response lie about what the
+    # container loads on restart.
+
+    def test_value_with_inline_comment_marker_is_rejected(self, files):
+        cred, _ = files
+        c = client(files, "admin")
+        r = c.put("/keys/FMP_API_KEY", headers=AUTH, json={"value": "abc #not-a-comment"})
+        assert r.status_code == 400
+        assert "FMP_API_KEY=realkey99" in open(cred).read()
+
+    def test_value_with_leading_or_trailing_whitespace_is_rejected(self, files):
+        cred, _ = files
+        c = client(files, "admin")
+        r = c.put("/keys/FMP_API_KEY", headers=AUTH, json={"value": "  padded  "})
+        assert r.status_code == 400
+        assert "FMP_API_KEY=realkey99" in open(cred).read()
+
+    def test_rejected_roundtrip_value_never_echoes(self, files):
+        c = client(files, "admin")
+        r = c.put("/keys/FMP_API_KEY", headers=AUTH, json={"value": "supersecret999 #x"})
+        assert r.status_code == 400
+        assert "supersecret999" not in r.text
+
+    def test_value_starting_with_hash_round_trips_and_is_accepted(self, files):
+        # Leading '#' with no preceding whitespace is part of the value per
+        # parse_text's own rule, so it must NOT be rejected.
+        cred, _ = files
+        c = client(files, "admin")
+        r = c.put("/keys/FMP_API_KEY", headers=AUTH, json={"value": "#notacomment"})
+        assert r.status_code == 200
+        assert "FMP_API_KEY=#notacomment" in open(cred).read()
+
+    def test_line_break_that_reaches_set_value_is_rejected_safely(self, files, monkeypatch):
+        # Defense in depth: if the round-trip pre-check were ever bypassed
+        # (e.g. a future edge case not covered by parse_text), set_value's
+        # own line-break guard must still fail safely -- caught and turned
+        # into a 400, never a 500 with a traceback, and never echoing the
+        # value.
+        monkeypatch.setattr("app.server.parse_text", lambda text: {"FMP_API_KEY": "a\nb"})
+        c = client(files, "admin")
+        r = c.put("/keys/FMP_API_KEY", headers=AUTH, json={"value": "a\nb"})
+        assert r.status_code == 400
+        assert "a\nb" not in r.text
+
+
+class TestPanelWidget:
+    def test_widgets_json_offers_both_table_and_keys(self, files):
+        body = client(files, "admin").get("/widgets.json", headers=AUTH).json()
+        assert body["provider_api_keys"]["type"] == "table"
+        assert body["provider_api_keys_panel"]["type"] == "keys"
+        # Same data source; the panel is a second view, not a fork.
+        assert body["provider_api_keys_panel"]["endpoint"] == "keys"
+        # Raw view would be a one-click path to every value the tier exposes.
+        assert body["provider_api_keys_panel"].get("raw") is False
