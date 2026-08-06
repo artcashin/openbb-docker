@@ -12,9 +12,9 @@ from later chapters is.
 | v2.0.0 | Ep. 2 — The Borrowed Terminal | HTTP Basic auth on the API, Tailscale Funnel (port 443 only) |
 | v3.0.0 | Ep. 3 — (with BDOBB v3.0.0) | key-maint: the transport-tiered key status widget backend |
 | v6.0.0 | Ep. 6 — The Analyst | OpenBB MCP server (tool-discovery mode), agent deploy configs |
-| v8.0.0 | Ep. 8 — The Tape | EODHD provider extension + live-grid streaming service |
-| v9.0.0 | Ep. 9 — All the News That Fits, We Print | rss-ticker news wire joins the stack |
-| v10.0.0 | Ep. 10 — The Cache | kdb+ read-through cache (`provider="kdb"`) + cache-chart scroll demo |
+| v8.0.0 | Ep. 8 — All the News That Fits, We Print | rss-ticker news wire joins the stack |
+| v9.0.0 | Ep. 9 — The Tape | EODHD provider extension + live-grid streaming service |
+| v10.0.0 | Ep. 10 — The Cache | kdb+ read-through cache (`provider="kdb"`) + tick recording and a unified chart in `live-grid` |
 | v11.0.0 | Ep. 11 — The Shared Store | MinIO as its own tailnet node + ArcticDB (`provider="arcticdb"`) + `tick-lab` |
 | v11.1.0 | Ep. 11 — The Shared Store | `tick-lab`'s EODHD-through-the-API reference adapter — the per-minute 2023 comparison yfinance cannot serve |
 | v11.1.1 | Ep. 11 — The Shared Store | `tick-lab`'s in-process OpenBB reference adapter (`--reference eodhd-local`) — the same call made locally, and what it costs versus `eodhd-api` |
@@ -30,9 +30,8 @@ unchanged since Ep. 1:
   quantitative, and econometrics extensions) sharing that namespace, bound to
   loopback only.
 
-Everything else — `openbb-mcp`, `key-maint`, `live-grid`, `rss-ticker`,
-`cache-chart`, and `minio` as its own second tailnet node — arrived in the
-episodes below.
+Everything else — `openbb-mcp`, `key-maint`, `live-grid`, `rss-ticker`, and
+`minio` as its own second tailnet node — arrived in the episodes below.
 
 **Tailscale Serve is the only way in** — real HTTPS with a Let's Encrypt
 certificate at `https://openbb.<your-tailnet>.ts.net`, reachable from every
@@ -72,35 +71,75 @@ laptop, not in the image, and ArcticDB does publish native macOS arm64
 wheels. See [tick-lab/README.md](tick-lab/README.md) and
 [docs/arcticdb-minio-design.md](docs/arcticdb-minio-design.md).
 
-**New in v10.0.0 (Ep. 10):** the cache. The **openbb-kdb provider
-extension** (`provider="kdb"`) puts an in-memory kdb+ database in front of any
-other provider (`KDB_UPSTREAM`, default `eodhd` — any installed provider
-works): a request serves whatever bars it already holds and fetches only the
-date ranges it's missing. Verified live: a one-year chart, then the same
-request again, then widened to three years, came back `miss` → `hit` →
-`partial` with exactly one gap fetched. The cache is **memory-only**, on
-purpose — a restart means a cold cache, not a lost dataset. The published
-image carries the q runtime but no licence — deleted in the **builder stage**,
-so it is absent from every layer and not merely whited-out of the flattened
-filesystem, which is what `docker save` would still hand a puller. Bring your
-own `kc.lic` (drop it in `kdb-license/`, git-ignored, and point `QLIC` at the
-mount) — without one, or without a reachable q, the provider passes straight
-through to the upstream and reports `cache: "bypass"`, so the stack still
-works, just uncached (that pass-through latches for the process, so add a
-licence and restart the container). q runs as a child
-of the API container bound to **`127.0.0.1:5000`**, never `0.0.0.0` — every
-service here shares the tailscale network namespace, so a loopback bind
-reaches its siblings and no tailnet peer, while `0.0.0.0` would publish an
-unauthenticated q (which executes arbitrary q code) to the whole tailnet;
-`scripts/verify-isolation.sh` now checks port 5000 for exactly that. The
-**cache-chart** service makes it visible: a Workspace chart widget plus a
-standalone page whose scroll gesture shows only the missing range being
-fetched. Serve publishes it on :6906, tailnet-only, never funneled. See
-[openbb-kdb/README.md](openbb-kdb/README.md),
-[cache-chart/README.md](cache-chart/README.md) and
-[docs/kdb-cache-design.md](docs/kdb-cache-design.md).
+**New in v10.0.0 (Ep. 10):** the cache, tick recording, and one unified
+chart. The **openbb-kdb provider extension** (`provider="kdb"`) puts an
+in-memory kdb+ database in front of any other provider (`KDB_UPSTREAM`,
+default `eodhd` — any installed provider works): a request serves whatever
+bars it already holds and fetches only the date ranges it's missing.
+Verified live: a one-year chart, then the same request again, then widened
+to three years, came back `miss` → `hit` → `partial` with exactly one gap
+fetched. The cache is **memory-only**, on purpose — a restart means a cold
+cache, not a lost dataset.
 
-**New in v9.0.0 (Ep. 9):** the wire. The
+**This repo ships no KX software.** KX's licence does not permit
+redistributing their `q` binary, so it is not in the Dockerfile, not in the
+published image, and not on PyPI — you supply it. Two ways, tried in that
+order:
+
+- **Option A — drop your own q into `./kdb`** (see
+  [kdb/README.md](kdb/README.md)). It's mounted read-only at `/opt/kx`;
+  `openbb-api` spawns it bound to `127.0.0.1:5000` and every other service in
+  the stack reaches it over the shared tailscale network namespace — no new
+  port, nothing else to configure.
+- **Option B — run your own kdb container** and point `KDB_HOST` at it in
+  `credentials.env` (see `credentials.env.example` for the platform-specific
+  value — `host.docker.internal` on Docker Desktop, `172.17.0.1` on a Linux
+  host — and how to publish it to host loopback only).
+
+Bring your own `kc.lic` too (drop it in `kdb-license/`, git-ignored, and
+point `QLIC` at the mount) — without a reachable q, or without a licence, the
+provider passes straight through to the upstream and reports
+`cache: "bypass"`, so the stack still works, just uncached (a failed connect
+suppresses retries for 60 s so a q-less reader doesn't pay a doomed spawn or
+connect attempt per request — then it tries again, so mounting a licence or
+starting a container after the fact re-arms the cache within a minute).
+
+**q must bind `127.0.0.1`, never `0.0.0.0`** — every service in this stack
+shares the tailscale network namespace, so a loopback bind reaches every
+sibling and no tailnet peer, while `0.0.0.0` would publish an
+unauthenticated q (which executes arbitrary q code) to the whole tailnet.
+For option A that bind is this repo's own code and already correct. For
+**option B the reader's own image controls its bind** — get it wrong and
+either the connection fails (bind `127.0.0.1` *inside* a separate container
+and `-p` cannot reach it) or q ends up on the LAN (bind `0.0.0.0` and publish
+it beyond host loopback). `scripts/verify-isolation.sh`'s port-5000 check is
+what catches that mistake — run it after standing up your own kdb container.
+
+The shared q plumbing (`config.py`, `session.py`, `store.py`, `ranges.py`)
+lives in its own **`kdb-store`** distribution so it has exactly one
+implementation, used by both `openbb-kdb` and **`live-grid`**, which now
+*records* the tick stream it already receives, aggregates it in q (`xbar`),
+and serves a chart that joins those live bars to cached history at the point
+where the tick window begins — replacing the earlier standalone
+`cache-chart` service, now removed. Serve continues to publish `live-grid`
+on :6903, tailnet-only. See [openbb-kdb/README.md](openbb-kdb/README.md),
+[live-grid/README.md](live-grid/README.md),
+[kdb-store/README.md](kdb-store/README.md) and
+[docs/tick-chart-design.md](docs/tick-chart-design.md) (which supersedes
+[docs/kdb-cache-design.md](docs/kdb-cache-design.md) for anything
+chart-related).
+
+**New in v9.0.0 (Ep. 9):** the tape. The **openbb-eodhd provider
+extension** (`provider="eodhd"`: equity/ETF/crypto/forex historical, EOD +
+intraday, and fundamentals — symbols qualified invisibly, unknown fields
+passed through, SDK pinned to a commit) and the **live-grid** service — a
+Workspace `live_grid` backend streaming EODHD websocket prices with REST
+snapshot seeding, per-asset-class feeds, debounced rebuilds and ~4
+coalesced flushes/second. Serve publishes it on :6903, tailnet-only. See
+[live-grid/README.md](live-grid/README.md) and
+[openbb-eodhd/README.md](openbb-eodhd/README.md).
+
+**New in v8.0.0 (Ep. 8):** the wire. The
 **[rss-ticker](https://github.com/artcashin/rss-ticker)** news service joins
 the sidecar: it polls your RSS feeds (conditional GETs, jitter, backoff),
 dedupes into SQLite, streams new articles over a websocket, and serves a
@@ -111,16 +150,6 @@ Serve publishes it on :8088, tailnet-only, never funneled. Compose builds it
 straight from its repo; configure `rss-ticker-config/config.yaml` (from the
 example) and `rss-ticker.env` (admin key), then add the backend in Workspace
 or BDOBB with a **blank API key** — your Serve identity is the credential.
-
-**New in v8.0.0 (Ep. 8):** the tape. The **openbb-eodhd provider
-extension** (`provider="eodhd"`: equity/ETF/crypto/forex historical, EOD +
-intraday, and fundamentals — symbols qualified invisibly, unknown fields
-passed through, SDK pinned to a commit) and the **live-grid** service — a
-Workspace `live_grid` backend streaming EODHD websocket prices with REST
-snapshot seeding, per-asset-class feeds, debounced rebuilds and ~4
-coalesced flushes/second. Serve publishes it on :6903, tailnet-only. See
-[live-grid/README.md](live-grid/README.md) and
-[openbb-eodhd/README.md](openbb-eodhd/README.md).
 
 **New in v6.0.0 (Ep. 6, pairs with BDOBB v6.0.0):** the **OpenBB MCP
 server** — the analyst's hands. Same image, wrapping the same Platform
@@ -167,8 +196,12 @@ cp rss-ticker.env.example rss-ticker.env     # REQUIRED — admin key; chmod 600
 docker compose up -d --build
 
 # 3. Verify the front door (from any tailnet device)
-curl -u openbb:<password> https://openbb.<your-tailnet>.ts.net/widgets.json   # 200
-curl https://openbb.<your-tailnet>.ts.net/widgets.json                        # 401
+#    The lock is on the DATA routes. widgets.json is metadata and answers 200
+#    with or without credentials — OpenBB's Basic auth is a dependency of the
+#    /api/v1 router, and nothing else, so test it there.
+curl https://openbb.<your-tailnet>.ts.net/api/v1/equity/price/quote                        # 401
+curl -u openbb:<password> https://openbb.<your-tailnet>.ts.net/api/v1/equity/price/quote   # 422 — auth accepted, symbol required
+curl https://openbb.<your-tailnet>.ts.net/widgets.json                                     # 200 — metadata, by design
 
 # 4. Verify the walls (from a SECOND tailnet device)
 scripts/verify-isolation.sh openbb.<your-tailnet>.ts.net minio.<your-tailnet>.ts.net

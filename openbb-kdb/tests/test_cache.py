@@ -6,15 +6,16 @@ import pandas as pd
 import pytest
 
 from openbb_kdb.cache import ReadThroughCache, _to_frame, last_complete_boundary
-from openbb_kdb.config import KdbConfig
-from openbb_kdb.session import KdbUnavailable
+from kdb_store.config import KdbConfig
+from kdb_store.session import KdbUnavailable
 
 D = lambda s: datetime.fromisoformat(s)  # noqa: E731
 
 
 def cfg(**kw) -> KdbConfig:
-    base = dict(host="127.0.0.1", port=5000, embedded=True, memory_mb=1024,
-                watermark=0.75, upstream="eodhd", qhome="/opt/kx", qlic="/opt/kx")
+    base = dict(host="127.0.0.1", port=5000, may_spawn=True, memory_mb=1024,
+                watermark=0.75, upstream="eodhd", qhome="/opt/kx", qlic="/opt/kx",
+                local_qhome="/opt/kx")
     base.update(kw)
     return KdbConfig(**base)
 
@@ -706,7 +707,7 @@ def test_locks_are_bounded_and_loop_scoped():
 
 def test_interval_step_still_drives_adjacency():
     """Guard the assumption the boundary maths leans on."""
-    from openbb_kdb.ranges import interval_step
+    from kdb_store.ranges import interval_step
 
     assert interval_step("1d") == timedelta(days=1)
     assert interval_step("5m") == timedelta(minutes=5)

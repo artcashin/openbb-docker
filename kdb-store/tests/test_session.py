@@ -2,17 +2,19 @@
 
 import subprocess
 import threading
+import time
 
 import pytest
 
-import openbb_kdb.session as session
-from openbb_kdb.config import KdbConfig
-from openbb_kdb.session import KdbSession, KdbUnavailable
+import kdb_store.session as session
+from kdb_store.config import KdbConfig
+from kdb_store.session import KdbSession, KdbUnavailable
 
 
 def cfg(**kw) -> KdbConfig:
-    base = dict(host="127.0.0.1", port=5000, embedded=True, memory_mb=1024,
-                watermark=0.75, upstream="eodhd", qhome="/opt/kx", qlic="/opt/kx")
+    base = dict(host="127.0.0.1", port=5000, may_spawn=True, memory_mb=1024,
+                watermark=0.75, upstream="eodhd", qhome="/opt/kx", qlic="/opt/kx",
+                local_qhome="/opt/kx")
     base.update(kw)
     return KdbConfig(**base)
 
@@ -99,8 +101,8 @@ def test_respawns_after_death(monkeypatch):
 def test_external_server_is_never_spawned(monkeypatch):
     spawns = []
     monkeypatch.setattr(KdbSession, "_spawn", lambda self: spawns.append(1))
-    monkeypatch.setattr(KdbSession, "_connect", lambda self: FakeConn())
-    KdbSession(cfg(host="kdb.internal", embedded=False)).connection()
+    monkeypatch.setattr(KdbSession, "_connect", lambda self, host=None: FakeConn())
+    KdbSession(cfg(host="kdb.internal", may_spawn=False)).connection()
     assert spawns == []
 
 
@@ -129,6 +131,43 @@ def test_repeated_failure_is_not_retried_every_call(monkeypatch):
         with pytest.raises(KdbUnavailable):
             s.connection()
     assert len(attempts) == 1
+
+
+def test_a_session_that_failed_once_can_connect_later(monkeypatch):
+    """The give-up latch must EXPIRE, not last for the process lifetime.
+
+    On a cold `docker compose up`, live-grid's drain loop reaches q about
+    0.2s in -- before openbb-api, which owns the spawn, has bound :5000. That
+    single refused connect used to latch tick recording (and the tick half of
+    the chart) off permanently, recoverable only by restarting live-grid by
+    hand after something else warmed q. Within the interval the latch still
+    holds, so a hot caller never re-pays a doomed spawn; past it, a q that has
+    since come up is picked up on its own.
+    """
+    attempts = []
+    conn = FakeConn()
+
+    def refuse_once(self):
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise OSError("connection refused")
+        return conn
+
+    monkeypatch.setattr(KdbSession, "_spawn", lambda self: None)
+    monkeypatch.setattr(KdbSession, "_connect", refuse_once)
+    monkeypatch.setattr(session, "_RETRY_AFTER_S", 0.05)
+
+    s = KdbSession(cfg())
+    with pytest.raises(KdbUnavailable):
+        s.connection()
+    with pytest.raises(KdbUnavailable):  # inside the interval: still suppressed
+        s.connection()
+    assert len(attempts) == 1, "the latch must suppress a retry inside the interval"
+
+    time.sleep(0.06)
+    assert s.connection() is conn, "q came up later; the session must find it"
+    assert len(attempts) == 2
+    s.close()
 
 
 def test_q_command_binds_loopback_and_sets_workspace():
@@ -287,3 +326,93 @@ def test_close_does_not_kill_a_process_that_exits_on_terminate():
     assert fake_proc.terminated is True
     assert fake_proc.wait_calls == 1
     assert fake_proc.killed is False
+
+
+def test_chain_spawns_first_when_a_local_q_is_available(monkeypatch):
+    calls = []
+    monkeypatch.setattr(KdbSession, "_spawn", lambda self: calls.append("spawn"))
+    monkeypatch.setattr(KdbSession, "_connect_with_retry", lambda self: FakeConn())
+    monkeypatch.setattr(KdbSession, "_connect", lambda self, host=None: FakeConn())
+    s = KdbSession(cfg(may_spawn=True, host="elsewhere"))
+    s.connection()
+    assert calls == ["spawn"]
+    assert s.endpoint == "spawned"
+
+
+def test_chain_tries_loopback_before_the_external_host(monkeypatch):
+    """live-grid picks up the q that openbb-api spawned in the shared namespace."""
+    tried = []
+
+    def fake_connect(self, host=None):
+        tried.append(host)
+        return FakeConn()
+
+    monkeypatch.setattr(KdbSession, "_connect", fake_connect)
+    s = KdbSession(cfg(may_spawn=False, host="host.docker.internal"))
+    s.connection()
+    assert tried == ["127.0.0.1"]
+    assert s.endpoint == "loopback"
+
+
+def test_chain_falls_through_to_the_external_host(monkeypatch):
+    tried = []
+
+    def fake_connect(self, host=None):
+        tried.append(host)
+        if host == "127.0.0.1":
+            raise OSError("connection refused")
+        return FakeConn()
+
+    monkeypatch.setattr(KdbSession, "_connect", fake_connect)
+    s = KdbSession(cfg(may_spawn=False, host="host.docker.internal"))
+    s.connection()
+    assert tried == ["127.0.0.1", "host.docker.internal"]
+    assert s.endpoint == "host.docker.internal:5000"
+
+
+def test_a_failed_spawn_still_falls_through_to_the_external_host(monkeypatch):
+    """A broken local q must not cost the operator their external one."""
+    tried = []
+
+    def boom(self):
+        raise OSError("q exited immediately")
+
+    def fake_connect(self, host=None):
+        tried.append(host)
+        if host == "127.0.0.1":
+            raise OSError("connection refused")
+        return FakeConn()
+
+    monkeypatch.setattr(KdbSession, "_spawn", boom)
+    monkeypatch.setattr(KdbSession, "_connect", fake_connect)
+    s = KdbSession(cfg(may_spawn=True, host="host.docker.internal"))
+    s.connection()
+    assert s.endpoint == "host.docker.internal:5000"
+
+
+def test_no_local_q_and_no_host_raises(monkeypatch):
+    def fake_connect(self, host=None):
+        raise OSError("connection refused")
+
+    monkeypatch.setattr(KdbSession, "_connect", fake_connect)
+    s = KdbSession(cfg(may_spawn=False, host=None))
+    with pytest.raises(KdbUnavailable):
+        s.connection()
+
+
+def test_a_failed_spawn_leaves_no_orphan_process(monkeypatch):
+    stopped = []
+    monkeypatch.setattr(KdbSession, "_spawn", lambda self: None)
+    monkeypatch.setattr(KdbSession, "_stop_proc", lambda self: stopped.append(1))
+    monkeypatch.setattr(
+        KdbSession, "_connect_with_retry",
+        lambda self: (_ for _ in ()).throw(OSError("no listener")),
+    )
+    monkeypatch.setattr(
+        KdbSession, "_connect",
+        lambda self, host=None: (_ for _ in ()).throw(OSError("refused")),
+    )
+    s = KdbSession(cfg(may_spawn=True, host=None))
+    with pytest.raises(KdbUnavailable):
+        s.connection()
+    assert stopped, "a q we started must never be left running unsupervised"

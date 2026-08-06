@@ -6,7 +6,7 @@ default.
 Two settings are deliberately outside that chain and take NO credential:
 
 - ``qhome`` is read from ``QHOME`` (else ``/opt/kx``) exactly once per process,
-  before ``import pykx`` can rewrite the variable -- see ``_resolve_qhome``. A
+  before ``import pykx`` can rewrite the variable -- see ``_qhome_once``. A
   per-request credential could not be honoured without reintroducing the
   ambiguity that resolution exists to remove.
 - ``qlic`` is read from ``QLIC``, falling back to ``qhome``. It points at the
@@ -18,12 +18,12 @@ import os
 from dataclasses import dataclass
 
 _DEFAULTS = {
-    "host": "127.0.0.1",
     "port": 5000,
     "memory_mb": 8192,
     "watermark": 0.75,
     "upstream": "eodhd",
     "qhome": "/opt/kx",
+    "local_qhome": "/opt/kx",
 }
 
 # q is given headroom above the cache budget. Crossing -w kills the process
@@ -36,29 +36,50 @@ _WORKSPACE_HEADROOM = 1.25
 # depending on whether PyKX had loaded in between -- and the second answer is
 # the wrong one: it points at PyKX's lib, not the operator's kdb-x install.
 # The first resolution therefore wins for the lifetime of the process.
+#
+# `_qhome` holds that resolution, but a bare `None` cannot double as both "not
+# decided yet" and "decided: unset" -- so `_qhome_decided` tracks the decision
+# itself, separately from its (possibly absent) result.
 _qhome: str | None = None
+_qhome_decided = False
 
 
-def _resolve_qhome() -> str:
-    """QHOME as it read BEFORE PyKX could rewrite it. Decided once per process."""
-    global _qhome  # noqa: PLW0603
-    if _qhome is None:
-        _qhome = os.getenv("QHOME") or _DEFAULTS["qhome"]
+def _qhome_once() -> str | None:
+    """QHOME as it read BEFORE PyKX could rewrite it, or None if unset.
+
+    Decided once per process; callers apply whatever default suits their
+    field.
+    """
+    global _qhome, _qhome_decided  # noqa: PLW0603
+    if not _qhome_decided:
+        _qhome = os.getenv("QHOME")
+        _qhome_decided = True
     return _qhome
+
+
+def has_local_q(local_qhome: str) -> bool:
+    """True when `local_qhome` holds a q we could actually execute.
+
+    The operator mounts their own q here; this repo ships none, because the
+    licence does not permit redistributing KX's binary.
+    """
+    candidate = os.path.join(local_qhome, "bin", "q")
+    return os.path.isfile(candidate) and os.access(candidate, os.X_OK)
 
 
 @dataclass(frozen=True)
 class KdbConfig:
     """Resolved kdb+ settings."""
 
-    host: str
+    host: str | None
     port: int
-    embedded: bool
+    may_spawn: bool
     memory_mb: int
     watermark: float
     upstream: str
     qhome: str
     qlic: str
+    local_qhome: str
 
     @property
     def q_workspace_mb(self) -> int:
@@ -94,9 +115,8 @@ def _pick(key: str, env: str, credentials: dict | None):
 
 def resolve_config(credentials: dict | None = None) -> KdbConfig:
     """Resolve configuration from credentials, environment, then defaults."""
-    host = _pick("host", "KDB_HOST", credentials)
-    if host is None:
-        host = _DEFAULTS["host"]
+    # No KDB_HOST means there is simply no external kdb to fall back to.
+    host = _pick("host", "KDB_HOST", credentials) or None
 
     raw_port = _pick("port", "KDB_PORT", credentials)
     if raw_port is None:
@@ -108,13 +128,22 @@ def resolve_config(credentials: dict | None = None) -> KdbConfig:
     if not 1 <= port <= 65535:
         raise ValueError(f"KDB_PORT {port} out of range (1-65535).")
 
+    # Where the operator mounted their own q. QHOME is accepted as a fallback
+    # for anyone carrying the older variable, but it is read ONCE per process
+    # (see _qhome_once) because `import pykx` rewrites QHOME in place.
+    local_qhome = (
+        _pick("local_qhome", "KDB_LOCAL_QHOME", credentials)
+        or _qhome_once()
+        or _DEFAULTS["local_qhome"]
+    )
+
     raw_embedded = _pick("embedded", "KDB_EMBEDDED", credentials)
     if raw_embedded is None:
-        # Spawning only makes sense for a q we own -- a remote host is the
-        # user's own server.
-        embedded = host in ("127.0.0.1", "localhost", "::1")
+        # Spawn only if the operator actually supplied a q. Otherwise the
+        # chain falls through to KDB_HOST.
+        may_spawn = has_local_q(local_qhome)
     else:
-        embedded = str(raw_embedded).strip().lower() in ("1", "true", "yes", "on")
+        may_spawn = str(raw_embedded).strip().lower() in ("1", "true", "yes", "on")
 
     raw_mem = _pick("memory_mb", "KDB_MEMORY_MB", credentials)
     if raw_mem is None:
@@ -139,7 +168,7 @@ def resolve_config(credentials: dict | None = None) -> KdbConfig:
     upstream = _pick("upstream", "KDB_UPSTREAM", credentials)
     if upstream is None:
         upstream = _DEFAULTS["upstream"]
-    qhome = _resolve_qhome()
+    qhome = _qhome_once() or _DEFAULTS["qhome"]
     # A licence dir separate from QHOME lets the operator bind-mount kc.lic
     # without it living inside qhome (which the Dockerfile strips clean).
     # Falling back to qhome preserves today's behaviour for anyone who does
@@ -147,6 +176,7 @@ def resolve_config(credentials: dict | None = None) -> KdbConfig:
     qlic = os.getenv("QLIC") or qhome
 
     return KdbConfig(
-        host=host, port=port, embedded=embedded, memory_mb=memory_mb,
+        host=host, port=port, may_spawn=may_spawn, memory_mb=memory_mb,
         watermark=watermark, upstream=str(upstream), qhome=qhome, qlic=qlic,
+        local_qhome=local_qhome,
     )

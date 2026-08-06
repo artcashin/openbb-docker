@@ -38,8 +38,8 @@ import re
 import time
 from datetime import datetime, timedelta
 
-from openbb_kdb.config import KdbConfig
-from openbb_kdb.ranges import coalesce, interval_step, subtract, trim_tail
+from kdb_store.config import KdbConfig
+from kdb_store.ranges import coalesce, interval_step, subtract, trim_tail
 from openbb_kdb.upstream import fetch_gap
 
 logger = logging.getLogger(__name__)

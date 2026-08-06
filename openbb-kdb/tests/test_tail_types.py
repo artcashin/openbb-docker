@@ -28,8 +28,8 @@ import pandas as pd
 import pytest
 
 from openbb_kdb.cache import ReadThroughCache
-from openbb_kdb.config import KdbConfig
-from openbb_kdb.store import KdbStore
+from kdb_store.config import KdbConfig
+from kdb_store.store import KdbStore
 
 D = lambda s: datetime.fromisoformat(s)  # noqa: E731
 
@@ -165,8 +165,9 @@ class OwnerThreadSession:
 
 
 def cfg(**kw) -> KdbConfig:
-    base = dict(host="127.0.0.1", port=5000, embedded=True, memory_mb=1024,
-                watermark=0.75, upstream="yfinance", qhome="/opt/kx", qlic="/opt/kx")
+    base = dict(host="127.0.0.1", port=5000, may_spawn=True, memory_mb=1024,
+                watermark=0.75, upstream="yfinance", qhome="/opt/kx", qlic="/opt/kx",
+                local_qhome="/opt/kx")
     base.update(kw)
     return KdbConfig(**base)
 

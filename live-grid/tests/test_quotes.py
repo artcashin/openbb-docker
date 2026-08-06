@@ -2,6 +2,8 @@
 
 from unittest.mock import MagicMock
 
+import pytest
+
 from app.quotes import QuoteTable
 
 
@@ -110,3 +112,137 @@ class TestApplyTick:
         q.apply_tick("crypto", {"s": "BTC-USD", "p": "50000.5", "q": "0.01"})
         assert q.rows["BTC-USD"]["price"] == 50000.5
         assert q.rows["BTC-USD"]["last_size"] == 0.01
+
+
+def test_apply_tick_reports_the_tick_to_the_recorder():
+    seen = []
+    table = QuoteTable(on_tick=lambda *a: seen.append(a))
+    table.apply_tick("us", {"s": "AAPL", "p": 100.5, "q": 3, "t": 1749565200000})
+    assert len(seen) == 1
+    sym, price, size, stamp = seen[0]
+    assert (sym, price, size) == ("AAPL", 100.5, 3)
+
+
+def test_forex_ticks_are_recorded_at_the_mid():
+    seen = []
+    table = QuoteTable(on_tick=lambda *a: seen.append(a))
+    table.apply_tick("forex", {"s": "EURUSD", "b": 1.08, "a": 1.10, "t": 1749565200000})
+    assert seen[0][1] == pytest.approx(1.09)
+
+
+def test_a_rejected_tick_is_not_recorded():
+    seen = []
+    table = QuoteTable(on_tick=lambda *a: seen.append(a))
+    table.apply_tick("us", {"s": "AAPL"})  # no price
+    assert seen == []
+
+
+def test_a_failing_recorder_never_breaks_the_grid():
+    """Episode 8's feature must survive anything the cache does."""
+    def boom(*_):
+        raise RuntimeError("kdb exploded")
+
+    table = QuoteTable(on_tick=boom)
+    assert table.apply_tick("us", {"s": "AAPL", "p": 100.5, "q": 3}) == "AAPL"
+    assert table.rows["AAPL"]["price"] == 100.5
+
+
+def test_seed_reuses_a_fresh_cached_snapshot_instead_of_calling_the_vendor():
+    """A debounced rebuild must not re-hit the vendor for a symbol we just fetched."""
+    class Cache:
+        def read_snapshot(self, symbol, max_age):
+            return {"close": 100.0, "volume": 5.0}
+
+        def write_snapshot(self, symbol, payload):
+            raise AssertionError("should not write when the cache was fresh")
+
+    calls = []
+
+    class Client:
+        def get_live_stock_prices(self, ticker):
+            calls.append(ticker)
+            return {"close": 1.0}
+
+    table = QuoteTable(snapshots=Cache())
+    table.seed(["AAPL"], Client())
+    assert calls == []
+
+
+def test_seed_falls_back_to_the_vendor_on_a_cache_miss():
+    class Cache:
+        def read_snapshot(self, symbol, max_age):
+            return None
+
+        def write_snapshot(self, symbol, payload):
+            self.written = payload
+
+    calls = []
+
+    class Client:
+        def get_live_stock_prices(self, ticker):
+            calls.append(ticker)
+            return {"close": 1.0}
+
+    table = QuoteTable(snapshots=Cache())
+    table.seed(["AAPL"], Client())
+    assert len(calls) == 1
+
+
+def test_seed_works_with_no_snapshot_cache_at_all():
+    calls = []
+
+    class Client:
+        def get_live_stock_prices(self, ticker):
+            calls.append(ticker)
+            return {"close": 1.0}
+
+    QuoteTable().seed(["AAPL"], Client())
+    assert len(calls) == 1
+
+
+def test_seed_falls_back_to_the_vendor_when_the_cache_raises_on_read():
+    """A regression moving the read out of its try (or narrowing the except)
+    must not take seeding down with it -- kdb+ being unreachable is exactly
+    when the vendor fallback matters most."""
+    class Cache:
+        def read_snapshot(self, symbol, max_age):
+            raise RuntimeError("kdb unreachable")
+
+        def write_snapshot(self, symbol, payload):
+            pass
+
+    calls = []
+
+    class Client:
+        def get_live_stock_prices(self, ticker):
+            calls.append(ticker)
+            return {"close": 1.0}
+
+    table = QuoteTable(snapshots=Cache())
+    rows = table.seed(["AAPL"], Client())
+    assert len(calls) == 1
+    assert rows[0]["price"] == 1.0
+
+
+def test_seed_falls_back_to_the_vendor_when_the_cache_raises_on_write():
+    """A regression moving the write outside its try -- e.g. hoisting it past
+    the vendor call -- must still leave seed() returning the vendor's row
+    without raising; live-grid ships with no kdb+ at all in some deployments."""
+    class Cache:
+        def read_snapshot(self, symbol, max_age):
+            return None
+
+        def write_snapshot(self, symbol, payload):
+            raise RuntimeError("kdb unreachable")
+
+    calls = []
+
+    class Client:
+        def get_live_stock_prices(self, ticker):
+            calls.append(ticker)
+            return {"close": 1.0}
+
+    table = QuoteTable(snapshots=Cache())
+    rows = table.seed(["AAPL"], Client())
+    assert len(calls) == 1
+    assert rows[0]["price"] == 1.0

@@ -48,9 +48,9 @@ def _cache(credentials: dict | None):
     """
     global _SESSION, _CACHE  # noqa: PLW0603
     from openbb_kdb.cache import ReadThroughCache
-    from openbb_kdb.config import resolve_config
-    from openbb_kdb.session import KdbSession
-    from openbb_kdb.store import KdbStore
+    from kdb_store.config import resolve_config
+    from kdb_store.session import KdbSession
+    from kdb_store.store import KdbStore
 
     if _CACHE is None:
         with _LOCK:

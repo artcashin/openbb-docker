@@ -34,7 +34,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
-      - name: Test live-grid (all mocked, no key)
+      - name: Install kdb-store (live-grid's tick recorder depends on it)
+        run: pip install -e ./kdb-store
+      - name: Test live-grid (all mocked, no key or kdb+ needed)
         working-directory: live-grid
         run: |
           pip install -e .[dev]
@@ -56,19 +58,21 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
+      - name: Install kdb-store (openbb-kdb depends on it)
+        run: pip install -e ./kdb-store
       - name: Test the kdb+ read-through cache provider (fake q connection, no license)
         working-directory: openbb-kdb
         run: |
           pip install -e .[dev]
           pytest -q
-  cache-chart:
+  kdb-store:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
-      - name: Test cache-chart (mocked HTTP, no key)
-        working-directory: cache-chart
+      - name: Test kdb-store (fake q connection, no license, no network)
+        working-directory: kdb-store
         run: |
           pip install -e .[dev]
           pytest -q
@@ -108,6 +112,12 @@ jobs:
         run: |
           pip install pytest
           pytest tests -q
+  # The image ships no KX software: the Dockerfile builds from
+  # python:3.12-slim and public PyPI packages only. KX's licence does not
+  # permit this repo's owner to redistribute their q binary, so the operator
+  # supplies their own at runtime (mounted, or via an external kdb host) --
+  # see kdb/README.md. Nothing private is needed to build this image, so
+  # build-smoke runs unconditionally like every other job.
   build-smoke:
     runs-on: ubuntu-latest
     steps:
@@ -124,8 +134,20 @@ jobs:
             [ "$code" = "401" -o "$code" = "200" ] && break
             sleep 5
           done
-      - name: Auth is enforced (401 without, 200 with)
+      - name: Auth is enforced on the command endpoints (401 without, not-401 with)
         run: |
-          test "$(docker exec api curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:6900/widgets.json)" = "401"
+          # OpenBB's Basic auth hangs off the get_user_settings dependency, so it
+          # guards /api/v1/* only. /widgets.json, /apps.json and /openapi.json are
+          # metadata endpoints and answer 200 unauthenticated -- assert against a
+          # command endpoint, which is what actually carries data.
+          probe() { docker exec api curl -s -o /dev/null -w '%{http_code}' "$@"; }
+          ep=http://127.0.0.1:6900/api/v1/equity/price/quote
+          test "$(probe "$ep")" = "401"
+          test "$(probe -u ci:WRONG "$ep")" = "401"
+          # 422: credentials accepted, request reached validation (symbol is
+          # required). Keeps the check free of any outbound provider call.
+          test "$(probe -u ci:ci-secret "$ep")" = "422"
+      - name: The widget manifest is served
+        run: |
           count=$(docker exec api curl -fsS -u ci:ci-secret http://127.0.0.1:6900/widgets.json | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')
           echo "widgets: $count"; test "$count" -gt 50

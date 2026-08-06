@@ -3323,31 +3323,19 @@ git fetch origin && git rebase ep10-kdb-cache
 Resolve conflicts in `Dockerfile`, `docker-compose.yml` and `openbb-kdb/pyproject.toml` — Ep. 10's `kdb-store` split touches the last of these. Re-run Step 1 after rebasing.
 
 
-- [ ] **Step 4: Verify the kdb-x pin and that the bundled q actually executes**
+- [ ] **Step 4: (obsolete — no longer applicable)**
 
-**Post-rebase gate.** Both of the things checked here belong to **Ep. 10, not this chapter** — Ep. 11 deliberately adds neither, and must not re-add them. They arrive with the rebase in Step 3, and a `Dockerfile` or `ci.yml` conflict there could silently drop either. This chapter's `platform: linux/amd64` pin is the case that makes a wrong-architecture q certain rather than merely possible, so Ep. 11 is where the loss would hurt — which is why it is worth one grep here even though the code is Ep. 10's. See the kdb-x bullet in Global Constraints.
+This step used to verify that the `kdbx` builder stage was pinned to a
+multi-arch tag and that the bundled `q` executed, because Ep. 11's
+`platform: linux/amd64` pin made a wrong-architecture q certain.
 
-Check after the rebase, not before:
+**Ep. 10's final form removed the kdb-x stage entirely.** The image now ships
+**no KX software at all** — KX's licence does not permit redistributing their
+q binary, so the operator supplies their own at runtime. There is no bundled
+q left to check, and grepping for a `kdb-x` pin would fail against a Dockerfile
+that correctly no longer has one.
 
-```bash
-grep -q 'FROM ghcr.io/artcashin/kdb-x:1.0 AS kdbx' Dockerfile \
-  || { echo 'FAIL: kdbx stage is not pinned to :1.0'; exit 1; }
-grep -q 'e_machine' .github/workflows/ci.yml \
-  || { echo 'FAIL: the build-smoke q architecture check was lost in the rebase'; exit 1; }
-```
-
-Then prove it on the real artifact — this image is what gets tagged, and it is built `--platform linux/amd64`, the exact case that broke:
-
-```bash
-docker build --platform linux/amd64 -t openbb-local:11.0.0 .
-docker run --rm --platform linux/amd64 --entrypoint python3 openbb-local:11.0.0 \
-  -c 'import os,sys; m=os.uname().machine; want={"x86_64":0x3e,"aarch64":0xb7}[m]; d=open("/opt/kx/bin/q","rb").read(20); got=d[18]|(d[19]<<8); print(f"image={m} q e_machine=0x{got:x} want=0x{want:x}"); sys.exit(got!=want)'
-docker run --rm --platform linux/amd64 --entrypoint sh openbb-local:11.0.0 \
-  -c '/opt/kx/bin/q -e 0 </dev/null 2>&1' | grep -q 'license error' \
-  || { echo 'FAIL: bundled q did not execute'; exit 1; }
-```
-
-Expected: `image=x86_64 q e_machine=0x3e want=0x3e`, then a silent pass. `kc.lic` is deliberately absent from the image, so kdb+'s own `license error: no license loaded` is what a *working* binary prints — it proves the ELF loaded and ran. A wrong-arch binary never reaches that point: the kernel refuses the ELF and `sh` reports `not found`. **Do not tag on a failure** — a mismatched q means `provider="kdb"` silently degrades to pass-through in the released image.
+Nothing to do here. Step 2's build already asserts the providers register.
 
 - [ ] **Step 5: Tag**
 

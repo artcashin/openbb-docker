@@ -11,13 +11,27 @@ door opens.**
 
 From v2.0.0 the compose file refuses to start the API without
 `api-auth.env` — HTTP Basic auth with your username/password. Verify it
-works tailnet-only *before* touching Funnel:
+works tailnet-only *before* touching Funnel. Auth hangs off the
+`get_user_settings` dependency, which only guards `/api/v1/*` — `widgets.json`
+is the unauthenticated widget manifest, so the 401 check has to go against a
+command endpoint:
+
+Test it on a **data** route. OpenBB wires Basic auth as a FastAPI dependency
+of the `/api/v1` router, so that is the only thing it guards: `/widgets.json`,
+`/docs` and `/openapi.json` are metadata and answer 200 to anyone who can
+reach the port. That is by design upstream, not a misconfiguration here — but
+it does mean a check against `widgets.json` proves nothing about the lock.
 
 ```bash
-curl -s -o /dev/null -w '%{http_code}\n' https://openbb.<your-tailnet>.ts.net/widgets.json
+curl -s -o /dev/null -w '%{http_code}\n' https://openbb.<your-tailnet>.ts.net/api/v1/equity/price/quote
 # -> 401
-curl -s -o /dev/null -w '%{http_code}\n' -u openbb:<password> https://openbb.<your-tailnet>.ts.net/widgets.json
-# -> 200
+curl -s -o /dev/null -w '%{http_code}\n' -u openbb:<password> https://openbb.<your-tailnet>.ts.net/api/v1/equity/price/quote
+# -> 422   (credentials accepted; the request then fails validation because
+#           `symbol` is required — which is exactly what you want to see, and
+#           costs no provider quota)
+
+curl -s -o /dev/null -w '%{http_code}\n' https://openbb.<your-tailnet>.ts.net/widgets.json
+# -> 200   metadata, unauthenticated by design
 ```
 
 ## 2. Permit Funnel in the tailnet policy
@@ -46,12 +60,26 @@ tailnet-only.
 
 ## 4. Verify from OFF the tailnet
 
-From a device that is not on your tailnet (a phone on cellular works):
+From a device that is not on your tailnet (a phone on cellular works). As in
+step 1, `widgets.json` is unauthenticated metadata; the auth check needs a
+command endpoint:
 
 ```bash
-curl -s -o /dev/null -w '%{http_code}\n' https://openbb.<your-tailnet>.ts.net/widgets.json   # 401
-curl -s -o /dev/null -w '%{http_code}\n' -u openbb:<password> https://openbb.<your-tailnet>.ts.net/widgets.json  # 200
+curl -s -o /dev/null -w '%{http_code}\n' https://openbb.<your-tailnet>.ts.net/api/v1/equity/price/quote   # 401
+curl -s -o /dev/null -w '%{http_code}\n' -u openbb:<password> https://openbb.<your-tailnet>.ts.net/api/v1/equity/price/quote  # 422
 ```
+
+**Know what you have just published.** Funnel puts port 443 on the public
+internet, and `/widgets.json`, `/apps.json` and `/openapi.json` answer without
+credentials — so the widget catalogue, every endpoint path and every parameter
+schema is now readable by anyone, and will be crawled. No market data leaks:
+the `/api/v1` routes above are the ones that carry it, and they are locked.
+
+If that metadata is more than you want to publish, do not funnel this port —
+keep it tailnet-only and reach it over Tailscale, or put a reverse proxy in
+front that demands the same credentials on every path. OpenBB Workspace sends
+its `Authorization` header on every request to the backend, so a proxy that
+locks the metadata routes does not break the pro.openbb.co connection.
 
 ## Connecting OpenBB Workspace (pro.openbb.co)
 

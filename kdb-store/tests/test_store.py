@@ -1,11 +1,24 @@
 """Store: q statement construction and eviction policy, against a fake connection."""
 
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 
-from openbb_kdb.store import _INIT_SCHEMA, _PARAM_PREFIX, KdbStore
+from kdb_store.store import _INIT_SCHEMA, _PARAM_PREFIX, KdbStore
 
 D = lambda s: datetime.fromisoformat(s)  # noqa: E731
+
+
+def _ticks_frame(rows: int = 3):
+    """A trades-shaped batch."""
+    import pandas as pd
+
+    base = D("2025-06-10T14:00:00")
+    return pd.DataFrame({
+        "time": [base + timedelta(seconds=i) for i in range(rows)],
+        "sym": ["AAPL"] * rows,
+        "price": [100.0 + i for i in range(rows)],
+        "size": [1.0] * rows,
+    })
 
 
 class FakeConn:
@@ -240,6 +253,9 @@ def exercise_every_statement(store):
     store.drop("AAPL", "1d")
     store.memory()
     store.evict_until_below(10**9)
+    store.aggregate_frame("AAPL", "1m", D("2024-01-01"), D("2024-01-02"))
+    store.write_snapshot("AAPL", {"close": 100.0, "volume": 10.0})
+    store.read_snapshot("AAPL", 60.0)
 
 
 def test_every_parameterised_statement_is_a_lambda():
@@ -332,3 +348,131 @@ def test_every_q_call_is_marshalled_onto_the_session_owner_thread():
     session = StrictSession(conn)
     exercise_every_statement(KdbStore(session))
     assert session.runs >= 8
+
+
+def test_schema_init_creates_the_trades_table():
+    s, conn = store_with()
+    s.write_ticks(_ticks_frame())
+    joined = " ".join(conn.queries)
+    assert "trades" in joined
+
+
+def test_write_ticks_sends_one_batch_not_one_insert_per_row():
+    """Per-tick IPC cannot keep up with a live feed."""
+    s, conn = store_with()
+    n = s.write_ticks(_ticks_frame(rows=50))
+    assert n == 50
+    inserts = [q for q in conn.queries if "insert" in q]
+    assert len(inserts) == 1, f"expected one batched insert, got {len(inserts)}"
+
+
+def test_prune_ticks_deletes_below_the_cutoff_and_collects():
+    s, conn = store_with({"count trades": 3})
+    s.prune_ticks(D("2025-06-10T14:00:00"))
+    joined = " ".join(conn.queries)
+    assert "delete" in joined and "trades" in joined
+    assert any(".Q.gc" in q for q in conn.queries)
+
+
+def test_tick_span_returns_none_when_no_ticks():
+    s, _ = store_with({"select min time": None})
+    assert s.tick_span("NOPE") is None
+
+
+def test_tick_span_query_guards_the_empty_case_in_q_not_python():
+    """Pins the presence of the `0 = count ...` guard in the query tick_span
+    sends, so a regression can't silently drop it.
+
+    What this proves: the guard clause is still in the outgoing q statement.
+    What this does NOT prove: that the guard actually prevents the bug it was
+    written for. FakeConn matches replies by substring and always hands back
+    `None` for an unmatched query, so this suite passes identically whether or
+    not the guard is present in a query whose result is never inspected here --
+    it can only catch the guard's absence, not its effect. The real defect
+    lived in PyKX: `.pd()` reinterprets a q null timestamp's raw int64 as
+    nanoseconds since the q epoch and returns a real-looking (wrong) Timestamp
+    instead of NaT, so `pd.isna()` never fired. Only a real q process can show
+    that the guard actually suppresses that -- see kdb-store/scripts/tick_check.py.
+    """
+    s, conn = store_with()
+    s.tick_span("AAPL")
+    assert any("0 = count" in q for q in conn.queries), (
+        "tick_span's query must guard the zero-row case in q -- an ungrouped "
+        "aggregate over zero rows returns a row of nulls that PyKX silently "
+        "mis-converts instead of an empty/absent result"
+    )
+
+
+def test_lambda_parameters_in_tick_queries_never_shadow_a_column():
+    """A q lambda parameter matching a column name silently returns wrong rows."""
+    import re
+
+    s, conn = store_with()
+    s.write_ticks(_ticks_frame())
+    s.prune_ticks(D("2025-06-10T14:00:00"))
+    s.tick_span("AAPL")
+    columns = {"time", "sym", "price", "size", "t", "open", "high", "low", "close", "volume"}
+    for query in conn.queries:
+        for params in re.findall(r"\{\[([^\]]*)\]", query):
+            for name in (p.strip() for p in params.split(";") if p.strip()):
+                assert name not in columns, f"parameter {name!r} shadows a column in: {query}"
+                assert name.startswith("qw"), f"parameter {name!r} lacks the qw prefix"
+
+
+def test_write_snapshot_stores_a_fetch_time():
+    s, conn = store_with()
+    s.write_snapshot("AAPL", {"close": 100.0, "volume": 10.0})
+    joined = " ".join(conn.queries)
+    assert "snap" in joined
+
+
+def test_read_snapshot_returns_none_when_absent():
+    s, _ = store_with({"select from snap": None})
+    assert s.read_snapshot("NOPE", 60.0) is None
+
+
+def test_read_snapshot_ttl_is_judged_against_utc_not_local_wall_clock():
+    """`fetched` comes back from q's `.z.p`, which is UTC -- but PyKX hands it
+    to Python as a tz-NAIVE pandas Timestamp. Comparing that against local
+    wall-clock time (`pd.Timestamp.now()` with no tz) mixes clocks by however
+    many hours the host is offset from UTC: on UTC-5 "age" goes negative and
+    the cache never expires (stale data served as fresh, the dangerous
+    direction); on UTC+1 "age" is already past any TTL the instant the row is
+    written (the cache never hits at all).
+
+    The host running this test may itself sit at UTC+0, where the bug happens
+    not to manifest -- so the local TZ is pinned to America/New_York (a large,
+    real offset) for the duration of the test, making the result the same
+    regardless of what timezone the test machine actually runs in.
+    """
+    import os
+    import time as time_module
+
+    import pandas as pd
+
+    old_tz = os.environ.get("TZ")
+    os.environ["TZ"] = "America/New_York"
+    time_module.tzset()
+    try:
+        elapsed = 30.0
+        # A UTC instant `elapsed` seconds ago, stored tz-naive -- exactly the
+        # shape PyKX's .pd() hands back for a q timestamp column.
+        fetched = (pd.Timestamp.now(tz="UTC") - pd.Timedelta(seconds=elapsed)).tz_localize(None)
+        s, _ = store_with({
+            "select fetched, payload from snap": pd.DataFrame({
+                "fetched": [fetched],
+                "payload": ['{"close": 1.0}'],
+            }),
+        })
+        assert s.read_snapshot("AAPL", max_age=elapsed + 10) == {"close": 1.0}, (
+            "an entry younger than the TTL must be judged fresh"
+        )
+        assert s.read_snapshot("AAPL", max_age=elapsed - 10) is None, (
+            "an entry older than the TTL must be judged stale"
+        )
+    finally:
+        if old_tz is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = old_tz
+        time_module.tzset()

@@ -26,16 +26,29 @@ cached) or `bypass` (kdb unavailable — served straight from upstream).
 
 | Env var | Default | Meaning |
 |---|---|---|
-| `KDB_EMBEDDED` | *derived* | Spawn q inside this container. Unset, it follows `KDB_HOST`: true for a loopback host, false for anything else. Set it explicitly to override |
-| `KDB_HOST` | `127.0.0.1` | Point at your own kdb+ server (which also disables spawning) |
+| `KDB_EMBEDDED` | *derived* | Spawn q inside this container. Unset, it follows whether a q is actually found at `KDB_LOCAL_QHOME` — see the chain below. Set it explicitly to override |
+| `KDB_LOCAL_QHOME` | `/opt/kx` | Where the operator mounted their own q (bring-your-own — this repo ships none; see [../kdb/README.md](../kdb/README.md)). `QHOME` is accepted as a fallback for anyone carrying the older variable, read once per process, *before* `import pykx` rewrites it to PyKX's own bundled q |
+| `KDB_HOST` | *(unset)* | Point at your own kdb+ container — only consulted once the chain's earlier links fail; see below |
 | `KDB_PORT` | `5000` | |
 | `KDB_MEMORY_MB` | `8192` | Cache budget; q gets `-w` 25% above it |
 | `KDB_CACHE_WATERMARK` | `0.75` | Heap fraction that triggers LRU eviction |
 | `KDB_UPSTREAM` | `eodhd` | Provider used for cache misses — any installed provider |
-| `QHOME` | `/opt/kx` | kdb-x install q is launched from. Read once per process, *before* `import pykx` rewrites it to PyKX's own bundled q |
-| `QLIC` | *`QHOME`* | Directory q looks in for `kc.lic`. Point it at your licence mount — if it points anywhere else the mount is silently inert |
+| `QLIC` | *(none — set it)* | Directory q looks in for `kc.lic`. Falls back to `QHOME` (a legacy variable compose no longer sets, so in practice this default doesn't fire) then `/opt/kx`, so set `QLIC` explicitly — if it points anywhere else the mount is silently inert |
 
-Everything except `QHOME` and `QLIC` also accepts an OpenBB credential
+**The resolution chain**, tried in order on every connect/respawn attempt:
+
+1. **Spawn.** If `KDB_LOCAL_QHOME` (default `/opt/kx`) holds an executable
+   `bin/q`, run it as a child bound to `127.0.0.1:KDB_PORT`.
+2. **Loopback.** Probe `127.0.0.1:KDB_PORT` — a q another service in the same
+   shared network namespace already spawned (e.g. `openbb-api`, from
+   `live-grid`'s point of view).
+3. **External host.** If `KDB_HOST` is set, connect to `KDB_HOST:KDB_PORT` —
+   a kdb container the operator runs themselves.
+
+If none of the three connect, the provider passes through to `KDB_UPSTREAM`
+and reports `cache: "bypass"`.
+
+Everything except `QLIC` also accepts an OpenBB credential
 (`kdb_host`, `kdb_port`, …), which takes precedence over the environment.
 
 ## Requirements

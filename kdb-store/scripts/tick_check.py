@@ -1,0 +1,117 @@
+"""Real-q check for tick recording and aggregation. Needs a licence; not in CI."""
+
+import sys
+from datetime import datetime, timedelta
+
+import pandas as pd
+
+from kdb_store.aggregate import aggregate_ticks
+from kdb_store.config import resolve_config
+from kdb_store.session import KdbSession
+from kdb_store.store import KdbStore
+
+failures = []
+
+
+def check(name, ok, detail=""):
+    print(f"{'PASS' if ok else 'FAIL'}  {name} {detail}")
+    if not ok:
+        failures.append(name)
+
+
+session = KdbSession(resolve_config())
+store = KdbStore(session)
+base = datetime(2025, 6, 10, 14, 0, 0)
+
+# Force a connection now so the resolved endpoint -- the link of the chain
+# that actually answered -- is known before anything else runs.
+session.connection()
+print(f"endpoint: {session.endpoint}")
+
+# Deliberately out of order: true open is 100 (at :05), true close is 101 (at :55).
+ticks = pd.DataFrame({
+    "time": [base + timedelta(seconds=55), base + timedelta(seconds=5),
+             base + timedelta(seconds=30), base + timedelta(seconds=70)],
+    "sym": ["TICKCHK"] * 4,
+    "price": [101.0, 100.0, 103.0, 99.0],
+    "size": [5.0, 10.0, 1.0, 7.0],
+})
+check("write_ticks", store.write_ticks(ticks) == 4)
+
+bars = aggregate_ticks(store, "TICKCHK", "1m", base, base + timedelta(minutes=5))
+check("two buckets", len(bars) == 2, f"got {len(bars)}")
+if bars:
+    first = bars[0]
+    check("open is time-ordered, not insertion-ordered", first["open"] == 100.0,
+          f"open={first['open']} (100.0 expected; 101.0 means the sort was dropped)")
+    check("close is time-ordered", first["close"] == 101.0, f"close={first['close']}")
+    check("high", first["high"] == 103.0)
+    check("low", first["low"] == 100.0)
+    check("volume", first["volume"] == 16.0)
+
+span = store.tick_span("TICKCHK")
+check("tick_span", span is not None and span[0] <= span[1])
+
+# --- second batch, dtypes deliberately re-inferred -------------------------
+#
+# This is the `'type` bug class that broke every live chart once. q's upsert
+# matches column types EXACTLY -- it raises rather than coercing -- while
+# pandas re-infers each column's dtype from the values of whichever batch it
+# is handed. The first batch above fixed nothing (the schema is declared), but
+# a batch whose columns infer DIFFERENTLY is what actually goes over the wire
+# in production: a live feed's second flush is small, and a small flush is
+# exactly the one whose size column is all-null (object, not float64) and
+# whose prices happen to be whole numbers (int64, not float64).
+#
+# No mock can catch this: a fake connection accepts any dtype. Only a real q
+# says 'type.
+batch2 = pd.DataFrame({
+    "time": [base + timedelta(minutes=10), base + timedelta(minutes=10, seconds=30)],
+    "sym": ["TICKCHK", "TICKCHK"],
+    "price": [104, 105],   # int64 -- the stored column is float
+    "size": [None, None],  # object -- an all-null column has no dtype to infer
+})
+check("second batch infers different dtypes",
+      str(batch2["price"].dtype) != "float64" and str(batch2["size"].dtype) != "float64",
+      f"price={batch2['price'].dtype} size={batch2['size'].dtype}")
+try:
+    written2 = store.write_ticks(batch2)
+except Exception as exc:  # noqa: BLE001 - the whole point of this check
+    written2 = -1
+    check("write_ticks conforms a re-inferred batch", False, f"raised {exc!r}")
+else:
+    check("write_ticks conforms a re-inferred batch", written2 == 2, f"wrote {written2}")
+
+bars2 = aggregate_ticks(store, "TICKCHK", "1m", base, base + timedelta(minutes=15))
+check("second batch is queryable alongside the first", len(bars2) == 3, f"got {len(bars2)}")
+late = [b for b in bars2 if b["date"] == base + timedelta(minutes=10)]
+check("the re-inferred batch kept its values", bool(late) and late[0]["open"] == 104.0
+      and late[0]["close"] == 105.0,
+      f"got {late[0] if late else 'no 14:10 bucket'}")
+
+# --- snapshots -------------------------------------------------------------
+#
+# `snap`'s payload column is a q GENERAL LIST -- the one column type in this
+# schema that no other code path exercises, and it has never run against a
+# real q. A char vector going into a general list, and coming back out of
+# .pd() as something json.loads can read, are both assumptions until proven.
+payload = {"symbol": "TICKCHK", "prev_close": 99.5,
+           "nested": {"venues": ["A", "B"], "n": 3}, "unicode": "café"}
+store.write_snapshot("TICKCHK", payload)
+got = store.read_snapshot("TICKCHK", 3600.0)
+check("read_snapshot round-trips the payload", got == payload, f"got {got!r}")
+check("read_snapshot honours the TTL", store.read_snapshot("TICKCHK", 0.0) is None)
+check("read_snapshot on an unknown symbol is None",
+      store.read_snapshot("NOSUCHSYM", 3600.0) is None)
+
+store.write_snapshot("TICKCHK", {"replaced": True})
+check("write_snapshot upserts rather than duplicating",
+      store.read_snapshot("TICKCHK", 3600.0) == {"replaced": True})
+
+store.prune_ticks(datetime(2030, 1, 1))
+check("prune clears the window", store.tick_span("TICKCHK") is None)
+
+session.close()
+print()
+print("FAILURES:", failures if failures else "none")
+sys.exit(1 if failures else 0)

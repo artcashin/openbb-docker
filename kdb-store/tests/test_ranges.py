@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from openbb_kdb.ranges import coalesce, interval_step, subtract, trim_tail
+from kdb_store.ranges import coalesce, interval_step, subtract, trim_tail
 
 D = lambda s: datetime.fromisoformat(s)  # noqa: E731
 DAY = timedelta(days=1)

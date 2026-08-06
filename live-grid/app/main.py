@@ -9,14 +9,18 @@ import logging
 import os
 import uuid
 from contextlib import asynccontextmanager
+from datetime import date, timedelta
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.classify import split_by_feed
 from app.feeds import FeedManager
+from app.figure import build_figure
+from app.openbb_client import fetch_series
 from app.quotes import QuoteTable
 
 log = logging.getLogger("live-grid")
@@ -41,13 +45,77 @@ def _parse_symbols(raw: str) -> list[str]:
     return [s.strip().upper() for s in raw.split(",") if s.strip()]
 
 
+async def build_series(symbol, interval, start, end, recorder, window, provider="kdb"):
+    """History joined to tick-derived bars at the first fully-covered bar."""
+    from app.series import seam_boundary, stitch, tick_capable, window_end
+
+    history, meta = await fetch_series(symbol, interval, start, end, provider)
+    meta = dict(meta)
+    meta["rows_from_ticks"] = 0
+    meta["seam"] = None
+
+    if recorder is None or not tick_capable(interval, window):
+        return history, meta
+
+    try:
+        from kdb_store.aggregate import aggregate_ticks
+
+        # tick_span is a blocking IPC round-trip; off the loop like the
+        # aggregation below it, or a chart request stalls the grid's
+        # websocket flush.
+        span = await asyncio.to_thread(recorder.store.tick_span, symbol)
+        if span is None:
+            return history, meta
+        boundary = seam_boundary(span[0], interval)
+        # Ticks are only ever as recent as *now*, so a window that ended in
+        # the past must not have them tacked on. Clip to whichever of the two
+        # ends first; if that leaves nothing at or after the seam, the request
+        # is purely historical.
+        hi = min(span[1], window_end(end))
+        if hi < boundary:
+            return history, meta
+        ticks = await asyncio.to_thread(
+            aggregate_ticks, recorder.store, symbol, interval, boundary, hi
+        )
+    except Exception as exc:  # noqa: BLE001 - the chart still works without ticks
+        log.warning("tick aggregation unavailable for %s: %s", symbol, exc)
+        return history, meta
+
+    if not ticks:
+        return history, meta
+    meta["rows_from_ticks"] = len(ticks)
+    meta["seam"] = boundary.isoformat()
+    return stitch(history, ticks, boundary), meta
+
+
 def create_app(*, api_key: str | None = None, seed_client=None, client_factory=None) -> FastAPI:
     """Build the app. Test seams: `seed_client` replaces the SDK REST client,
     `client_factory` is passed through to FeedManager (mock websockets)."""
     key = api_key if api_key is not None else _api_key()
-    quotes = QuoteTable()
+
+    recorder = None
+    if os.getenv("LIVE_GRID_CHART", "true").strip().lower() in ("1", "true", "yes", "on"):
+        try:
+            from kdb_store.config import resolve_config
+            from kdb_store.session import KdbSession
+            from kdb_store.store import KdbStore
+
+            from app.recorder import TickRecorder
+
+            config = resolve_config()
+            session = KdbSession(config)
+            window = timedelta(seconds=int(os.getenv("LIVE_TICK_WINDOW_SECONDS", "86400")))
+            recorder = TickRecorder(KdbStore(session), window=window)
+        except Exception as exc:  # noqa: BLE001 - the grid works without kdb
+            log.warning("tick recording disabled: %s", exc)
+            recorder = None
+
+    quotes = QuoteTable(
+        on_tick=recorder.record if recorder else None,
+        snapshots=recorder.store if recorder else None,
+    )
     manager_kwargs = {} if client_factory is None else {"client_factory": client_factory}
-    manager = FeedManager(key or "", quotes, **manager_kwargs)
+    manager = FeedManager(key or "", quotes, recorder=recorder, **manager_kwargs)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -85,6 +153,16 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
             seed_client = _rest_client(key)
         return seed_client
 
+    _STATIC = Path(__file__).parent / "static"
+    app.mount("/static", StaticFiles(directory=_STATIC), name="static")
+
+    def _window(start: str | None, end: str | None) -> tuple[str, str]:
+        today = date.today()
+        return (start or str(today - timedelta(days=365)), end or str(today))
+
+    def _tick_window() -> timedelta:
+        return recorder.window if recorder is not None else timedelta(0)
+
     @app.get("/widgets.json")
     def widgets() -> JSONResponse:
         return JSONResponse(json.loads(WIDGETS_PATH.read_text()))
@@ -97,9 +175,54 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
         client = _seed_client()
         return quotes.seed(symbols, client)
 
+    @app.get("/series")
+    async def series(symbol: str = "AAPL", interval: str = "1d",
+                     start: str | None = None, end: str | None = None,
+                     provider: str = "kdb"):
+        s, e = _window(start, end)
+        try:
+            bars, meta = await build_series(
+                symbol, interval, s, e, recorder, _tick_window(), provider
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("series failed for %s: %s", symbol, exc)
+            return JSONResponse(
+                {"symbol": symbol, "interval": interval, "start": s, "end": e, "bars": [],
+                 "cache": {"cache": "error", "error": str(exc), "rows_from_cache": 0,
+                           "rows_from_upstream": 0, "rows_from_ticks": 0,
+                           "gaps_fetched": 0, "upstream_ms": 0.0, "kdb_ms": 0.0,
+                           "seam": None}},
+                status_code=502,
+            )
+        return {"symbol": symbol, "interval": interval, "start": s, "end": e,
+                "bars": bars, "cache": meta}
+
+    @app.get("/chart")
+    async def chart(symbol: str = "AAPL", interval: str = "1d",
+                    start: str | None = None, end: str | None = None,
+                    provider: str = "kdb"):
+        s, e = _window(start, end)
+        try:
+            bars, _ = await build_series(
+                symbol, interval, s, e, recorder, _tick_window(), provider
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("chart failed for %s: %s", symbol, exc)
+            return JSONResponse({"data": [], "layout": {"title": {"text": f"{symbol}: {exc}"}}},
+                                status_code=502)
+        return JSONResponse(build_figure(symbol, bars))
+
+    @app.get("/demo", response_class=HTMLResponse)
+    async def demo():
+        return HTMLResponse((_STATIC / "demo.html").read_text())
+
     @app.get("/health")
     def health():
-        return {"status": "ok", "feeds": manager.status()}
+        body = {"status": "ok", "feeds": manager.status()}
+        if recorder is not None:
+            body["ticks"] = recorder.stats()
+            body["ticks"]["endpoint"] = getattr(recorder.store.session, "endpoint", None)
+        return body
 
     @app.websocket("/live_grid_ws")
     async def live_grid_ws(ws: WebSocket) -> None:

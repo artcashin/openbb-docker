@@ -76,23 +76,33 @@ services:
       # Ep. 11: ARCTICDB_S3_* -- the MinIO store, shared with tick-lab.
       - path: ./minio.env
         required: false
-    # Ep. 10: the kdb+ read-through cache. q runs as a CHILD of this container
-    # on 127.0.0.1:5000 -- never 0.0.0.0. Every service here shares the
-    # tailscale network namespace, so loopback reaches all of them and no
-    # tailnet peer, while a 0.0.0.0 bind would publish an unauthenticated q
-    # (which executes arbitrary q) to the whole tailnet.
+    # Ep. 10: the kdb+ read-through cache. This repo ships NO KX software --
+    # the licence does not permit redistributing q. Bring your own:
     #
-    # Bring your own license: register with KX, drop kc.lic into
-    # ./kdb-license/ (git-ignored). Without it the cache passes through to
-    # the upstream provider and the stack runs uncached.
+    #   1. Drop a q binary into ./kdb (mounted below at /opt/kx:ro,
+    #      KDB_LOCAL_QHOME=/opt/kx) and this container spawns it as a CHILD on
+    #      127.0.0.1:5000 -- never 0.0.0.0. Every service here shares the
+    #      tailscale network namespace, so loopback reaches all of them and
+    #      no tailnet peer, while a 0.0.0.0 bind would publish an
+    #      unauthenticated q (which executes arbitrary q) to the whole
+    #      tailnet.
+    #   2. Or run your own kdb container and set KDB_HOST in credentials.env
+    #      -- see credentials.env.example for the platform-specific value
+    #      and the bind/publish rules for that setup.
+    #
+    # Bring your own license too: register with KX, drop kc.lic into
+    # ./kdb-license/ (git-ignored). Without a reachable q AND a licence, the
+    # cache passes through to the upstream provider and the stack runs
+    # uncached.
     environment:
       - KDB_EMBEDDED=true
       - KDB_MEMORY_MB=8192
       - KDB_UPSTREAM=eodhd
-      - QHOME=/opt/kx
+      - KDB_LOCAL_QHOME=/opt/kx
       - QLIC=/opt/kx-license
     volumes:
       - openbb-data:/root/.openbb_platform
+      - ./kdb:/opt/kx:ro
       - ./kdb-license:/opt/kx-license:ro
     # Cache budget (KDB_MEMORY_MB) is 8GB, but q's own -w ceiling is budget *
     # 1.25 = 10GB headroom -- see openbb_kdb/config.py's _WORKSPACE_HEADROOM.
@@ -170,25 +180,58 @@ services:
       #   mkdir -p key-maint-admin && chmod 700 key-maint-admin
       - ./key-maint-admin:/config/admin
 
-  # live-grid (Ep. 8): OpenBB Workspace live_grid backend streaming EODHD
-  # websocket prices. Loopback :6903; Serve publishes it on :6903 —
-  # tailnet-only unless you deliberately funnel it (it carries your market-
-  # data key and has no auth of its own, so: don't).
+  # live-grid (Ep. 9; tick recording + unified chart added Ep. 10): OpenBB
+  # Workspace live_grid backend streaming EODHD websocket prices. Loopback
+  # :6903; Serve publishes it on :6903 — tailnet-only unless you deliberately
+  # funnel it (it carries your market-data key and has no auth of its own,
+  # so: don't).
+  #
+  # Build context is the repo ROOT, not ./live-grid: the image now installs
+  # the sibling kdb-store/ package (Ep. 10), and a Dockerfile can only COPY
+  # paths inside its build context -- ../kdb-store is unreachable from a
+  # context rooted at live-grid/.
   live-grid:
-    build: ./live-grid
+    build:
+      context: .
+      dockerfile: live-grid/Dockerfile
     image: openbb-live-grid:latest
     container_name: openbb-live-grid
     restart: unless-stopped
     network_mode: service:tailscale
     depends_on:
       - tailscale
+    # Ep. 10: live-grid records the tick stream into the SAME q openbb-api
+    # spawns (127.0.0.1:5000, reached through the shared tailscale network
+    # namespace -- no new port needed) and aggregates it into bars for the
+    # unified chart. KDB_EMBEDDED=false is load-bearing: without it this
+    # service's default (a loopback host spawns its own q) would race
+    # openbb-api to bind :5000, and the loser gives up on kdb+ for the life
+    # of its process. Exactly one service may own the spawn; openbb-api does.
+    # With no reachable q the chart and tick recording simply stay off and
+    # /live_grid, /live_grid_ws behave exactly as before Ep. 10.
+    environment:
+      - LIVE_GRID_CHART=true
+      - LIVE_TICK_WINDOW_SECONDS=86400
+      - KDB_EMBEDDED=false
+      - QLIC=/opt/kx-license
     env_file:
       # EODHD_API_KEY comes from here (the public demo websocket key covers
       # the default watchlist for testing).
       - path: ./credentials.env
         required: false
+      # /chart and /series are CLIENTS of openbb-api, which enforces Basic
+      # auth (OPENBB_API_AUTH=true, api-auth.env below is `required: true` on
+      # that service). Without the SAME credentials here, OPENBB_API_USERNAME
+      # is unset, app/openbb_client.py sends no auth header, every historical
+      # fetch comes back 401 and the chart renders as an error title. The
+      # deleted `cache-chart` service loaded this file for exactly this
+      # reason; folding it into live-grid must not drop it.
+      - path: ./api-auth.env
+        required: true
+    volumes:
+      - ./kdb-license:/opt/kx-license:ro
 
-  # rss-ticker (Ep. 9): the news wire — polls RSS feeds, streams new articles
+  # rss-ticker (Ep. 8): the news wire — polls RSS feeds, streams new articles
   # over a websocket, serves a Bloomberg-style news window widget. Source lives
   # in its own repo; compose builds it from GitHub. Loopback :8088; Serve
   # publishes it on :8088 — tailnet-only, NEVER funneled (under tailscale_auth
@@ -200,7 +243,7 @@ services:
   #   cp rss-ticker.env.example rss-ticker.env       # TICKER_ADMIN_KEY
   rss-ticker:
     build: https://github.com/artcashin/rss-ticker.git
-    image: rss-ticker:9.0.0
+    image: rss-ticker:8.0.0
     container_name: openbb-rss-ticker
     restart: unless-stopped
     network_mode: service:tailscale
@@ -214,26 +257,6 @@ services:
     volumes:
       - ./rss-ticker-config:/config:ro
       - rss-ticker-data:/data
-
-  # cache-chart (Ep. 10): the kdb+ cache demo — a Workspace chart widget and a
-  # standalone page whose scroll gesture shows only the missing range being
-  # fetched. Loopback :6906; Serve publishes it on :6906 — tailnet-only,
-  # NEVER funneled (it holds API credentials and has no auth of its own).
-  cache-chart:
-    build: ./cache-chart
-    image: openbb-cache-chart:latest
-    container_name: openbb-cache-chart
-    restart: unless-stopped
-    network_mode: service:tailscale
-    depends_on:
-      - tailscale
-      - openbb-api
-    environment:
-      - OPENBB_URL=http://127.0.0.1:6900
-    env_file:
-      # OPENBB_API_USERNAME / PASSWORD — the API enforces Basic auth.
-      - path: ./api-auth.env
-        required: true
 
   # --- Ep. 11: the shared store -------------------------------------------
   # MinIO, joined to the tailnet as its own node named "minio". No sidecar:

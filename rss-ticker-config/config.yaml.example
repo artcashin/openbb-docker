@@ -1,4 +1,4 @@
-# rss-ticker config for the openbb-docker stack (Adventures in OpenBB, Ep. 9).
+# rss-ticker config for the openbb-docker stack (Adventures in OpenBB, Ep. 8).
 #
 # The ticker joins the same Tailscale sidecar as everything else, so it runs
 # in tailscale_auth mode: Serve injects the caller's verified identity on
@@ -21,6 +21,9 @@ retention_days: 7
 default_poll_interval_s: 300
 max_concurrent_polls: 8
 
+# Be judicious with poll intervals: publishers monitor, and an over-eager
+# poller gets throttled or disconnected -- sometimes mistaken for an attack.
+# Conditional GETs make polite polling cheap; they don't make rude polling safe.
 users:
   - id: art
     name: Art
@@ -28,8 +31,8 @@ users:
     # Under tailscale_auth this replaces the per-user token entirely.
     tailscale_login: you@github
     feeds:
-      - {url: "https://feeds.bloomberg.com/markets/news.rss", name: Bloomberg Markets, group: Markets, poll_interval_s: 15}
-      - {url: "https://feeds.content.dowjones.io/public/rss/RSSMarketsMain", name: WSJ Markets, group: Markets, poll_interval_s: 15}
+      - {url: "https://feeds.bloomberg.com/markets/news.rss", name: Bloomberg Markets, group: Markets, poll_interval_s: 90}
+      - {url: "https://feeds.content.dowjones.io/public/rss/RSSMarketsMain", name: WSJ Markets, group: Markets, poll_interval_s: 90}
       # NYT sends no cache validators, so every poll re-downloads; its CDN
       # caches 5 minutes anyway — a faster interval buys no freshness.
       - {url: "https://rss.nytimes.com/services/xml/rss/nyt/Business.xml", name: NYT Business, group: Markets, poll_interval_s: 300}
