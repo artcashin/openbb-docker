@@ -115,15 +115,15 @@ correct, informative failure, and it's worth seeing once:
 .venv/bin/tick-lab compare --symbol MSFT --date 2023-05-12 --reference yfinance
 ```
 
-Illustrative shape (tick and bar counts depend on your sample; the `1m`
-retention line is quoted from a real yfinance response):
+Measured on the free FirstRate sample (MSFT, 2023-05-12, 283,527 trades):
 
 ```
-rolled <N> ticks into <M> 1-minute bars (session=regular)
+rolled 283,527 ticks into 390 1-minute bars (session=regular)
 asking yfinance for 1m bars...
   1m: retention — $MSFT: possibly delisted; no price data found (Yahoo error =
-      "1m data not available for startTime=... and endTime=.... The requested
-      range must be within the last 30 days.")
+      "1m data not available ... must be within the last 30 days.")
+  5m/15m/30m: retention — "... must be within the last 60 days."
+  1h: retention — "... must be within the last 730 days."
   falling back to 1d
 ```
 
@@ -156,13 +156,31 @@ your side with nothing to compare against — not price discrepancies. If your
 gap count looks unexpectedly large, check which session you asked for before
 suspecting the data.
 
-**Expect this with `eodhd-api`/`eodhd-local`, measured:** EODHD returns **547**
-one-minute bars for MSFT on 2023-05-12, not 390 — it includes extended hours.
-So the default `--session regular` compares your ~390 regular-session bars
-against EODHD's 547, and roughly 157 of theirs have no counterpart on your
-side. Those land in **coverage gaps**, not price discrepancies — which is
-exactly why the report keeps the two apart. If you want them to line up, ask
-for `--session all` and compare like with like.
+**Expect this with `eodhd-api`/`eodhd-local`, measured on the free sample:**
+EODHD returns **547** one-minute bars for MSFT on 2023-05-12; the regular
+session is **390**. So the default `--session regular` compares your 390
+against their 547 and the extra **157** land in **coverage gaps**, not price
+discrepancies — which is exactly why the report keeps the two apart. Ask for
+`--session all` to compare like with like.
+
+Full per-minute result on that sample, for calibration:
+
+```
+  bars compared          : 390
+  price discrepancies    : 935
+  coverage gaps          : 0 ours-only, 157 reference-only
+  by field               : open=122, high=163, low=149, close=111, volume=390
+  largest close discrepancy: -0.5226 (-17.0 bps) at 2023-05-12T17:24:00+00:00
+```
+
+Read that carefully before concluding anything is broken. The **close agrees to
+the cent on 279 of 390 minutes and to a nickel on 387**, with a median
+difference of exactly **0.0000** — no systematic bias, just three outlier
+minutes. Volume differs on *every* bar because the two feeds cover different
+venues and trade conditions: the median ratio is **0.945** (15,989,493 ticks of
+volume against EODHD's 16,805,902), a steady ~5% rather than noise. A tick feed
+and a consolidated tape are not the same measurement, and this is what that
+looks like.
 
 ### `--tol`
 
