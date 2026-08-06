@@ -12,8 +12,9 @@ from later chapters is.
 | v2.0.0 | Ep. 2 — The Borrowed Terminal | HTTP Basic auth on the API, Tailscale Funnel (port 443 only) |
 | v3.0.0 | Ep. 3 — (with BDOBB v3.0.0) | key-maint: the transport-tiered key status widget backend |
 | v6.0.0 | Ep. 6 — The Analyst | OpenBB MCP server (tool-discovery mode), agent deploy configs |
+| v8.0.0 | Ep. 8 — All the News That Fits, We Print | rss-ticker news wire joins the stack |
 
-## What you get (this release: v6.0.0)
+## What you get (this release: v8.0.0)
 
 Two containers, one tailnet node, zero exposed ports:
 
@@ -26,6 +27,18 @@ Two containers, one tailnet node, zero exposed ports:
 **Tailscale Serve is the only way in** — real HTTPS with a Let's Encrypt
 certificate at `https://openbb.<your-tailnet>.ts.net`, reachable from every
 device on your tailnet and invisible to everything else.
+
+**New in v8.0.0 (Ep. 8):** the wire. The
+**[rss-ticker](https://github.com/artcashin/rss-ticker)** news service joins
+the sidecar: it polls your RSS feeds (conditional GETs, jitter, backoff),
+dedupes into SQLite, streams new articles over a websocket, and serves a
+Bloomberg-style **news window / news rail** widget. Running behind this
+stack's Serve it uses **`tailscale_auth`** — the caller's verified Tailscale
+identity replaces every per-user token, so no credential appears in any URL.
+Serve publishes it on :8088, tailnet-only, never funneled. Compose builds it
+straight from its repo; configure `rss-ticker-config/config.yaml` (from the
+example) and `rss-ticker.env` (admin key), then add the backend in Workspace
+or BDOBB with a **blank API key** — your Serve identity is the credential.
 
 **New in v6.0.0 (Ep. 6, pairs with BDOBB v6.0.0):** the **OpenBB MCP
 server** — the analyst's hands. Same image, wrapping the same Platform
