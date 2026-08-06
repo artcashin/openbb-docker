@@ -3,6 +3,7 @@ import base64
 import pytest
 from fastapi.testclient import TestClient
 
+from app.probes import TestResult
 from app.server import create_app
 
 AUTH = {"Authorization": "Basic " + base64.b64encode(b"u1:p1").decode()}
@@ -121,3 +122,29 @@ class TestContract:
         c = TestClient(create_app(role="admin", cred_file=str(cred), auth_file=auth))
         rows = keys(c).json()["rows"]
         assert rows[-1]["provider"] == "⚠ malformed line"
+
+
+class TestSingleProviderTest:
+    def test_tier_1_is_refused(self, files):
+        c = client(files, "network")  # no XFF -> tier 1
+        r = c.get("/keys/EODHD_API_KEY/test", headers=AUTH)
+        assert r.status_code == 403
+
+    def test_unknown_env_var_is_404(self, files):
+        c = client(files, "admin")
+        r = c.get("/keys/NOT_A_PROVIDER/test", headers=AUTH)
+        assert r.status_code == 404
+
+    def test_admin_gets_a_result_shape(self, files, monkeypatch):
+        # Stub the probe so the test never touches a vendor's API.
+        async def fake_probe(env_var, values):
+            return TestResult("ok", "HTTP 200")
+        monkeypatch.setattr("app.server.probe_one_provider", fake_probe)
+        c = client(files, "admin")
+        r = c.get("/keys/EODHD_API_KEY/test", headers=AUTH)
+        assert r.status_code == 200
+        assert r.json() == {"result": "ok", "detail": "HTTP 200"}
+
+    def test_requires_auth(self, files):
+        c = client(files, "admin")
+        assert c.get("/keys/EODHD_API_KEY/test").status_code == 401

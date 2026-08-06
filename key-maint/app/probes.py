@@ -46,6 +46,13 @@ async def _probe_one(client: httpx.AsyncClient, env_var: str, values: dict[str, 
     return TestResult("error", f"HTTP {resp.status_code}")
 
 
+async def probe_one_provider(env_var: str, values: dict[str, str]) -> TestResult:
+    """Probe a single provider. Backs the widget's per-row 'Test this
+    service' action, which must not fire ~18 vendor requests to check one."""
+    async with httpx.AsyncClient(timeout=TIMEOUT_S) as client:
+        return await _probe_one(client, env_var, values)
+
+
 async def run_probes(
     values: dict[str, str], client: httpx.AsyncClient | None = None
 ) -> dict[str, TestResult]:

@@ -13,7 +13,8 @@ from fastapi.responses import JSONResponse
 
 from app.auth import make_guard
 from app.credfile import load_with_warnings
-from app.probes import run_probes
+from app.probes import probe_one_provider, run_probes
+from app.registry import PROVIDERS
 from app.rows import build_rows
 
 _CGNAT = ipaddress.ip_network("100.64.0.0/10")
@@ -83,6 +84,16 @@ def create_app(role: str, cred_file: str, auth_file: str) -> FastAPI:
             tests = await run_probes(values)
         rows = build_rows(values, tier, tests, malformed=malformed)
         return JSONResponse({"tier": tier, "rows": rows})
+
+    @app.get("/keys/{env_var}/test")
+    async def test_key(env_var: str, request: Request) -> Response:
+        if env_var not in PROVIDERS:
+            return JSONResponse({"detail": "unknown provider"}, status_code=404)
+        if _tier(role, request) < 2:
+            return JSONResponse({"detail": "not permitted"}, status_code=403)
+        values, _ = load_with_warnings(cred_file)
+        result = await probe_one_provider(env_var, values or {})
+        return JSONResponse({"result": result.result, "detail": result.detail})
 
     @app.put("/keys/{env_var}")
     def put_key(env_var: str) -> Response:
