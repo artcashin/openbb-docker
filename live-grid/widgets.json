@@ -1,0 +1,39 @@
+{
+  "live_grid": {
+    "name": "Live quotes",
+    "description": "Real-time EODHD prices: US equities, crypto and forex in one watchlist. Type symbols into the widget.",
+    "category": "Live",
+    "type": "live_grid",
+    "endpoint": "live_grid",
+    "wsEndpoint": "live_grid_ws",
+    "gridData": { "w": 40, "h": 12 },
+    "data": {
+      "wsRowIdColumn": "symbol",
+      "table": {
+        "showAll": false,
+        "columnsDefs": [
+          { "field": "symbol", "headerName": "Symbol", "pinned": "left" },
+          { "field": "price", "headerName": "Price", "renderFn": "showCellChange", "renderFnParams": { "colorValueKey": "change" } },
+          { "field": "change", "headerName": "Chg" },
+          { "field": "change_percent", "headerName": "Chg %", "renderFn": "greenRed", "formatterFn": "percent" },
+          { "field": "bid", "headerName": "Bid" },
+          { "field": "ask", "headerName": "Ask" },
+          { "field": "last_size", "headerName": "Last Size" },
+          { "field": "volume", "headerName": "Volume", "enableCellChangeWs": false },
+          { "field": "updated_at", "headerName": "Updated" }
+        ]
+      }
+    },
+    "params": [
+      {
+        "paramName": "symbol",
+        "type": "text",
+        "value": "AAPL,MSFT,TSLA,BTC-USD,ETH-USD,EURUSD",
+        "label": "Symbols",
+        "description": "Comma-separated watchlist: US equities (AAPL), crypto (BTC-USD), forex (EURUSD)",
+        "multiSelect": true
+      }
+    ],
+    "source": ["EODHD"]
+  }
+}

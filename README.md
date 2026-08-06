@@ -13,8 +13,9 @@ from later chapters is.
 | v3.0.0 | Ep. 3 — (with BDOBB v3.0.0) | key-maint: the transport-tiered key status widget backend |
 | v6.0.0 | Ep. 6 — The Analyst | OpenBB MCP server (tool-discovery mode), agent deploy configs |
 | v8.0.0 | Ep. 8 — All the News That Fits, We Print | rss-ticker news wire joins the stack |
+| v9.0.0 | Ep. 9 — The Tape | EODHD provider extension + live-grid streaming service |
 
-## What you get (this release: v8.0.0)
+## What you get (this release: v9.0.0)
 
 Two containers, one tailnet node, zero exposed ports:
 
@@ -27,6 +28,16 @@ Two containers, one tailnet node, zero exposed ports:
 **Tailscale Serve is the only way in** — real HTTPS with a Let's Encrypt
 certificate at `https://openbb.<your-tailnet>.ts.net`, reachable from every
 device on your tailnet and invisible to everything else.
+
+**New in v9.0.0 (Ep. 9):** the tape. The **openbb-eodhd provider
+extension** (`provider="eodhd"`: equity/ETF/crypto/forex historical, EOD +
+intraday, and fundamentals — symbols qualified invisibly, unknown fields
+passed through, SDK pinned to a commit) and the **live-grid** service — a
+Workspace `live_grid` backend streaming EODHD websocket prices with REST
+snapshot seeding, per-asset-class feeds, debounced rebuilds and ~4
+coalesced flushes/second. Serve publishes it on :6903, tailnet-only. See
+[live-grid/README.md](live-grid/README.md) and
+[openbb-eodhd/README.md](openbb-eodhd/README.md).
 
 **New in v8.0.0 (Ep. 8):** the wire. The
 **[rss-ticker](https://github.com/artcashin/rss-ticker)** news service joins
