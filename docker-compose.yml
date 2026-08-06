@@ -316,6 +316,13 @@ services:
     command:
       - |
         set -eu
+        # tailscaled does NOT take over DNS inside these containers -- resolv.conf
+        # still points at Docker's resolver -- so the MagicDNS name does not
+        # resolve in here, even though every tailnet client outside resolves it
+        # fine. We share minio's network namespace, so map the name to loopback
+        # and keep FULL certificate verification: the cert is issued for exactly
+        # this name, so TLS still validates.
+        echo "127.0.0.1 $${ARCTICDB_S3_ENDPOINT}" >> /etc/hosts
         for i in $$(seq 1 60); do
           if mc alias set store "https://$${ARCTICDB_S3_ENDPOINT}:$${ARCTICDB_S3_PORT}" \
                "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}" >/dev/null 2>&1; then
