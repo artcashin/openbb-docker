@@ -69,6 +69,32 @@ class ReferenceAdapter(Protocol):
     ) -> pd.DataFrame: ...
 
 
+def normalize_daily_index(frame):
+    """Label daily bars at UTC midnight, matching `rollup.aggregate(..., "1d")`.
+
+    Providers label a daily bar at the exchange's local midnight -- yfinance
+    returns 2023-05-12 04:00Z for the 2023-05-12 US session -- while our own
+    roll-up labels it 2023-05-12 00:00Z. Both mean the same session, but
+    `report.compare` intersects on the index, so left alone the two sides
+    overlap in ZERO bars and the report claims a full set of coverage gaps and
+    nothing compared. That is the failure this normalization exists to prevent,
+    and it is on the DOCUMENTED fallback path: yfinance cannot serve 1m for a
+    2023 window, so every such comparison lands here.
+
+    Doing it here covers all adapters at one funnel. Note the assumption: it
+    floors in UTC, which is right for exchanges west of Greenwich (local
+    midnight is the same UTC day). An exchange at a positive UTC offset would
+    need flooring in its own timezone instead.
+    """
+    if frame is None or frame.empty:
+        return frame
+    out = frame.copy()
+    idx = pd.DatetimeIndex(out.index)
+    idx = idx.tz_convert("UTC") if idx.tz is not None else idx.tz_localize("UTC")
+    out.index = idx.normalize()
+    return out
+
+
 def fetch_finest(
     adapter: ReferenceAdapter,
     symbol: str,
@@ -99,6 +125,8 @@ def fetch_finest(
                 continue
             raise
         attempts.append(Attempt(interval))
+        if interval == "1d":
+            frame = normalize_daily_index(frame)
         return ReferenceResult(frame=frame, interval=interval, attempts=attempts)
 
     raise ReferenceError(

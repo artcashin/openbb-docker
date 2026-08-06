@@ -16,6 +16,7 @@ serve this symbol".
 
 from __future__ import annotations
 
+from datetime import time
 from typing import Any
 
 import pandas as pd
@@ -37,6 +38,28 @@ _YAHOO_COLUMNS = {
     "Close": "close",
     "Volume": "volume",
 }
+
+
+def exclusive_end(end: Any) -> Any:
+    """Widen a date-shaped `end` by one day, because Yahoo's `end` is EXCLUSIVE.
+
+    Every other boundary in this project is inclusive of the day requested --
+    `tick-lab compare --date 2023-05-12` means that whole session, and
+    `store.to_bounds` widens a midnight bound to cover it. Yahoo does not: ask
+    it for start=end=2023-05-12 and it returns zero rows at EVERY interval, so
+    the ladder walks all the way down and reports a source failure for a date
+    that has perfectly good data. Verified against the live API: start==end
+    gives 0 rows, end+1day gives 1.
+
+    A bound carrying a real time-of-day is passed through untouched -- the
+    caller meant that instant.
+    """
+    if end is None:
+        return None
+    ts = pd.Timestamp(end)
+    if ts.time() == time(0, 0):
+        return ts + pd.Timedelta(days=1)
+    return end
 
 
 def classify(message: str) -> ReferenceError:
@@ -68,7 +91,7 @@ class YFinanceAdapter:
         except AttributeError:  # pragma: no cover - older yfinance
             pass
         return yf.Ticker(symbol).history(
-            start=start, end=end, interval=interval, auto_adjust=False
+            start=start, end=exclusive_end(end), interval=interval, auto_adjust=False
         )
 
     def fetch(self, symbol: str, start: Any, end: Any, interval: str) -> pd.DataFrame:

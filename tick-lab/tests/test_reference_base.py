@@ -108,3 +108,41 @@ def test_skips_intervals_the_adapter_does_not_support():
     result = fetch_finest(adapter, "MSFT", "2023-05-12", "2023-05-12")
     assert adapter.calls == ["1d"]
     assert result.interval == "1d"
+
+
+def daily(label):
+    return pd.DataFrame(
+        {"open": [1.0], "high": [2.0], "low": [0.5], "close": [1.5], "volume": [10]},
+        index=pd.DatetimeIndex([label]),
+    )
+
+
+def test_daily_bars_are_relabelled_to_utc_midnight():
+    """Providers label a daily bar at the exchange's local midnight.
+
+    Ours labels it at UTC midnight, and compare() intersects on the index --
+    so without this the two sides overlap in ZERO bars on the documented
+    yfinance fallback path.
+    """
+
+    class DailyOnly:
+        name = "daily"
+        supported_intervals = ("1d",)
+
+        def fetch(self, symbol, start, end, interval):
+            return daily("2023-05-12 04:00:00+00:00")
+
+    result = fetch_finest(DailyOnly(), "MSFT", "2023-05-12", "2023-05-12", wanted="1d")
+    assert list(result.frame.index) == [pd.Timestamp("2023-05-12 00:00:00", tz="UTC")]
+
+
+def test_intraday_bars_are_left_alone():
+    class MinuteOnly:
+        name = "minute"
+        supported_intervals = ("1m",)
+
+        def fetch(self, symbol, start, end, interval):
+            return daily("2023-05-12 13:30:00+00:00")
+
+    result = fetch_finest(MinuteOnly(), "MSFT", "2023-05-12", "2023-05-12", wanted="1m")
+    assert list(result.frame.index) == [pd.Timestamp("2023-05-12 13:30:00", tz="UTC")]

@@ -5,7 +5,7 @@ import pytest
 from yfinance.exceptions import YFException
 
 from tick_lab.reference.base import ReferenceError, fetch_finest
-from tick_lab.reference.yfinance_adapter import YFinanceAdapter, classify
+from tick_lab.reference.yfinance_adapter import YFinanceAdapter, classify, exclusive_end
 
 RETENTION_1M = (
     '$MSFT: possibly delisted; no price data found  (1m 2023-05-12 -> 2023-05-13) '
@@ -131,3 +131,20 @@ def test_fetch_finest_stops_immediately_on_a_non_steppable_adapter_error(monkeyp
 
     assert exc.value.kind not in ("retention", "empty")
     assert calls == ["1m"]
+
+
+def test_date_shaped_end_is_widened_because_yahoo_end_is_exclusive():
+    """`--date X` means that whole session, but Yahoo's `end` is exclusive.
+
+    Passing start==end returns zero rows at EVERY interval, so the ladder walks
+    all the way down and reports a source failure for a date with good data.
+    """
+    assert exclusive_end("2023-05-12") == pd.Timestamp("2023-05-13")
+
+
+def test_end_with_a_time_of_day_is_passed_through():
+    assert exclusive_end("2023-05-12 15:30:00") == "2023-05-12 15:30:00"
+
+
+def test_none_end_stays_none():
+    assert exclusive_end(None) is None
