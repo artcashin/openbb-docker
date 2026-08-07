@@ -282,7 +282,17 @@ services:
       - path: ./minio.env
         required: true
     environment:
+      # NOTE: a Tailscale node cannot take a name that an existing Tailscale
+      # SERVICE already owns. If your tailnet already has `svc:minio`, this
+      # node silently becomes `minio-1` and `tailscale cert` then fails with
+      # `invalid domain ... must be one of [minio-1...]`, because a node may
+      # only be issued a certificate for its OWN name. Either retire that
+      # service or pick a free name here and set MINIO_CERT_DOMAIN to match.
       - TS_HOSTNAME=minio
+      # Only needed when the node name and the name clients connect to differ
+      # (see above). Defaults to ARCTICDB_S3_ENDPOINT, which is correct when
+      # they are the same.
+      # - MINIO_CERT_DOMAIN=minio.<your-tailnet>.ts.net
       - TS_STATE_DIR=/var/lib/tailscale
       # NOTE: the cert domain is NOT set here. Compose interpolates ${...} from
       # the shell or a root .env only -- never from env_file -- so referencing
