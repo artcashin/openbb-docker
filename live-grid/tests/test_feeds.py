@@ -95,15 +95,37 @@ class TestDrain:
         assert m.pop_dirty("c1") == set()
 
 
-async def _run_briefly(manager: FeedManager, seconds: float = 0.05) -> None:
-    """Start manager.run(), let it cycle for a bit, then cancel it cleanly."""
+async def _wait_until(condition, timeout: float = 5.0, poll_interval: float = 0.005) -> None:
+    """Poll `condition` until it's true; raise (never silently pass) if `timeout` expires.
+
+    `timeout` is a backstop against a genuine hang, not the success signal --
+    it exists so a broken condition fails loudly instead of hanging the suite.
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while not condition():
+        if loop.time() >= deadline:
+            raise asyncio.TimeoutError(f"condition not met within {timeout}s: {condition!r}")
+        await asyncio.sleep(poll_interval)
+
+
+async def _run_until(manager: FeedManager, condition, timeout: float = 5.0) -> None:
+    """Run manager.run() until `condition()` holds, then cancel it cleanly.
+
+    Bounds progress by an observable condition instead of wall clock: real
+    cycle duration is unbounded under thread-pool contention (each cycle can
+    do up to two asyncio.to_thread round-trips for the recorder), so a fixed
+    sleep can't reliably guarantee even one cycle completed.
+    """
     task = asyncio.create_task(manager.run())
-    await asyncio.sleep(seconds)
-    task.cancel()
     try:
-        await task
-    except asyncio.CancelledError:
-        pass
+        await _wait_until(condition, timeout=timeout)
+    finally:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
 
 class TestRecorderIntegration:
@@ -113,12 +135,23 @@ class TestRecorderIntegration:
             "k", QuoteTable(), client_factory=fake_ws_client_factory,
             drain_interval=0.01, rebuild_delay=0.0, recorder=recorder,
         )
-        asyncio.run(_run_briefly(m))
+        asyncio.run(_run_until(m, lambda: recorder.flush.called))
         assert recorder.flush.called
 
     def test_no_recorder_means_no_flush_calls(self, fake_ws_client_factory):
         m = make_manager(fake_ws_client_factory)  # recorder=None by default
-        asyncio.run(_run_briefly(m, seconds=0.03))  # must not raise
+        # No recorder means nothing to observe recorder-side, so watch the
+        # drain cycle itself: wait for a couple of cycles to prove the manager
+        # actually ran for a while with no recorder attached, without raising.
+        calls = {"n": 0}
+        real_drain_all = m._drain_all
+
+        def counting_drain_all():
+            calls["n"] += 1
+            real_drain_all()
+
+        m._drain_all = counting_drain_all
+        asyncio.run(_run_until(m, lambda: calls["n"] >= 2))  # must not raise
 
     def test_prune_only_fires_once_per_interval(self, fake_ws_client_factory):
         # loop.time() is a monotonic clock with an arbitrary (non-zero) origin,
@@ -132,7 +165,10 @@ class TestRecorderIntegration:
             "k", QuoteTable(), client_factory=fake_ws_client_factory,
             drain_interval=0.01, rebuild_delay=0.0, recorder=recorder,
         )
-        asyncio.run(_run_briefly(m, seconds=0.08))
+        # Wait for positive evidence that SEVERAL drain cycles elapsed (flush
+        # is called every cycle) before checking prune only fired once --
+        # asserting after just one cycle would prove nothing about the interval.
+        asyncio.run(_run_until(m, lambda: recorder.flush.call_count >= 2))
         assert recorder.flush.called
         assert recorder.prune.call_count == 1
 
@@ -143,7 +179,7 @@ class TestRecorderIntegration:
             "k", QuoteTable(), client_factory=fake_ws_client_factory,
             drain_interval=0.01, rebuild_delay=0.0, recorder=recorder,
         )
-        asyncio.run(_run_briefly(m))
+        asyncio.run(_run_until(m, lambda: recorder.prune.called))
         assert recorder.prune.called
 
     def test_a_failing_recorder_never_breaks_the_feed_loop(self, fake_ws_client_factory):
@@ -158,15 +194,19 @@ class TestRecorderIntegration:
 
         async def go():
             task = asyncio.create_task(m.run())
-            await asyncio.sleep(0.05)
-            us = next(c for c in fake_ws_client_factory.built if c.feed == "us")
-            us.data_list.append(json.dumps({"s": "AAPL", "p": 190.5, "q": 10}))
-            await asyncio.sleep(0.05)
-            task.cancel()
             try:
-                await task
-            except asyncio.CancelledError:
-                pass
+                await _wait_until(
+                    lambda: any(c.feed == "us" for c in fake_ws_client_factory.built)
+                )
+                us = next(c for c in fake_ws_client_factory.built if c.feed == "us")
+                us.data_list.append(json.dumps({"s": "AAPL", "p": 190.5, "q": 10}))
+                await _wait_until(lambda: m.quotes.rows.get("AAPL", {}).get("price") == 190.5)
+            finally:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
 
         asyncio.run(go())
         assert m.quotes.rows["AAPL"]["price"] == 190.5
