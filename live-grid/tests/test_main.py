@@ -70,6 +70,20 @@ def test_widgets_json_declares_the_live_grid_contract():
     assert vol["enableCellChangeWs"] is False
 
 
+def test_widgets_json_declares_the_live_chart_contract():
+    body = make_client().get("/widgets.json").json()
+    w = body["live_chart"]
+    assert w["type"] == "live_chart"
+    assert w["endpoint"] == "series"
+    assert w["wsEndpoint"] == "live_grid_ws"
+    param_names = [p["paramName"] for p in w["params"]]
+    assert param_names == ["symbol", "interval"]
+    interval = next(p for p in w["params"] if p["paramName"] == "interval")
+    assert [o["value"] for o in interval["options"]] == [
+        "1s", "1m", "5m", "15m", "30m", "1h", "1d",
+    ]
+
+
 def test_live_grid_seeds_rows_in_request_order(monkeypatch):
     rest = FakeRest({"AAPL.US": {"close": "150", "previousClose": "100", "volume": "7"}})
     rows = make_client(monkeypatch, seed_client=rest).get("/live_grid?symbol=AAPL,BTC-USD").json()
