@@ -72,7 +72,14 @@ services:
 
   # OpenBB Platform REST API. Binds 127.0.0.1 so only Serve can reach it.
   openbb-api:
-    image: ghcr.io/artcashin/openbb-local:4.7.2-mcp
+    image: openbb-local:11.0.0
+    environment:
+      # Shares the tailscale sidecar's network namespace, which does NOT share
+      # resolv.conf -- MagicDNS names do not resolve in here, and compose
+      # extra_hosts is rejected under network_mode: service:*. Pin the MinIO
+      # node's name to its tailnet IP so its Let's Encrypt cert still validates
+      # in full. See docker-entrypoint.sh.
+      - HOSTS_ALIAS=minio-node.tailb9874f.ts.net:100.123.139.84
     container_name: openbb-api
     restart: unless-stopped
     network_mode: service:tailscale
@@ -103,7 +110,7 @@ services:
   # 127.0.0.1; Tailscale Serve publishes it on :8443. Endpoint path is /mcp
   # (a request to /mcp/ 307-redirects there).
   openbb-mcp:
-    image: ghcr.io/artcashin/openbb-local:4.7.2-mcp
+    image: openbb-local:11.0.0
     container_name: openbb-mcp
     restart: unless-stopped
     network_mode: service:tailscale
@@ -117,6 +124,12 @@ services:
     command: ["openbb-mcp", "--host", "127.0.0.1", "--port", "6901",
               "--default-categories", "equity", "--tool-discovery"]
     environment:
+      # Shares the tailscale sidecar's network namespace, which does NOT share
+      # resolv.conf -- MagicDNS names do not resolve in here, and compose
+      # extra_hosts is rejected under network_mode: service:*. Pin the MinIO
+      # node's name to its tailnet IP so its Let's Encrypt cert still validates
+      # in full. See docker-entrypoint.sh.
+      - HOSTS_ALIAS=minio-node.tailb9874f.ts.net:100.123.139.84
       # Disables the bundled skills provider. That provider is the only write
       # target for the unconditionally-registered `install_skill` admin tool,
       # which accepts an arbitrary {filename: content} dict -- an agent reaching
