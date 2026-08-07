@@ -119,6 +119,13 @@ print('OpenBB Platform OK:', len(obb.coverage.providers), 'providers (incl. eodh
 
 WORKDIR /workspace
 
+# stores-mcp (Ep. 11): read-only ArcticDB/kdb+ discovery/query MCP server.
+# Runs `python /opt/mcp_stores/server.py` (see docker-compose.yml's
+# stores-mcp service) directly against this image -- nothing extra to
+# install: fastmcp came in with openbb-mcp-server above, arcticdb/pandas with
+# openbb-arcticdb, pykx with openbb-kdb. Just the two files.
+COPY mcp_stores/server.py mcp_stores/test_server.py /opt/mcp_stores/
+
 # Self-provision persistent mount points so the image is drop-in on any host
 # (NAS container managers, plain Docker) with bind mounts to not-yet-created
 # paths. OPENBB_HOME persists settings/credentials; /workspace holds user data.
