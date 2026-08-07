@@ -11,8 +11,13 @@ tools give an agent discovery (libraries/symbols/tables/schemas) plus capped
 raw reads.
 
 Config (already present in the NAS env files):
-  ARCTICDB_URI       s3://100.122.250.60:openbb?port=9000&...  (raw tailnet IP;
-                     MagicDNS names do NOT resolve inside NAS containers).
+  ARCTICDB_URI       s3s://minio.<tailnet>.ts.net:openbb?port=9000&...
+                     A NAME, not a raw tailnet IP. MagicDNS does not resolve
+                     inside these containers, but the entrypoint's HOSTS_ALIAS
+                     writes the mapping into /etc/hosts at start, and the name
+                     is what the MinIO node's certificate is issued for -- a
+                     raw IP cannot match it. The predecessor store (its own
+                     node, plain http, raw IP 100.122.x.x) was retired.
                      NOTE: this URI embeds S3 access/secret credentials --
                      never let it or a raw exception from the arcticdb client
                      reach the caller; see _scrub / _bounded below.

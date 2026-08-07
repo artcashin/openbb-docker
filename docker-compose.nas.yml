@@ -162,7 +162,7 @@ services:
   # can never expose this unauthenticated store to the tailnet (environment
   # always wins over env_file). Serve publishes it on :8444.
   stores-mcp:
-    image: ghcr.io/artcashin/openbb-local:4.7.2-mcp
+    image: openbb-local:11.0.0-mcp
     container_name: openbb-stores-mcp
     restart: unless-stopped
     network_mode: service:tailscale
@@ -176,12 +176,12 @@ services:
       - path: ./deps.env
         required: false
     environment:
-      # NOTE: this service reaches the MinIO node only because /etc/hosts is
-      # SHARED with the netns owner (the tailscale container), and openbb-api
-      # /openbb-mcp write the alias into it at start. It cannot set HOSTS_ALIAS
-      # itself: that support lives in the newer entrypoint, and this service is
-      # pinned to 4.7.2-mcp because openbb-local:11.0.0 does not carry
-      # /opt/mcp_stores. Move it to a rebuilt image and it can pin its own.
+      # Pins its own MinIO mapping rather than relying on openbb-api having
+      # started first and written it into the /etc/hosts this service shares
+      # with the netns owner. A NAME, not the IP: it is what the node's
+      # certificate is issued for. (extra_hosts is rejected under
+      # network_mode: service:, hence HOSTS_ALIAS.)
+      - HOSTS_ALIAS=minio.tailb9874f.ts.net:100.123.139.84
       - STORES_HOST=127.0.0.1
       - STORES_PORT=6902
       - KX_HOST=127.0.0.1
