@@ -307,9 +307,20 @@ services:
       - NET_RAW
     volumes:
       - minio-data:/data
-      # Persist node identity across restarts, same as the openbb node's
-      # ./ts-state -- otherwise every restart joins as a brand-new machine.
-      - ./ts-state-minio:/var/lib/tailscale
+      # Persist node identity AND the issued certificate across restarts --
+      # otherwise every restart joins as a brand-new machine and re-runs ACME.
+      #
+      # A NAMED VOLUME, not a relative bind like the openbb node's ./ts-state.
+      # A relative bind is resolved by the CLIENT and sent to the daemon as an
+      # absolute path, so against a REMOTE docker context (DOCKER_HOST / a
+      # `docker context` pointing at a NAS) the daemon dutifully creates that
+      # literal client-side path -- e.g. /Users/you/... -- on the remote host's
+      # ROOT filesystem. It works, which is why it goes unnoticed: the state
+      # persists, just on the appliance's small system partition instead of the
+      # data volume, outside whatever backs that volume up. Losing it costs you
+      # the node identity and a fresh certificate issuance. A named volume is
+      # resolved by the daemon and always lands in its own storage.
+      - minio-ts-state:/var/lib/tailscale
 
   # One-shot: ArcticDB will NOT create its own bucket, so `docker compose up`
   # would otherwise leave you with a store that 404s on first write.
@@ -350,3 +361,4 @@ volumes:
   openbb-data:
   rss-ticker-data:
   minio-data:
+  minio-ts-state:
