@@ -3,3 +3,14 @@
 # file as provider extensions with native dependencies join the image.
 fastapi<0.129.0,>=0.128.0  # from openbb-core
 uvicorn<0.41.0,>=0.40.0  # from openbb-core
+# --- Ep. 11: ceilings the ArcticDB native extension actually needs ---
+# Derived by ~/Developer/OpenBB/derive-constraints.py, which reads the
+# extensions' declared bounds BEFORE openbb-core's. These are not theoretical:
+# protobuf 7 breaks arcticdb's pb2 stubs (they support 3-6), and pandas 3
+# dropped pandas.core.indexes.numeric, which pykx imports. The image happens to
+# resolve compatible versions today, so nothing is pinned by accident -- these
+# make it deliberate, so a future OpenBB bump cannot drag either past what the
+# extensions tolerate.
+pandas<3  # from arcticdb
+protobuf<7,>=3.5.0.post1  # from arcticdb
+
