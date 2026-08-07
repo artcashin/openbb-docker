@@ -54,5 +54,34 @@
         ]
       }
     ]
+  },
+  "live_chart": {
+    "name": "Live Chart",
+    "description": "Live price chart seeded from the kdb+ cache, extended tick by tick over the live quote stream.",
+    "category": "Live",
+    "type": "live_chart",
+    "endpoint": "series",
+    "wsEndpoint": "live_grid_ws",
+    "gridData": { "w": 40, "h": 16 },
+    "params": [
+      {
+        "paramName": "symbol", "type": "text", "value": "AAPL", "label": "Symbols",
+        "description": "Comma-separated: US equities, crypto (BTC-USD), forex (EURUSD)",
+        "multiSelect": true
+      },
+      {
+        "paramName": "interval", "type": "text", "value": "1m", "label": "Interval",
+        "options": [
+          { "label": "1 second", "value": "1s" },
+          { "label": "1 minute", "value": "1m" },
+          { "label": "5 min", "value": "5m" },
+          { "label": "15 min", "value": "15m" },
+          { "label": "30 min", "value": "30m" },
+          { "label": "1 hour", "value": "1h" },
+          { "label": "1 day", "value": "1d" }
+        ]
+      }
+    ],
+    "source": ["EODHD", "kdb+"]
   }
 }
