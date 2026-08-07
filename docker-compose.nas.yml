@@ -79,7 +79,7 @@ services:
       # extra_hosts is rejected under network_mode: service:*. Pin the MinIO
       # node's name to its tailnet IP so its Let's Encrypt cert still validates
       # in full. See docker-entrypoint.sh.
-      - HOSTS_ALIAS=minio-node.tailb9874f.ts.net:100.123.139.84
+      - HOSTS_ALIAS=minio.tailb9874f.ts.net:100.123.139.84
     container_name: openbb-api
     restart: unless-stopped
     network_mode: service:tailscale
@@ -129,7 +129,7 @@ services:
       # extra_hosts is rejected under network_mode: service:*. Pin the MinIO
       # node's name to its tailnet IP so its Let's Encrypt cert still validates
       # in full. See docker-entrypoint.sh.
-      - HOSTS_ALIAS=minio-node.tailb9874f.ts.net:100.123.139.84
+      - HOSTS_ALIAS=minio.tailb9874f.ts.net:100.123.139.84
       # Disables the bundled skills provider. That provider is the only write
       # target for the unconditionally-registered `install_skill` admin tool,
       # which accepts an arbitrary {filename: content} dict -- an agent reaching
@@ -176,6 +176,12 @@ services:
       - path: ./deps.env
         required: false
     environment:
+      # NOTE: this service reaches the MinIO node only because /etc/hosts is
+      # SHARED with the netns owner (the tailscale container), and openbb-api
+      # /openbb-mcp write the alias into it at start. It cannot set HOSTS_ALIAS
+      # itself: that support lives in the newer entrypoint, and this service is
+      # pinned to 4.7.2-mcp because openbb-local:11.0.0 does not carry
+      # /opt/mcp_stores. Move it to a rebuilt image and it can pin its own.
       - STORES_HOST=127.0.0.1
       - STORES_PORT=6902
       - KX_HOST=127.0.0.1
