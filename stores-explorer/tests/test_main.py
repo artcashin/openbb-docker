@@ -149,3 +149,73 @@ def test_arctic_summary_unknown_library_is_404():
     r = make_client().get("/arctic/summary", params={"library": "nope", "symbol": "AAPL"})
     assert r.status_code == 404
     assert "unknown library" in r.json()["detail"]
+
+
+def make_kdb_client(tables=("trades",), schema_by_table=None, select_response=None):
+    schema_by_table = schema_by_table if schema_by_table is not None else {"trades": [{"c": "sym", "t": "s"}]}
+
+    def kdb_tables_fn():
+        return list(tables)
+
+    def kdb_schema_fn(table):
+        if table not in tables:
+            raise ValueError(f"unknown table {table!r}; call kdb_tables first")
+        return schema_by_table.get(table, [])
+
+    def kdb_select_fn(table, symbol=None, start_time=None, end_time=None, limit=1000):
+        if table not in tables:
+            raise ValueError(f"unknown table {table!r}; call kdb_tables first")
+        return select_response or {"table": table, "returned_rows": 1, "rows": [{"sym": "AAPL"}]}
+
+    app = create_app(
+        arctic_libraries_fn=lambda: [],
+        arctic_symbols_fn=lambda library: [],
+        arctic_read_fn=lambda *a, **kw: {},
+        arctic_client_factory=lambda: None,
+        bounded_fn=lambda fn, *a, **kw: fn(*a, **kw),
+        kdb_tables_fn=kdb_tables_fn,
+        kdb_schema_fn=kdb_schema_fn,
+        kdb_select_fn=kdb_select_fn,
+    )
+    return TestClient(app)
+
+
+def test_widgets_json_declares_kdb_explorer():
+    body = make_client().get("/widgets.json").json()
+    w = body["kdb_explorer"]
+    assert w["type"] == "table"
+    assert w["endpoint"] == "kdb/select"
+    assert w["dataKey"] == "rows"
+    param_names = [p["paramName"] for p in w["params"]]
+    assert param_names == ["table", "symbol", "start_time", "end_time"]
+    table_param = next(p for p in w["params"] if p["paramName"] == "table")
+    assert table_param["optionsEndpoint"] == "kdb/tables"
+
+
+def test_kdb_tables_lists_tables():
+    r = make_kdb_client(tables=("trades", "quotes"))
+    assert r.get("/kdb/tables").json() == ["trades", "quotes"]
+
+
+def test_kdb_schema_returns_columns():
+    r = make_kdb_client(schema_by_table={"trades": [{"c": "sym", "t": "s"}, {"c": "price", "t": "f"}]})
+    body = r.get("/kdb/schema", params={"table": "trades"}).json()
+    assert body == [{"c": "sym", "t": "s"}, {"c": "price", "t": "f"}]
+
+
+def test_kdb_schema_unknown_table_is_404():
+    r = make_kdb_client().get("/kdb/schema", params={"table": "nope"})
+    assert r.status_code == 404
+    assert "unknown table" in r.json()["detail"]
+
+
+def test_kdb_select_returns_rows():
+    r = make_kdb_client().get("/kdb/select", params={"table": "trades"})
+    assert r.status_code == 200
+    assert r.json()["rows"] == [{"sym": "AAPL"}]
+
+
+def test_kdb_select_unknown_table_is_404():
+    r = make_kdb_client().get("/kdb/select", params={"table": "nope"})
+    assert r.status_code == 404
+    assert "unknown table" in r.json()["detail"]

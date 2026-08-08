@@ -29,6 +29,9 @@ from server import (
     arctic_list_libraries,
     arctic_list_symbols,
     arctic_read,
+    kdb_select,
+    kdb_table_schema,
+    kdb_tables,
 )
 
 WIDGETS_PATH = Path(__file__).resolve().parent.parent / "widgets.json"
@@ -41,6 +44,9 @@ def create_app(
     arctic_read_fn=arctic_read,
     arctic_client_factory=_arctic,
     bounded_fn=_bounded,
+    kdb_tables_fn=kdb_tables,
+    kdb_schema_fn=kdb_table_schema,
+    kdb_select_fn=kdb_select,
 ) -> FastAPI:
     app = FastAPI()
 
@@ -94,6 +100,29 @@ def create_app(
     ) -> dict:
         try:
             return arctic_read_fn(library, symbol, start=start, end=end, tail_rows=tail_rows)
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+
+    @app.get("/kdb/tables")
+    def kdb_tables_route() -> list[str]:
+        return kdb_tables_fn()
+
+    @app.get("/kdb/schema")
+    def kdb_schema(table: str) -> list[dict]:
+        try:
+            return kdb_schema_fn(table)
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+
+    @app.get("/kdb/select")
+    def kdb_select_route(
+        table: str, symbol: str | None = None,
+        start_time: str | None = None, end_time: str | None = None, limit: int = 1000,
+    ) -> dict:
+        try:
+            return kdb_select_fn(
+                table, symbol=symbol, start_time=start_time, end_time=end_time, limit=limit
+            )
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
 
