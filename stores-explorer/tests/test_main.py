@@ -1,8 +1,27 @@
 """Server-layer tests for the ArcticDB half. Every backend call is injected
 -- no real ArcticDB or kdb+ is ever touched."""
+import server
 from fastapi.testclient import TestClient
 
 from app.main import create_app
+
+# Design spec (Testing, bullet 5): no credential ever reaches a response
+# body or error message. In production, every ValueError that reaches this
+# file's routes has already passed through mcp_stores's _bounded(), which
+# scrubs credentials out of the exception text before re-raising -- so the
+# text a backend function raises here is realistic *already-scrubbed*
+# output, produced with the real server._scrub() (not re-testing _scrub
+# itself, which has its own tests in mcp_stores/test_server.py). These
+# tests instead pin main.py's own exception handling: does
+# `except ValueError as e: raise HTTPException(..., detail=str(e))`
+# preserve that already-scrubbed text as-is, with no path that could
+# reintroduce the raw credentials it was built from.
+_RAW_CREDENTIAL_MESSAGE = (
+    "S3 error connecting to s3://minio.example.ts.net:openbb?port=9000"
+    "&access=AKIAEXAMPLE&secret=topsecret123"
+)
+_SCRUBBED_CREDENTIAL_MESSAGE = server._scrub(_RAW_CREDENTIAL_MESSAGE)
+assert "<redacted>" in _SCRUBBED_CREDENTIAL_MESSAGE  # sanity: scrub actually did something
 
 
 class FakeColumn:
@@ -151,6 +170,26 @@ def test_arctic_summary_unknown_library_is_404():
     assert "unknown library" in r.json()["detail"]
 
 
+def test_arctic_symbols_error_does_not_leak_credentials():
+    def raises_scrubbed_error(library):
+        raise ValueError(_SCRUBBED_CREDENTIAL_MESSAGE)
+
+    app = create_app(
+        arctic_libraries_fn=lambda: ["openbb"],
+        arctic_symbols_fn=raises_scrubbed_error,
+        arctic_read_fn=lambda *a, **kw: {},
+        arctic_client_factory=lambda: None,
+        bounded_fn=lambda fn, *a, **kw: fn(*a, **kw),
+    )
+    r = TestClient(app).get("/arctic/symbols", params={"library": "openbb"})
+    assert r.status_code == 404
+    body = r.text
+    assert "AKIAEXAMPLE" not in body
+    assert "topsecret123" not in body
+    assert "s3://minio.example.ts.net" not in body
+    assert "<redacted>" in body
+
+
 def make_kdb_client(tables=("trades",), schema_by_table=None, select_response=None):
     schema_by_table = schema_by_table if schema_by_table is not None else {"trades": [{"c": "sym", "t": "s"}]}
 
@@ -219,3 +258,26 @@ def test_kdb_select_unknown_table_is_404():
     r = make_kdb_client().get("/kdb/select", params={"table": "nope"})
     assert r.status_code == 404
     assert "unknown table" in r.json()["detail"]
+
+
+def test_kdb_schema_error_does_not_leak_credentials():
+    def raises_scrubbed_error(table):
+        raise ValueError(_SCRUBBED_CREDENTIAL_MESSAGE)
+
+    app = create_app(
+        arctic_libraries_fn=lambda: [],
+        arctic_symbols_fn=lambda library: [],
+        arctic_read_fn=lambda *a, **kw: {},
+        arctic_client_factory=lambda: None,
+        bounded_fn=lambda fn, *a, **kw: fn(*a, **kw),
+        kdb_tables_fn=lambda: ["trades"],
+        kdb_schema_fn=raises_scrubbed_error,
+        kdb_select_fn=lambda *a, **kw: {},
+    )
+    r = TestClient(app).get("/kdb/schema", params={"table": "trades"})
+    assert r.status_code == 404
+    body = r.text
+    assert "AKIAEXAMPLE" not in body
+    assert "topsecret123" not in body
+    assert "s3://minio.example.ts.net" not in body
+    assert "<redacted>" in body
