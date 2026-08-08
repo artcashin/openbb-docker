@@ -210,6 +210,9 @@ services:
       context: .
       dockerfile: stores-explorer/Dockerfile
     image: openbb-stores-explorer:11.2.0
+    # ArcticDB publishes no aarch64 Linux wheels, so the image is amd64.
+    # On Apple Silicon this runs under emulation -- correct, but slower.
+    platform: linux/amd64
     container_name: openbb-stores-explorer
     restart: unless-stopped
     network_mode: service:tailscale
