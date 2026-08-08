@@ -193,6 +193,37 @@ services:
       - path: ./minio.env
         required: false
 
+  # stores-explorer (Ep. 11): read-only widget backend for the same
+  # ArcticDB/kdb+ discovery code as stores-mcp, over a plain REST/widgets.json
+  # surface instead of MCP -- see stores-explorer/README.md. Loopback :6904;
+  # Serve publishes it on :6904 -- tailnet-only, matching live-grid's :6903
+  # (no auth of its own, so: don't funnel it). Reached externally because its
+  # caller, bdobb, runs on the user's own remote machine rather than
+  # alongside this stack (unlike stores-mcp, which only sibling containers
+  # call, hence no external port for it).
+  #
+  # Build context is the repo ROOT, not ./stores-explorer: the image installs
+  # the sibling mcp_stores/ package, and a Dockerfile can only COPY paths
+  # inside its build context -- same reasoning as live-grid's kdb-store COPY.
+  stores-explorer:
+    build:
+      context: .
+      dockerfile: stores-explorer/Dockerfile
+    image: openbb-stores-explorer:11.2.0
+    container_name: openbb-stores-explorer
+    restart: unless-stopped
+    network_mode: service:tailscale
+    depends_on:
+      - tailscale
+    environment:
+      - KX_HOST=127.0.0.1
+      - KX_PORT=5000
+      - PYKX_UNLICENSED=1
+      - PYKX_IGNORE_QHOME=1
+    env_file:
+      - path: ./minio.env
+        required: true
+
   # key-maint: the transport-tiered "key status" widget backend (Ep. 3).
   # One process, two servers: a network server on loopback :8447 (published by
   # Serve on :10000 — public ONLY if you funnel it, and it enforces the same

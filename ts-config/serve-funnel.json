@@ -12,6 +12,9 @@
     "6903": {
       "HTTPS": true
     },
+    "6904": {
+      "HTTPS": true
+    },
     "8088": {
       "HTTPS": true
     }
@@ -42,6 +45,13 @@
       "Handlers": {
         "/": {
           "Proxy": "http://127.0.0.1:6903"
+        }
+      }
+    },
+    "${TS_CERT_DOMAIN}:6904": {
+      "Handlers": {
+        "/": {
+          "Proxy": "http://127.0.0.1:6904"
         }
       }
     },
