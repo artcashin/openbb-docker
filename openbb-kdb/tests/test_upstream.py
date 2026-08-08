@@ -15,8 +15,10 @@ class FakeFetcher:
 
 
 class FakeProvider:
-    def __init__(self, fetchers):
+    def __init__(self, fetchers, credentials=None):
         self.fetcher_dict = fetchers
+        if credentials is not None:
+            self.credentials = credentials
 
 
 def install_registry(monkeypatch, providers):
@@ -31,6 +33,71 @@ async def test_fetches_through_the_named_provider(monkeypatch):
     install_registry(monkeypatch, {"eodhd": FakeProvider({"EquityHistorical": FakeFetcher})})
     rows = await fetch_gap("eodhd", "EquityHistorical", {"symbol": "AAPL"}, {"k": "v"})
     assert rows == [{"date": "2024-01-02", "close": 1.0}]
+    assert FakeFetcher.last_call == ({"symbol": "AAPL"}, {"k": "v"})
+
+
+class FakeCredentialsModel:
+    """Stands in for openbb_core's process-wide Credentials singleton."""
+
+    def __init__(self, values):
+        self._values = values
+
+    def __getattr__(self, name):
+        return self._values.get(name)
+
+
+def install_global_credentials(monkeypatch, values):
+    import openbb_core.app.model.credentials as creds_mod
+    import openbb_core.provider.query_executor as qe_mod
+
+    monkeypatch.setattr(creds_mod, "Credentials", lambda: FakeCredentialsModel(values))
+
+    def fake_filter(credentials, provider, require_credentials):
+        return {
+            field: v
+            for field in provider.credentials
+            if (v := credentials.get(field)) is not None
+        }
+
+    monkeypatch.setattr(qe_mod.QueryExecutor, "filter_credentials", staticmethod(fake_filter))
+
+
+@pytest.mark.asyncio
+async def test_upstream_credential_is_resolved_from_the_global_set_when_missing(monkeypatch):
+    """The request-scoped credentials fetch_gap receives are kdb's own (empty,
+    since kdb declares none) -- the real regression this guards: a cache miss
+    must not 502 with "Missing EODHD credential" just because kdb itself has
+    no key of its own."""
+    install_registry(
+        monkeypatch,
+        {"eodhd": FakeProvider({"EquityHistorical": FakeFetcher}, credentials=["eodhd_api_key"])},
+    )
+    install_global_credentials(monkeypatch, {"eodhd_api_key": "real-key"})
+    await fetch_gap("eodhd", "EquityHistorical", {"symbol": "AAPL"}, {})
+    assert FakeFetcher.last_call == ({"symbol": "AAPL"}, {"eodhd_api_key": "real-key"})
+
+
+@pytest.mark.asyncio
+async def test_an_already_present_upstream_credential_is_not_overridden(monkeypatch):
+    install_registry(
+        monkeypatch,
+        {"eodhd": FakeProvider({"EquityHistorical": FakeFetcher}, credentials=["eodhd_api_key"])},
+    )
+    install_global_credentials(monkeypatch, {"eodhd_api_key": "global-key"})
+    await fetch_gap(
+        "eodhd", "EquityHistorical", {"symbol": "AAPL"}, {"eodhd_api_key": "explicit-key"}
+    )
+    assert FakeFetcher.last_call == ({"symbol": "AAPL"}, {"eodhd_api_key": "explicit-key"})
+
+
+@pytest.mark.asyncio
+async def test_provider_declaring_no_credentials_gets_credentials_passed_through_untouched(
+    monkeypatch,
+):
+    """A provider that never declares credentials (kdb itself, or a test
+    double) must not trigger the global-credentials lookup at all."""
+    install_registry(monkeypatch, {"noauth": FakeProvider({"EquityHistorical": FakeFetcher})})
+    await fetch_gap("noauth", "EquityHistorical", {"symbol": "AAPL"}, {"k": "v"})
     assert FakeFetcher.last_call == ({"symbol": "AAPL"}, {"k": "v"})
 
 

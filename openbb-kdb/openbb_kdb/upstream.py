@@ -34,6 +34,37 @@ def _registry() -> dict[str, Any]:
     return _REGISTRY_CACHE
 
 
+def _with_upstream_credentials(prov: Any, credentials: dict | None) -> dict | None:
+    """Fill in the upstream provider's OWN credential(s) (e.g. eodhd_api_key).
+
+    ``credentials`` here is whatever OpenBB's router resolved for the
+    ORIGINAL request -- scoped to the "kdb" provider, which declares no
+    credentials of its own (it's a cache layer, not a data source). A
+    cache-miss gap-fetch calls straight into the upstream provider's own
+    fetcher, which needs ITS key, so that key must be resolved separately
+    from the same process-wide credential set OpenBB's router itself reads
+    from (env vars / user_settings.json) -- not from the kdb-scoped dict this
+    function received. A provider that declares no credentials (or a test
+    double that doesn't set the attribute) is returned untouched, and an
+    already-present value is never overridden.
+    """
+    declared = getattr(prov, "credentials", None)
+    if not declared:
+        return credentials
+    merged = dict(credentials or {})
+    if all(merged.get(field) for field in declared):
+        return merged
+    from openbb_core.app.model.credentials import Credentials
+    from openbb_core.provider.query_executor import QueryExecutor
+
+    raw = {field: getattr(Credentials(), field, None) for field in declared}
+    resolved = QueryExecutor.filter_credentials(raw, prov, require_credentials=False)
+    for field, value in resolved.items():
+        if not merged.get(field):
+            merged[field] = value
+    return merged
+
+
 def _normalize_rows(provider: str, result: Any) -> list[dict]:
     """Turn a fetcher's result into a plain list of dicts.
 
@@ -81,6 +112,7 @@ async def fetch_gap(
             f"Provider {provider!r} does not implement {model}. Implements: "
             f"{sorted(prov.fetcher_dict)}"
         )
+    credentials = _with_upstream_credentials(prov, credentials)
     # Deliberately NOT wrapped: OpenBB assigns meaning to specific exceptions
     # raised by fetch_data (e.g. EmptyDataError), and this cache must be
     # transparent -- provider="kdb" should behave exactly like the upstream

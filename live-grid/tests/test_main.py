@@ -128,6 +128,13 @@ def test_websocket_registers_params_and_streams_dirty_rows(monkeypatch):
         quotes.rows["AAPL"] = {"symbol": "AAPL", "price": 151.0}
         for dirty in manager._dirty.values():
             dirty.add("AAPL")
-        row = ws.receive_json()
-        assert row["symbol"] == "AAPL"
+        # The registration's baseline seed may already have flushed AAPL at
+        # its snapshot price (100.0) before the overwrite above landed; the
+        # 151.0 update is guaranteed to follow it (AAPL is dirty again), so
+        # consume messages until it arrives instead of racing the first flush.
+        for _ in range(10):
+            row = ws.receive_json()
+            assert row["symbol"] == "AAPL"
+            if row["price"] == 151.0:
+                break
         assert row["price"] == 151.0
