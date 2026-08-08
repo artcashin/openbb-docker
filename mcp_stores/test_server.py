@@ -57,7 +57,7 @@ class FakeConn:
 @pytest.fixture
 def arctic_store(monkeypatch):
     monkeypatch.setenv(
-        "ARCTICDB_URI", "s3://100.122.250.60:openbb?port=9000&access=x&secret=y"
+        "ARCTICDB_URI", "s3://192.0.2.60:openbb?port=9000&access=x&secret=y"
     )
     store = MagicMock()
     monkeypatch.setitem(
@@ -162,7 +162,7 @@ def test_arctic_read_unknown_symbol_raises(arctic_store):
 
 def test_scrub_redacts_access_and_secret_params():
     msg = (
-        "S3 error connecting to s3://100.122.250.60:openbb?port=9000"
+        "S3 error connecting to s3://192.0.2.60:openbb?port=9000"
         "&access=AKIAMINIOKEY&secret=SUPERSECRET123"
     )
     out = server._scrub(msg)
@@ -175,7 +175,7 @@ def test_arctic_backend_error_never_leaks_credentials(monkeypatch):
     # ARCTICDB_URI raises a ValueError that (for a real S3 client) echoes
     # the full credential-bearing URI. Confirm the caller never sees it.
     secret_uri = (
-        "s3://100.122.250.60:openbb?port=9000"
+        "s3://192.0.2.60:openbb?port=9000"
         "&access=AKIAMINIOKEY&secret=SUPERSECRET123"
     )
     monkeypatch.setenv("ARCTICDB_URI", secret_uri)

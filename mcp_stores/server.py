@@ -3,7 +3,7 @@
 Runs beside openbb-api inside the NAS shared network namespace
 (network_mode: service:tailscale), serving streamable-http MCP on
 127.0.0.1:6902 (path /mcp), published by Tailscale Serve on
-https://openbb.tailb9874f.ts.net:8444/mcp.
+https://openbb.<your-tailnet>.ts.net:8444/mcp.
 
 Why it exists: the REST arcticdb/kdb providers only answer known-symbol OHLCV
 queries and return 204 against this store's raw quote/trade tick data. These
