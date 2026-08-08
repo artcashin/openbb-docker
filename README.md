@@ -15,7 +15,7 @@ from later chapters is.
 | v8.0.0 | Ep. 8 — All the News That Fits, We Print | rss-ticker news wire joins the stack |
 | v9.0.0 | Ep. 9 — The Tape | EODHD provider extension + live-grid streaming service |
 | v10.0.0 | Ep. 10 — The Cache | kdb+ read-through cache (`provider="kdb"`) + tick recording and a unified chart in `live-grid` |
-| v11.0.0 | Ep. 11 — The Shared Store | MinIO as its own tailnet node + ArcticDB (`provider="arcticdb"`) + `tick-lab` |
+| v11.0.0 | Ep. 11 — The Shared Store | MinIO as its own tailnet node + ArcticDB (`provider="arcticdb"`) + `tick-lab` + the `live_chart` widget |
 | v11.1.0 | Ep. 11 — The Shared Store | `tick-lab`'s EODHD-through-the-API reference adapter — the per-minute 2023 comparison yfinance cannot serve |
 | v11.1.1 | Ep. 11 — The Shared Store | `tick-lab`'s in-process OpenBB reference adapter (`--reference eodhd-local`) — the same call made locally, and what it costs versus `eodhd-api` |
 
@@ -75,6 +75,10 @@ unaffected). `tick-lab` itself is unaffected either way: it runs on your
 laptop, not in the image, and ArcticDB does publish native macOS arm64
 wheels. See [tick-lab/README.md](tick-lab/README.md) and
 [docs/arcticdb-minio-design.md](docs/arcticdb-minio-design.md).
+This release also ships the **`live_chart` widget** — a data-only
+`live-grid/widgets.json` declaration (Workspace type `live_chart`) over the
+existing `GET /series` + `live_grid_ws`, so the Ep. 10 chart streams in
+Workspace itself with no new server code.
 
 **New in v10.0.0 (Ep. 10):** the cache, tick recording, and one unified
 chart. The **openbb-kdb provider extension** (`provider="kdb"`) puts an

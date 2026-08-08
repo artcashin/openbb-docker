@@ -5,8 +5,8 @@ US equities, crypto and forex in one watchlist. Companion code for
 *Adventures in OpenBB, Ep. 9*, extended in **Ep. 10** with tick recording and
 a chart that joins cached history to bars built from the live feed.
 
-- `GET /widgets.json` — the widget contract (`live_grid` plus, when the chart
-  is enabled, `kdb_cache_chart`).
+- `GET /widgets.json` — the widget contract (`live_grid`, `live_chart`, and
+  `kdb_cache_chart`).
 - `GET /live_grid?symbol=A,B,C` — initial rows, seeded from REST snapshots
   (previous close is cached as the change baseline).
 - `WS /live_grid_ws` — Workspace sends `{"params":{"symbol":"A,B"}}` on
