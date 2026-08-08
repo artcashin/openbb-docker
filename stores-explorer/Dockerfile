@@ -24,4 +24,15 @@ COPY stores-explorer/pyproject.toml ./
 COPY stores-explorer/app/ app/
 COPY stores-explorer/widgets.json ./
 RUN pip install .
+
+# Same reusable entrypoint openbb-local (stores-mcp's own image) already
+# runs, for the same reason: network_mode: service:tailscale shares the
+# NETWORK namespace but not the filesystem, so MagicDNS names (like the
+# MinIO node's) don't resolve in here even though every other tailnet
+# client resolves them fine. HOSTS_ALIAS pins a name -> IP into /etc/hosts
+# before exec, without needing compose extra_hosts (rejected under
+# network_mode: service:*). Optional -- a no-op when HOSTS_ALIAS is unset.
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "6904"]
