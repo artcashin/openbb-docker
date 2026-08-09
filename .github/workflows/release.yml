@@ -46,42 +46,70 @@ jobs:
       - id: sha
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
+      # The discovery step parses compose; don't rely on the runner image
+      # happening to ship PyYAML for the system interpreter.
+      - name: PyYAML
+        run: pip install --quiet pyyaml
+
       - id: set
         name: Work out which images exist at this tag
         env:
           TARGET_REF: ${{ steps.ref.outputs.ref }}
         run: |
           python3 - <<'PY' >> "$GITHUB_OUTPUT"
-          import json, os, pathlib
+          import json, os, pathlib, yaml
 
-          # name matches the `image:` in docker-compose.yml so a restore is a
-          # plain registry prefix, not a rename. context/dockerfile mirror the
-          # compose build stanzas: key-maint, minio and kdb-x COPY from their own
-          # directory, live-grid and stores-explorer COPY from the repo root.
-          IMAGES = [
-              ("openbb-local",           ".",                "Dockerfile"),
-              ("openbb-key-maint",       "key-maint",        "key-maint/Dockerfile"),
-              ("openbb-live-grid",       ".",                "live-grid/Dockerfile"),
-              ("kdb-x",                  "kdb-x",            "kdb-x/Dockerfile"),
-              ("openbb-minio",           "minio",            "minio/Dockerfile"),
-              ("openbb-stores-explorer", ".",                "stores-explorer/Dockerfile"),
-          ]
+          # docker-compose.yml at THIS tag is the source of truth, not a table in
+          # this file: live-grid's context was ./live-grid in Ep. 9 and moved to
+          # the repo root in Ep. 10, so a hardcoded context builds one of them
+          # wrong. Read what that episode actually declared.
+          entries, seen = [], set()
 
-          entries = []
-          for name, context, dockerfile in IMAGES:
-              path = pathlib.Path(dockerfile)
-              if not path.exists():
-                  continue  # predates this episode
+          compose = pathlib.Path("docker-compose.yml")
+          services = {}
+          if compose.exists():
+              services = (yaml.safe_load(compose.read_text()) or {}).get("services", {}) or {}
+
+          for svc, spec in services.items():
+              build = spec.get("build")
+              image = spec.get("image")
+              if not build or not image:
+                  continue
+              context = build.get("context") if isinstance(build, dict) else build
+              dockerfile = (build.get("dockerfile") if isinstance(build, dict) else None) or "Dockerfile"
+              # rss-ticker builds from its own repo over https -- not ours to publish.
+              if not context or "://" in context:
+                  continue
+              context = context.lstrip("./") or "."
+              df_path = dockerfile if "/" in dockerfile else f"{context}/{dockerfile}".lstrip("./")
+              if not pathlib.Path(df_path).exists():
+                  continue
+              name = image.split(":")[0]
+              # openbb-api, openbb-mcp and stores-mcp are the SAME build declared
+              # three times under different tags. Build it once.
+              key = (name, context, df_path)
+              if key in seen:
+                  continue
+              seen.add(key)
               # ArcticDB publishes manylinux x86_64 wheels only -- no aarch64 --
               # so any image that installs it cannot produce an arm64 layer. The
               # root Dockerfile says so itself from Ep. 11 onward.
-              text = path.read_text(encoding="utf-8", errors="replace").lower()
-              amd64_only = "arcticdb" in text
+              text = pathlib.Path(df_path).read_text(encoding="utf-8", errors="replace").lower()
               entries.append({
                   "name": name,
                   "context": context,
-                  "dockerfile": dockerfile,
-                  "platforms": "linux/amd64" if amd64_only else "linux/amd64,linux/arm64",
+                  "dockerfile": df_path,
+                  "platforms": "linux/amd64" if "arcticdb" in text else "linux/amd64,linux/arm64",
+              })
+
+          # kdb-x carries no compose service (the operator supplies their own q),
+          # so it has to be named explicitly rather than discovered.
+          if pathlib.Path("kdb-x/Dockerfile").exists():
+              entries.append({
+                  "name": "kdb-x",
+                  "context": "kdb-x",
+                  "dockerfile": "kdb-x/Dockerfile",
+                  "platforms": "linux/amd64,linux/arm64",
               })
 
           ref = os.environ["TARGET_REF"]
