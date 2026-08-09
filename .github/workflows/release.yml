@@ -197,6 +197,11 @@ jobs:
   # that silently claims to be multi-arch.
   merge:
     needs: [discover, build]
+    # Without this, ONE image failing skips the merge for ALL of them --
+    # fail-fast: false keeps the other builds running but a failed `needs` still
+    # skips whatever depends on it, so images that built perfectly never get
+    # published. Each image's merge stands or falls on its own digests instead.
+    if: ${{ !cancelled() && needs.discover.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
