@@ -246,7 +246,17 @@ services:
       - ./api-auth.env:/config/api-auth.env:ro
       # Admin bind lives here. Create it 0700, owned by the host admin user:
       #   mkdir -p key-maint-admin && chmod 700 key-maint-admin
-      - ./key-maint-admin:/config/admin
+      #
+      # Docker Desktop cannot chmod a unix socket inside a macOS bind mount, so
+      # on a Mac this service dies at startup with
+      #   OSError: [Errno 22] Invalid argument: '/config/admin/key-maint-admin.sock'
+      # The default below is the Linux deployment target and is unchanged --
+      # the socket stays on the host, which is what the SSH admin flow in
+      # key-maint/README.md connects to. On a Mac, run the stack with
+      #   KEY_MAINT_ADMIN=key-maint-admin docker compose up -d
+      # to put it on a named volume instead: the service runs, at the cost of
+      # the socket no longer being reachable from the host.
+      - ${KEY_MAINT_ADMIN:-./key-maint-admin}:/config/admin
 
   # live-grid (Ep. 9; tick recording + unified chart added Ep. 10): OpenBB
   # Workspace live_grid backend streaming EODHD websocket prices. Loopback
@@ -430,3 +440,7 @@ volumes:
   rss-ticker-data:
   minio-data:
   minio-ts-state:
+  # Only used when KEY_MAINT_ADMIN names it (see key-maint's admin mount).
+  # Declaring it unconditionally costs nothing on the Linux default, where the
+  # admin socket stays a host bind mount.
+  key-maint-admin:
