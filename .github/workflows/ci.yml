@@ -14,14 +14,14 @@ jobs:
   scrub:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Scrub gate — no private infrastructure details
         run: bash scripts/scrub-check.sh
   key-maint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with: { python-version: "3.12" }
       - name: Test key-maint
         working-directory: key-maint
@@ -31,8 +31,8 @@ jobs:
   live-grid:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with: { python-version: "3.12" }
       - name: Install kdb-store (live-grid's tick recorder depends on it)
         run: pip install -e ./kdb-store
@@ -44,8 +44,8 @@ jobs:
   openbb-eodhd:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with: { python-version: "3.12" }
       - name: Test the EODHD provider extension (mocked SDK)
         working-directory: openbb-eodhd
@@ -55,8 +55,8 @@ jobs:
   openbb-kdb:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with: { python-version: "3.12" }
       - name: Install kdb-store (openbb-kdb depends on it)
         run: pip install -e ./kdb-store
@@ -68,8 +68,8 @@ jobs:
   kdb-store:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with: { python-version: "3.12" }
       - name: Test kdb-store (fake q connection, no license, no network)
         working-directory: kdb-store
@@ -79,8 +79,8 @@ jobs:
   openbb-arcticdb:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with: { python-version: "3.12" }
       # GitHub-hosted ubuntu-latest runners are x86_64, so the arcticdb
       # wheel resolves the same way it does inside the Platform image.
@@ -92,8 +92,8 @@ jobs:
   tick-lab:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with: { python-version: "3.12" }
       # Same x86_64-wheel note as openbb-arcticdb above.
       - name: Test tick-lab (mocked reference adapters, no store, no network)
@@ -104,8 +104,8 @@ jobs:
   minio-tests:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with: { python-version: "3.12" }
       - name: Test cert-sync.sh (fake tailscale + signal-catching subprocess, no real MinIO)
         working-directory: minio
@@ -121,7 +121,7 @@ jobs:
   build-smoke:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Build the image
         run: docker build -t openbb-local:ci .
       - name: Boot the API with Basic auth
