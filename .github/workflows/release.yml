@@ -101,15 +101,24 @@ jobs:
               # root Dockerfile says so itself from Ep. 11 onward.
               text = pathlib.Path(df_path).read_text(encoding="utf-8", errors="replace").lower()
               arches = ["amd64"] if "arcticdb" in text else ["amd64", "arm64"]
-              images.append({"name": name, "context": context, "dockerfile": df_path, "arches": arches})
-
-          # kdb-x carries no compose service (the operator supplies their own q),
-          # so it has to be named explicitly rather than discovered.
-          if pathlib.Path("kdb-x/Dockerfile").exists():
+              # Published under a reserved episode- namespace rather than the
+              # bare compose name. `openbb-local` already exists as a
+              # hand-pushed package holding OpenBB PLATFORM versions (4.6.0,
+              # 4.7.2) -- unlinked from this repo, so Actions gets 403 on it,
+              # and mixing episode versions into it would put two unrelated
+              # version schemes in one package anyway. The prefix keeps the
+              # episode set repo-owned, auto-linked, and collision-proof
+              # against anything pushed by hand later.
               images.append({
-                  "name": "kdb-x", "context": "kdb-x",
-                  "dockerfile": "kdb-x/Dockerfile", "arches": ["amd64", "arm64"],
+                  "name": f"episode-{name}", "context": context,
+                  "dockerfile": df_path, "arches": arches,
               })
+
+          # kdb-x is deliberately NOT built here. It has its own version line
+          # (1.0, 1.1) that no episode references, it carries no compose service
+          # because the operator supplies their own q, and the image it produces
+          # contains KX's binary -- which this repo publishes privately by hand
+          # rather than pushing to a package that Actions creates public.
 
           # One matrix entry per (image, architecture) so each lands on a runner
           # of its own architecture.
