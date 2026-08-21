@@ -72,7 +72,7 @@ services:
 
   # OpenBB Platform REST API. Binds 127.0.0.1 so only Serve can reach it.
   openbb-api:
-    image: openbb-local:11.0.0
+    image: openbb-local:11.0.1
     environment:
       # Shares the tailscale sidecar's network namespace, which does NOT share
       # resolv.conf -- MagicDNS names do not resolve in here, and compose
@@ -86,7 +86,13 @@ services:
     depends_on:
       - tailscale
       - kdb
-    command: ["openbb-api", "--host", "127.0.0.1", "--port", "6900"]
+    # `--app/--factory` serves api_app.py's factory instead of the stock
+    # Platform app: same API, plus the CORS layer that answers Chrome's
+    # Private Network Access preflight. The image no longer patches
+    # openbb_core's rest_api.py, so this flag is load-bearing -- drop it
+    # and pro.openbb.co silently stops reaching this backend.
+    command: ["openbb-api", "--app", "/opt/api_app.py", "--name", "main", "--factory",
+              "--host", "127.0.0.1", "--port", "6900"]
     env_file:
       - path: ./credentials.env
         required: false
@@ -104,13 +110,54 @@ services:
     volumes:
       - openbb-data:/root/.openbb_platform
 
+  # live-grid (Ep. 9; tick recording + unified chart added Ep. 10): OpenBB
+  # Workspace live_grid backend streaming EODHD websocket prices, plus the
+  # kdb_cache_chart widget (historical bars from kdb+, joined to live
+  # tick-derived bars). Loopback :6903, same shared netns as everything
+  # else here -- not published by Serve yet, so reachable only from inside
+  # this stack until a serve.json stanza is added for it.
+  #
+  # KDB_EMBEDDED=false: connects to the SAME external kdb container the
+  # other services use (127.0.0.1:5000, via deps.env's KDB_HOST/KDB_PORT),
+  # rather than trying to spawn its own q -- exactly the openbb-api pattern
+  # above. No kdb-license mount needed: QLIC is only read by whichever
+  # process actually spawns q (kdb_store/session.py), and this one never
+  # does.
+  live-grid:
+    image: openbb-live-grid:latest
+    container_name: openbb-live-grid
+    restart: unless-stopped
+    network_mode: service:tailscale
+    depends_on:
+      - tailscale
+      - kdb
+      - openbb-api
+    environment:
+      - LIVE_GRID_CHART=true
+      - LIVE_TICK_WINDOW_SECONDS=86400
+      - KDB_EMBEDDED=false
+    env_file:
+      # EODHD_API_KEY comes from here.
+      - path: ./credentials.env
+        required: false
+      # NAS-specific kdb wiring (KDB_HOST/KDB_PORT), same file openbb-api
+      # and stores-mcp already load.
+      - path: ./deps.env
+        required: false
+      # /chart and /series are CLIENTS of openbb-api, which enforces Basic
+      # auth. Without the SAME credentials here, OPENBB_API_USERNAME is
+      # unset, the client sends no auth header, and every historical fetch
+      # comes back 401 -- the chart would render as an error title.
+      - path: ./api-auth.env
+        required: true
+
   # OpenBB MCP server: wraps the same Platform app as openbb-api, in-process,
   # and serves MCP over streamable-http. Same image, same env and OPENBB_HOME
   # volume as openbb-api so it sees identical provider credentials. Bound to
   # 127.0.0.1; Tailscale Serve publishes it on :8443. Endpoint path is /mcp
   # (a request to /mcp/ 307-redirects there).
   openbb-mcp:
-    image: openbb-local:11.0.0
+    image: openbb-local:11.0.1
     container_name: openbb-mcp
     restart: unless-stopped
     network_mode: service:tailscale
@@ -162,7 +209,11 @@ services:
   # can never expose this unauthenticated store to the tailnet (environment
   # always wins over env_file). Serve publishes it on :8444.
   stores-mcp:
-    image: openbb-local:11.0.0-mcp
+    # Was openbb-local:11.0.0-mcp -- a hand-built image whose source (this
+    # server's server.py/test_server.py) existed nowhere in git. Now that
+    # mcp_stores/ is committed and COPY'd by the root Dockerfile, this runs
+    # off the SAME image as openbb-api/openbb-mcp.
+    image: openbb-local:11.0.0
     container_name: openbb-stores-mcp
     restart: unless-stopped
     network_mode: service:tailscale
@@ -186,6 +237,39 @@ services:
       - STORES_PORT=6902
       - KX_HOST=127.0.0.1
       - KX_PORT=5000
+      # Baked into the old -mcp image's own Dockerfile (never tracked); the
+      # new shared image doesn't have them, so they must live here now. This
+      # process only ever connects to an EXISTING q as an IPC client -- it
+      # never spawns/embeds one, so it needs no kdb+ licence.
+      - PYKX_UNLICENSED=1
+      - PYKX_IGNORE_QHOME=1
+
+  # stores-explorer (Ep. 11): read-only widget backend for ArcticDB/kdb+
+  # browsing, for the bdobb explorer widgets -- see openbb-docker PR #3 and
+  # stores-explorer/README.md. Same store-access story as stores-mcp above
+  # (deps.env for KDB_HOST/KDB_PORT-adjacent values, HOSTS_ALIAS for the
+  # MinIO node's name), but over plain REST/widgets.json instead of MCP,
+  # since its caller is bdobb (the user's own remote machine) rather than an
+  # in-stack agent -- reached externally, unlike stores-mcp.
+  stores-explorer:
+    image: openbb-stores-explorer:11.2.0
+    container_name: openbb-stores-explorer
+    restart: unless-stopped
+    network_mode: service:tailscale
+    depends_on:
+      - tailscale
+      - kdb
+    env_file:
+      - path: ./credentials.env
+        required: false
+      - path: ./deps.env
+        required: false
+    environment:
+      - HOSTS_ALIAS=minio.tailb9874f.ts.net:100.123.139.84
+      - KX_HOST=127.0.0.1
+      - KX_PORT=5000
+      - PYKX_UNLICENSED=1
+      - PYKX_IGNORE_QHOME=1
 
   # API key maintenance widget. Two binds inside the shared netns: a unix
   # socket (admin: values visible; reachable only via ssh -L to the host path
