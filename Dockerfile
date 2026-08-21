@@ -46,20 +46,47 @@ RUN pip install \
         "openbb-quantitative==1.6.2" \
         "openbb-econometrics==1.7.2"
 
-# Patch openbb_cftc.cftc_router.build_choices: upstream assumes name/code/
-# subcategory are non-None and calls .strip() unconditionally. Some CFTC
-# contracts have a NULL subcategory, which crashes the REST server at startup
-# (the function is registered as a FastAPI startup event handler) and exits
-# the whole API.
+# Patch openbb_cftc.cftc_router.build_choices: upstream calls .strip() on
+# contract fields that can be NULL. The call runs in the COT router's lifespan
+# context, so an AttributeError there takes the whole REST server down at
+# startup.
+#
+# Two shapes have to be covered. openbb-cftc 1.4.2 rewrote `d.name.strip()`
+# as `getattr(d, "name", "").strip()`, and a getattr default does NOT help
+# when the attribute exists and IS None -- which is exactly the CFTC case. The
+# `openbb` distribution pins its providers with floors (>=1.4.1,<2.0.0), not
+# exact versions, so a rebuild can land on either shape.
+#
+# The patch asserts it changed something, and that neither vulnerable shape
+# survives. An ast.parse check alone passes happily on source that was never
+# touched -- which is how the earlier version of this patch went silent when
+# 1.4.2 shipped, quietly restoring the very crash it exists to prevent.
+# Resolving the path from the module (rather than hardcoding site-packages)
+# keeps it working across base-image Python bumps.
 RUN python - <<'PY'
-import re, pathlib
-p = pathlib.Path("/usr/local/lib/python3.12/site-packages/openbb_cftc/cftc_router.py")
-src = p.read_text()
-for attr in ("name", "code", "subcategory"):
-    src = re.sub(rf"d\.{attr}\.strip\(\)", f"(d.{attr} or '').strip()", src)
-p.write_text(src)
+import ast, importlib.util, pathlib, re, sys
+
+GETATTR = r"""getattr\(d,\s*(['"])(\w+)\1,\s*(?:''|"")\)\.strip\(\)"""
+ATTR = r"""\bd\.(\w+)\.strip\(\)"""
+
+spec = importlib.util.find_spec("openbb_cftc")
+if spec is None or not spec.submodule_search_locations:
+    sys.exit("openbb_cftc is not installed -- cannot apply the NULL-field patch")
+
+path = pathlib.Path(list(spec.submodule_search_locations)[0]) / "cftc_router.py"
+src, n_getattr = re.subn(GETATTR, r"""(getattr(d, \1\2\1, '') or '').strip()""", path.read_text())
+src, n_attr = re.subn(ATTR, r"(d.\1 or '').strip()", src)
+
+if not n_getattr + n_attr:
+    sys.exit(f"cftc_router patch matched nothing in {path} -- upstream changed shape again")
+for name, pattern in (("getattr", GETATTR), ("attribute", ATTR)):
+    if re.search(pattern, src):
+        sys.exit(f"cftc_router still has unguarded {name} .strip() calls after patching")
+
+ast.parse(src)
+path.write_text(src)
+print(f"cftc_router patched: {n_getattr} getattr + {n_attr} attribute call(s) guarded")
 PY
-RUN python -c "import ast; ast.parse(open('/usr/local/lib/python3.12/site-packages/openbb_cftc/cftc_router.py').read()); print('cftc_router patch parses OK')"
 
 # Patch openbb_core.api.rest_api CORS setup to answer Chrome's Private Network
 # Access preflight. OpenBB Workspace runs at https://pro.openbb.co (a public
