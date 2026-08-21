@@ -236,10 +236,16 @@ as the value).
   GUI chart backend (it cannot render headless); chart endpoints return Plotly
   figure JSON and the *client* renders it — which is exactly what Episode 2's
   browser setup and BDOBB do.
-- The image carries two small patches to upstream, each documented in the
-  Dockerfile: a CFTC router startup crash guard, and CORS
-  `allow_private_network` so browser clients can pass Chrome's Private
-  Network Access preflight.
+- **Two upstream rough edges are handled, in two different ways.** The CFTC
+  router calls `.strip()` on contract fields that can be NULL, which takes
+  the REST server down at startup; the image patches that in place, and the
+  patch now *fails the build* if it stops matching rather than going quietly
+  no-op (see the Dockerfile). CORS `allow_private_network` — needed so
+  browser clients can pass Chrome's Private Network Access preflight, and not
+  exposed as an OpenBB setting — is no longer a patch at all: `openbb-api`
+  runs [`api_app.py`](api_app.py) through its documented `--app/--factory`
+  entrypoint, so that customization is version-controlled code instead of a
+  text substitution against upstream source.
 - All hostnames in this repo are placeholders (`<your-tailnet>.ts.net`).
   CI runs `scripts/scrub-check.sh` to keep it that way.
 

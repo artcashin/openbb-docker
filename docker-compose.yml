@@ -63,7 +63,12 @@ services:
     network_mode: service:tailscale
     depends_on:
       - tailscale
-    command: ["openbb-api", "--host", "127.0.0.1", "--port", "6900"]
+    # `--app/--factory` serves api_app.py's factory instead of the stock
+    # Platform app: same API, plus the CORS layer that answers Chrome's
+    # Private Network Access preflight so pro.openbb.co can reach a backend
+    # the browser classifies as local (see Ep. 2's gotchas, and api_app.py).
+    command: ["openbb-api", "--app", "/opt/api_app.py", "--name", "main", "--factory",
+              "--host", "127.0.0.1", "--port", "6900"]
     env_file:
       # Provider API keys (optional — keyless providers work with none).
       - path: ./credentials.env
