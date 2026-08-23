@@ -46,36 +46,47 @@ RUN pip install \
         "openbb-quantitative==1.6.2" \
         "openbb-econometrics==1.7.2"
 
-# Patch openbb_cftc.cftc_router.build_choices: upstream assumes name/code/
-# subcategory are non-None and calls .strip() unconditionally. Some CFTC
-# contracts have a NULL subcategory, which crashes the REST server at startup
-# (the function is registered as a FastAPI startup event handler) and exits
-# the whole API.
+# Patch openbb_cftc.cftc_router.build_choices: upstream calls .strip() on
+# contract fields that can be NULL. The call runs in the COT router's lifespan
+# context, so an AttributeError there takes the whole REST server down at
+# startup.
+#
+# Two shapes have to be covered. openbb-cftc 1.4.2 rewrote `d.name.strip()`
+# as `getattr(d, "name", "").strip()`, and a getattr default does NOT help
+# when the attribute exists and IS None -- which is exactly the CFTC case. The
+# `openbb` distribution pins its providers with floors (>=1.4.1,<2.0.0), not
+# exact versions, so a rebuild can land on either shape.
+#
+# The patch asserts it changed something, and that neither vulnerable shape
+# survives. An ast.parse check alone passes happily on source that was never
+# touched -- which is how the earlier version of this patch went silent when
+# 1.4.2 shipped, quietly restoring the very crash it exists to prevent.
+# Resolving the path from the module (rather than hardcoding site-packages)
+# keeps it working across base-image Python bumps.
 RUN python - <<'PY'
-import re, pathlib
-p = pathlib.Path("/usr/local/lib/python3.12/site-packages/openbb_cftc/cftc_router.py")
-src = p.read_text()
-for attr in ("name", "code", "subcategory"):
-    src = re.sub(rf"d\.{attr}\.strip\(\)", f"(d.{attr} or '').strip()", src)
-p.write_text(src)
-PY
-RUN python -c "import ast; ast.parse(open('/usr/local/lib/python3.12/site-packages/openbb_cftc/cftc_router.py').read()); print('cftc_router patch parses OK')"
+import ast, importlib.util, pathlib, re, sys
 
-# Patch openbb_core.api.rest_api CORS setup to answer Chrome's Private Network
-# Access preflight. OpenBB Workspace runs at https://pro.openbb.co (a public
-# origin); when the browser classifies your backend's address as private/local
-# (see Ep. 2's gotchas), the fetch is gated behind an OPTIONS preflight carrying
-# Access-Control-Request-Private-Network: true. Starlette rejects it unless
-# allow_private_network=True, and OpenBB exposes no setting for this.
-RUN python - <<'PY'
-import pathlib
-p = pathlib.Path("/usr/local/lib/python3.12/site-packages/openbb_core/api/rest_api.py")
-src = p.read_text()
-anchor = "    allow_headers=system.api_settings.cors.allow_headers,\n)"
-assert anchor in src, "rest_api.py CORS block not found - upstream changed"
-p.write_text(src.replace(anchor, anchor.replace("\n)", "\n    allow_private_network=True,\n)"), 1))
+GETATTR = r"""getattr\(d,\s*(['"])(\w+)\1,\s*(?:''|"")\)\.strip\(\)"""
+ATTR = r"""\bd\.(\w+)\.strip\(\)"""
+
+spec = importlib.util.find_spec("openbb_cftc")
+if spec is None or not spec.submodule_search_locations:
+    sys.exit("openbb_cftc is not installed -- cannot apply the NULL-field patch")
+
+path = pathlib.Path(list(spec.submodule_search_locations)[0]) / "cftc_router.py"
+src, n_getattr = re.subn(GETATTR, r"""(getattr(d, \1\2\1, '') or '').strip()""", path.read_text())
+src, n_attr = re.subn(ATTR, r"(d.\1 or '').strip()", src)
+
+if not n_getattr + n_attr:
+    sys.exit(f"cftc_router patch matched nothing in {path} -- upstream changed shape again")
+for name, pattern in (("getattr", GETATTR), ("attribute", ATTR)):
+    if re.search(pattern, src):
+        sys.exit(f"cftc_router still has unguarded {name} .strip() calls after patching")
+
+ast.parse(src)
+path.write_text(src)
+print(f"cftc_router patched: {n_getattr} getattr + {n_attr} attribute call(s) guarded")
 PY
-RUN python -c "import ast; ast.parse(open('/usr/local/lib/python3.12/site-packages/openbb_core/api/rest_api.py').read()); print('rest_api CORS patch parses OK')"
 
 # Custom EODHD provider extension (Ep. 9): equity/ETF/crypto/forex historical
 # (EOD + intraday) and fundamentals via the official SDK, pinned to a GitHub
@@ -117,6 +128,22 @@ assert 'kdb' in obb.coverage.providers, 'kdb provider not registered'; \
 assert 'arcticdb' in obb.coverage.providers, 'arcticdb provider not registered'; \
 print('OpenBB Platform OK:', len(obb.coverage.providers), 'providers (incl. eodhd, kdb, arcticdb)')"
 
+# The FastAPI app factory `openbb-api --factory` serves (see api_app.py):
+# the stock Platform app with Chrome's Private Network Access preflight
+# answered. Replaces an earlier build-time rewrite of openbb_core's
+# rest_api.py -- same effect, but through the documented `--app/--factory`
+# entrypoint instead of a text substitution against upstream source.
+COPY api_app.py /opt/api_app.py
+RUN python -c "\
+from openbb_platform_api.utils.api import import_app; \
+from starlette.middleware.cors import CORSMiddleware; \
+app = import_app('/opt/api_app.py', 'main', True); \
+layers = [mw for mw in app.user_middleware if mw.cls is CORSMiddleware]; \
+assert layers, 'api_app: no CORS middleware on the built app'; \
+assert all(mw.kwargs.get('allow_private_network') is True for mw in layers), \
+    'api_app: a CORS layer is missing allow_private_network'; \
+print('api_app factory OK:', len(layers), 'CORS layer(s), all private-network enabled')"
+
 WORKDIR /workspace
 
 # stores-mcp (Ep. 11): read-only ArcticDB/kdb+ discovery/query MCP server.
@@ -135,5 +162,8 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 
 # Default: the REST API on loopback (the compose file's Tailscale sidecar is
-# the only way in — see docker-compose.yml).
-CMD ["openbb-api", "--host", "127.0.0.1", "--port", "6900"]
+# the only way in — see docker-compose.yml). `--app/--factory` serves
+# api_app.py's factory rather than the stock app, which is what answers
+# Chrome's Private Network Access preflight.
+CMD ["openbb-api", "--app", "/opt/api_app.py", "--name", "main", "--factory", \
+     "--host", "127.0.0.1", "--port", "6900"]

@@ -147,6 +147,21 @@ jobs:
           # 422: credentials accepted, request reached validation (symbol is
           # required). Keeps the check free of any outbound provider call.
           test "$(probe -u ci:ci-secret "$ep")" = "422"
+      - name: The Private Network Access preflight is answered
+        run: |
+          # api_app.py exists to add allow_private_network to the CORS layer:
+          # without it, Chrome blocks pro.openbb.co -> a backend it classifies
+          # as local, and the failure is invisible server-side. Assert the
+          # response header rather than the middleware config, so this catches
+          # a regression at any layer (see the CFTC patch that went silent).
+          hdrs=$(docker exec api curl -s -D - -o /dev/null -X OPTIONS \
+            -H 'Origin: https://pro.openbb.co' \
+            -H 'Access-Control-Request-Method: GET' \
+            -H 'Access-Control-Request-Private-Network: true' \
+            http://127.0.0.1:6900/api/v1/equity/price/quote)
+          echo "$hdrs"
+          echo "$hdrs" | grep -qi '^access-control-allow-private-network: true'
+
       - name: The widget manifest is served
         run: |
           count=$(docker exec api curl -fsS -u ci:ci-secret http://127.0.0.1:6900/widgets.json | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')
