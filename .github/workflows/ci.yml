@@ -1,4 +1,28 @@
 name: ci
+#
+# Every pytest job runs under a hang guard. On 2026-08-23 the live-grid job on
+# main wedged for 21 minutes and was killed by hand; it printed NOTHING -- not
+# even pytest's platform header -- so there was no evidence of where it stuck,
+# and it passed on rerun with byte-identical dependencies. Three pieces, each
+# doing something the others cannot:
+#
+#   timeout-minutes         bounds the JOB. Without it a wedge burns GitHub's
+#                           6-hour default before anyone notices.
+#   timeout -s ABRT 600     bounds PYTEST and aborts it via SIGABRT, which
+#                           PYTHONFAULTHANDLER turns into a traceback of every
+#                           thread. Deliberately NOT pytest-timeout or
+#                           faulthandler_timeout: both arm per-test, so neither
+#                           fires when the wedge is during collection -- which
+#                           the silent failure above points at.
+#   --capture=sys           without it this is useless. pytest's default
+#                           capture replaces file descriptor 2, so the C-level
+#                           faulthandler dump lands in pytest's capture buffer
+#                           and dies with the process. capture=sys swaps the
+#                           Python-level objects only, leaving fd 2 alone, so
+#                           the dump reaches the real stderr and the log.
+#
+# Verified against a conftest that sleeps at import: bare pytest killed on a
+# wall clock yields zero output, the guarded form names the exact hanging line.
 on:
   push:
   pull_request:
@@ -13,12 +37,14 @@ jobs:
   # its own purpose) -- just keeping it visible.
   scrub:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - name: Scrub gate — no private infrastructure details
         run: bash scripts/scrub-check.sh
   key-maint:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -27,9 +53,10 @@ jobs:
         working-directory: key-maint
         run: |
           pip install -e .[dev]
-          pytest -q
+          PYTHONFAULTHANDLER=1 timeout -s ABRT 600 pytest -q --capture=sys
   live-grid:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -40,9 +67,10 @@ jobs:
         working-directory: live-grid
         run: |
           pip install -e .[dev]
-          pytest -q
+          PYTHONFAULTHANDLER=1 timeout -s ABRT 600 pytest -q --capture=sys
   openbb-eodhd:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -51,9 +79,10 @@ jobs:
         working-directory: openbb-eodhd
         run: |
           pip install -e .[dev]
-          pytest -q
+          PYTHONFAULTHANDLER=1 timeout -s ABRT 600 pytest -q --capture=sys
   openbb-kdb:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -64,9 +93,10 @@ jobs:
         working-directory: openbb-kdb
         run: |
           pip install -e .[dev]
-          pytest -q
+          PYTHONFAULTHANDLER=1 timeout -s ABRT 600 pytest -q --capture=sys
   kdb-store:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -75,9 +105,10 @@ jobs:
         working-directory: kdb-store
         run: |
           pip install -e .[dev]
-          pytest -q
+          PYTHONFAULTHANDLER=1 timeout -s ABRT 600 pytest -q --capture=sys
   openbb-arcticdb:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -88,9 +119,10 @@ jobs:
         working-directory: openbb-arcticdb
         run: |
           pip install -e .[dev]
-          pytest -q
+          PYTHONFAULTHANDLER=1 timeout -s ABRT 600 pytest -q --capture=sys
   tick-lab:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -100,9 +132,10 @@ jobs:
         working-directory: tick-lab
         run: |
           pip install -e .[dev]
-          pytest -q
+          PYTHONFAULTHANDLER=1 timeout -s ABRT 600 pytest -q --capture=sys
   minio-tests:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -111,7 +144,7 @@ jobs:
         working-directory: minio
         run: |
           pip install pytest
-          pytest tests -q
+          PYTHONFAULTHANDLER=1 timeout -s ABRT 600 pytest tests -q --capture=sys
   # The image ships no KX software: the Dockerfile builds from
   # python:3.12-slim and public PyPI packages only. KX's licence does not
   # permit this repo's owner to redistribute their q binary, so the operator
@@ -120,6 +153,7 @@ jobs:
   # build-smoke runs unconditionally like every other job.
   build-smoke:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - name: Build the image
