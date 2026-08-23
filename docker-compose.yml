@@ -133,15 +133,26 @@ services:
     network_mode: service:tailscale
     depends_on:
       - tailscale
-    # --default-categories + --tool-discovery keep the initial tools/list
+    # --default-categories + tool discovery keep the initial tools/list
     # small enough for a local model's context slot: all 219 tools cost
     # ~152k prompt tokens against a 65,536-token slot, which hard-errors
     # EVERY chat request. Discovery mode exposes ~10 tools (~1.4k tokens)
     # and lets the agent activate categories on demand. LOAD-BEARING —
-    # removing these flags breaks chat completely (see Ep. 6's gotchas).
+    # lose it and chat breaks completely (see Ep. 6's gotchas).
     command: ["openbb-mcp", "--host", "127.0.0.1", "--port", "6901",
-              "--default-categories", "equity", "--tool-discovery"]
+              "--default-categories", "equity"]
     environment:
+      # Tool discovery is requested by SETTING, not by the CLI flag, because
+      # that flag is a moving target: openbb-mcp-server 1.3.x defaulted
+      # discovery ON and spelled the switch `--no-tool-discovery`; 1.4.x
+      # flipped the default OFF and spelled it `--tool-discovery`. A pinned
+      # image is fine either way, but an unrecognised flag is a hard argparse
+      # error, so the flag turns a version bump into a container that will not
+      # start. `OPENBB_MCP_ENABLE_TOOL_DISCOVERY` is documented and accepted by
+      # BOTH lines, and a setting that stops being read degrades to the default
+      # rather than refusing to boot. Verified on the pinned 1.4.1: unset ->
+      # enable_tool_discovery=False, "true" -> True.
+      - OPENBB_MCP_ENABLE_TOOL_DISCOVERY=true
       # Neutralize the unconditionally-registered `install_skill` admin tool:
       # its only write target is the bundled skills provider, and an agent
       # reaching this server could otherwise persist files that later agent

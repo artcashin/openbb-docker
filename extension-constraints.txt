@@ -21,3 +21,23 @@ protobuf<7,>=3.5.0.post1  # from arcticdb
 # shapes AND fails the build if it matches nothing; this pin makes the rebuild
 # deterministic so it cannot drift a third time.
 openbb-cftc==1.4.2
+
+# --- The packages this image's own behaviour is pinned to ---
+# `openbb` pins its providers with FLOORS (>=x,<2.0.0), not exact versions, so
+# two builds of the same tag can resolve differently. That is exactly what let
+# the CFTC patch above go silent. These are the packages this image depends on
+# the INTERNALS of, so they are pinned rather than left to float:
+#
+#   openbb-core          api_app.py's factory reads the CORS middleware that
+#                        openbb_core.api.rest_api registers, and openbb-kdb
+#                        reads Credentials / QueryExecutor.filter_credentials.
+#   openbb-platform-api  api_app.py's whole shape exists because import_app
+#                        adds its OWN CORSMiddleware outermost; a change there
+#                        changes which layer answers the preflight.
+#
+# Everything else `openbb` pulls still floats, deliberately: pinning the full
+# resolved set would freeze ~40 packages and turn every routine upgrade into a
+# lockfile regeneration. Raise these only after rebuilding and confirming CI's
+# Private-Network-Access assertion still passes.
+openbb-core==1.6.10
+openbb-platform-api==1.3.6

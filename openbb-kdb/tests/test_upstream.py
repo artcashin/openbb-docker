@@ -219,3 +219,49 @@ async def test_registry_load_failure_raises_upstream_error_and_does_not_poison_c
     install_registry(monkeypatch, {"eodhd": FakeProvider({"EquityHistorical": FakeFetcher})})
     rows = await fetch_gap("eodhd", "EquityHistorical", {"symbol": "AAPL"}, {"k": "v"})
     assert rows == [{"date": "2024-01-02", "close": 1.0}]
+
+
+@pytest.mark.asyncio
+async def test_core_internals_drift_falls_back_to_the_environment(monkeypatch):
+    """`Credentials` / `QueryExecutor.filter_credentials` are openbb-core
+    internals, not documented API. If a core release moves or resignatures
+    them, the cache must still serve: fall back to reading the credential from
+    the environment rather than propagating an ImportError/TypeError out of a
+    code path the caller never asked about."""
+    import openbb_core.provider.query_executor as qe_mod
+
+    install_registry(
+        monkeypatch,
+        {"eodhd": FakeProvider({"EquityHistorical": FakeFetcher}, credentials=["eodhd_api_key"])},
+    )
+
+    def exploded(*_args, **_kwargs):
+        raise TypeError("filter_credentials() got an unexpected keyword argument")
+
+    monkeypatch.setattr(qe_mod.QueryExecutor, "filter_credentials", staticmethod(exploded))
+    monkeypatch.setenv("EODHD_API_KEY", "from-env")
+
+    await fetch_gap("eodhd", "EquityHistorical", {"symbol": "AAPL"}, {})
+    assert FakeFetcher.last_call == ({"symbol": "AAPL"}, {"eodhd_api_key": "from-env"})
+
+
+@pytest.mark.asyncio
+async def test_core_internals_drift_without_env_still_reaches_the_upstream(monkeypatch):
+    """With the internals broken AND no env credential, the gap fetch must
+    still call the upstream fetcher -- which raises its own meaningful
+    UnauthorizedError -- rather than dying inside this helper."""
+    import openbb_core.provider.query_executor as qe_mod
+
+    install_registry(
+        monkeypatch,
+        {"eodhd": FakeProvider({"EquityHistorical": FakeFetcher}, credentials=["eodhd_api_key"])},
+    )
+
+    def exploded(*_args, **_kwargs):
+        raise ImportError("cannot import name 'filter_credentials'")
+
+    monkeypatch.setattr(qe_mod.QueryExecutor, "filter_credentials", staticmethod(exploded))
+    monkeypatch.delenv("EODHD_API_KEY", raising=False)
+
+    await fetch_gap("eodhd", "EquityHistorical", {"symbol": "AAPL"}, {})
+    assert FakeFetcher.last_call == ({"symbol": "AAPL"}, {"eodhd_api_key": None})

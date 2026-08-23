@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "AGPL-3.0-only" }
 dependencies = [
-    "openbb-core>=1.5.8",
+    "openbb-core>=1.5.8,<2",
     "arcticdb>=6.0",
     # ArcticDB's compiled pb2 stubs only support protobuf 3-6; 7.x raises
     # NotImplementedError on `from arcticdb import Arctic`.

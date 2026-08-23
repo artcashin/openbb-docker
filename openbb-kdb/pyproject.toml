@@ -10,7 +10,12 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "AGPL-3.0-only" }
 dependencies = [
-    "openbb-core>=1.5.8",
+    # Upper bound is deliberate. This extension reaches past the documented
+    # ODP surface (Provider/Fetcher/Data/QueryParams/Extension/OBBject plus
+    # provider.utils.{helpers,errors}) into core internals, so a major core
+    # release may move things that are not "breaking" by any published
+    # contract. Fail at resolve time, not at runtime.
+    "openbb-core>=1.5.8,<2",
     "pykx>=3.2",
     "kdb-store",
 ]
