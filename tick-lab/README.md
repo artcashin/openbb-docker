@@ -238,6 +238,12 @@ a credential on every laptop that wants to ask.
 # openbb-eodhd isn't on PyPI (it's this repo's own extension), so install
 # it from the checkout, not by name -- more on this below.
 .venv/bin/pip install openbb ../openbb-eodhd
+# Rebuild the static assets so `from openbb import obb` sees the extension
+# just installed alongside it. OpenBB builds these on first import, so this
+# is belt-and-braces on a laptop -- but it is the documented step after
+# installing or upgrading any extension, and it turns a silent "provider
+# not found" into an error at install time instead of mid-comparison.
+.venv/bin/openbb-build
 EODHD_API_KEY=<your key> .venv/bin/tick-lab compare --symbol MSFT --date 2023-05-12 --reference eodhd-local
 ```
 
