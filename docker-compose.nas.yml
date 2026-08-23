@@ -72,7 +72,7 @@ services:
 
   # OpenBB Platform REST API. Binds 127.0.0.1 so only Serve can reach it.
   openbb-api:
-    image: openbb-local:11.0.1
+    image: openbb-local:11.0.2
     environment:
       # Shares the tailscale sidecar's network namespace, which does NOT share
       # resolv.conf -- MagicDNS names do not resolve in here, and compose
@@ -157,7 +157,7 @@ services:
   # 127.0.0.1; Tailscale Serve publishes it on :8443. Endpoint path is /mcp
   # (a request to /mcp/ 307-redirects there).
   openbb-mcp:
-    image: openbb-local:11.0.1
+    image: openbb-local:11.0.2
     container_name: openbb-mcp
     restart: unless-stopped
     network_mode: service:tailscale
@@ -169,8 +169,14 @@ services:
     # 65,536-token slot, which hard-errors. --tool-discovery then lets the agent
     # enable further categories on demand, so nothing is permanently hidden.
     command: ["openbb-mcp", "--host", "127.0.0.1", "--port", "6901",
-              "--default-categories", "equity", "--tool-discovery"]
+              "--default-categories", "equity"]
     environment:
+      # Tool discovery by SETTING, not CLI flag: the flag inverted between
+      # openbb-mcp-server 1.3.x (--no-tool-discovery, default ON) and 1.4.x
+      # (--tool-discovery, default OFF). An unrecognised flag is a hard
+      # argparse error, so the flag turns a version bump into a container
+      # that will not start. This setting is honoured by both lines.
+      - OPENBB_MCP_ENABLE_TOOL_DISCOVERY=true
       # Shares the tailscale sidecar's network namespace, which does NOT share
       # resolv.conf -- MagicDNS names do not resolve in here, and compose
       # extra_hosts is rejected under network_mode: service:*. Pin the MinIO
