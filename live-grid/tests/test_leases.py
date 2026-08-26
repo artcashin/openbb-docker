@@ -113,6 +113,19 @@ def test_snapshot_route_returns_a_delayed_flagged_price():
     assert isinstance(body["price"], float)
 
 
+def test_snapshot_route_returns_a_non_null_prev_close():
+    """seed() stashes the vendor's previous close in quotes._prev_close, not
+    on the row -- the route must read it from there. FakeRest's default
+    payload carries close=100, previousClose=90."""
+    from tests.test_main import make_client
+
+    client = make_client()
+    body = client.get("/snapshot", params={"symbol": "AAPL"}).json()
+    assert body["price"] == 100.0
+    assert body["prev_close"] == 90.0
+    assert round(body["price"] - body["prev_close"], 2) == 10.0
+
+
 def test_snapshot_route_404s_when_the_vendor_gives_nothing():
     """A missing snapshot is not something the caller should crash on; the
     fetcher reads 404 as 'no fallback available' and returns no rows."""

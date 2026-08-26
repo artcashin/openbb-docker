@@ -51,17 +51,27 @@ def build_quote(symbol: str, tick: dict | None, prev_close: float | None) -> dic
 
 
 def build_quote_from_snapshot(symbol: str, snap: dict | None) -> dict | None:
-    """Assemble a row from the delayed REST snapshot. None when unavailable."""
-    if not snap or snap.get("price") is None:
+    """Assemble a row from the delayed REST snapshot. None when unavailable
+    or malformed -- like every other leg of the fallback, a bad snapshot
+    must degrade to no rows, never raise."""
+    if not isinstance(snap, dict) or snap.get("price") is None:
         return None
-    price = float(snap["price"])
-    prev = snap.get("prev_close")
+    try:
+        price = float(snap["price"])
+    except (TypeError, ValueError):
+        return None
     row: dict[str, Any] = {"symbol": symbol, "last_price": price}
+    prev = snap.get("prev_close")
     if prev is not None:
-        row["prev_close"] = float(prev)
-        row["change"] = price - float(prev)
-        if float(prev):
-            row["change_percent"] = row["change"] / float(prev)
+        try:
+            prev = float(prev)
+        except (TypeError, ValueError):
+            prev = None
+    if prev is not None:
+        row["prev_close"] = prev
+        row["change"] = price - prev
+        if prev:
+            row["change_percent"] = row["change"] / prev
     return row
 
 

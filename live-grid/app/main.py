@@ -430,7 +430,10 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
         return {
             "symbol": sym,
             "price": float(price),
-            "prev_close": row.get("prev_close"),
+            # seed() stashes the vendor's previous close in the table's own
+            # private cache, not on the row -- read it from there rather
+            # than deriving it (price - change), which would drift.
+            "prev_close": quotes._prev_close.get(sym),
             "delayed": True,
         }
 

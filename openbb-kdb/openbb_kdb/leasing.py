@@ -42,6 +42,9 @@ async def lease(symbol: str, url: str | None = None, ttl: float | None = None, p
 
 
 DEFAULT_SNAPSHOT_URL = "http://127.0.0.1:6903/snapshot"
+# /subscribe is a local lease write; /snapshot may make a live EODHD REST
+# round-trip server-side, so it gets its own, longer timeout.
+SNAPSHOT_TIMEOUT_S = 5.0
 
 
 async def _get(url: str, params: dict, timeout: float):
@@ -60,7 +63,7 @@ async def snapshot(symbol: str, url: str | None = None, get=None) -> dict | None
         return None
     target = url or os.getenv("LIVE_GRID_SNAPSHOT_URL", DEFAULT_SNAPSHOT_URL)
     try:
-        return await (get or _get)(target, params={"symbol": sym}, timeout=TIMEOUT_S)
+        return await (get or _get)(target, params={"symbol": sym}, timeout=SNAPSHOT_TIMEOUT_S)
     except Exception as exc:  # noqa: BLE001 - a missing fallback is not an error
         log.debug("snapshot for %s failed: %s", sym, exc)
         return None
