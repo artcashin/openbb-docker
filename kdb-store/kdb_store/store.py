@@ -315,6 +315,38 @@ class KdbStore:
 
         return self._call(span)
 
+    def latest_tick(self, symbol: str):
+        """The newest tick held for a symbol, or None if there are none.
+
+        The emptiness check runs in q, before the aggregate, for the reason
+        `tick_span` spells out: an ungrouped q aggregate over zero rows yields
+        a row of q nulls, and PyKX's `.pd()` turns a null timestamp into a
+        plausible-looking 1700s `Timestamp` rather than `NaT`, so no pandas-side
+        check can catch it.
+        """
+        import pandas as pd
+
+        def newest(conn):
+            got = conn(
+                "{[qwsym] $[0 = count select from trades where sym = qwsym;"
+                " ([] time:`timestamp$(); price:`float$(); size:`float$());"
+                " select time, price, size from trades"
+                " where sym = qwsym, time = max time]}",
+                _q_symbol(symbol),
+            ).pd()
+            if got is None or got.empty:
+                return None
+            row = got.iloc[-1]
+            if pd.isna(row["time"]):
+                return None
+            return {
+                "time": row["time"].to_pydatetime(),
+                "price": float(row["price"]),
+                "size": float(row["size"]),
+            }
+
+        return self._call(newest)
+
     def aggregate_frame(self, symbol: str, interval: str, start, end):
         """OHLCV buckets for one symbol, aggregated in q.
 

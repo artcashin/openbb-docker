@@ -419,6 +419,54 @@ def test_lambda_parameters_in_tick_queries_never_shadow_a_column():
                 assert name.startswith("qw"), f"parameter {name!r} lacks the qw prefix"
 
 
+def test_latest_tick_checks_emptiness_in_q_not_in_pandas():
+    """A q null timestamp survives .pd() as a real-looking 1700s Timestamp, so
+    `pd.isna` cannot detect "no ticks" -- the guard has to run inside q, before
+    the aggregate. Same trap tick_span documents."""
+    conn = FakeConn()
+    store = KdbStore(FakeSession(conn))
+    store.latest_tick("AAPL")
+    q = conn.queries[-1]
+    assert "0 = count select from trades where sym = " in q, q
+    assert q.index("0 = count") < q.index("max time"), "guard must precede the aggregate"
+
+
+def test_latest_tick_returns_none_when_there_are_no_ticks():
+    import pandas as pd
+
+    conn = FakeConn()
+    conn.responses["max time"] = pd.DataFrame({"time": [], "price": [], "size": []})
+    store = KdbStore(FakeSession(conn))
+    assert store.latest_tick("AAPL") is None
+
+
+def test_latest_tick_returns_the_newest_row():
+    import pandas as pd
+
+    conn = FakeConn()
+    conn.responses["max time"] = pd.DataFrame({
+        "time": [pd.Timestamp("2026-08-26T15:14:00")],
+        "price": [312.95],
+        "size": [40.0],
+    })
+    store = KdbStore(FakeSession(conn))
+    got = store.latest_tick("AAPL")
+    assert got["price"] == 312.95
+    assert got["size"] == 40.0
+    assert got["time"] == D("2026-08-26T15:14:00")
+
+
+def test_latest_tick_binds_the_symbol_as_a_parameter_not_by_interpolation():
+    """Interpolating the symbol into the q string would let a symbol containing
+    q syntax change the statement."""
+    conn = FakeConn()
+    store = KdbStore(FakeSession(conn))
+    store.latest_tick("AAPL")
+    query, args = conn.calls[-1]
+    assert "AAPL" not in query
+    assert args, "symbol must be passed as a bound argument"
+
+
 def test_write_snapshot_stores_a_fetch_time():
     s, conn = store_with()
     s.write_snapshot("AAPL", {"close": 100.0, "volume": 10.0})
