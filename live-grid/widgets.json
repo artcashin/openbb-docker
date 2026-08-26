@@ -83,5 +83,44 @@
       }
     ],
     "source": ["EODHD", "kdb+"]
+  },
+  "ta_chart": {
+    "name": "Technical Chart",
+    "description": "Indicators over cached OHLCV in stacked panes. Pick a macro for a saved layout, or build one from the indicator list.",
+    "category": "Equity",
+    "type": "chart",
+    "endpoint": "ta_chart",
+    "wsEndpoint": "ta_chart_ws",
+    "gridData": { "w": 40, "h": 20 },
+    "params": [
+      { "paramName": "symbol", "value": "AAPL", "label": "Symbol", "type": "text" },
+      {
+        "paramName": "interval", "value": "1d", "label": "Interval", "type": "text",
+        "options": [
+          { "label": "1 day", "value": "1d" },
+          { "label": "1 hour", "value": "1h" },
+          { "label": "5 min", "value": "5m" },
+          { "label": "1 min", "value": "1m" }
+        ]
+      },
+      {
+        "paramName": "macro", "value": "classic-momentum", "label": "Macro", "type": "text",
+        "description": "A saved pane layout. Options are filled in from the macro directory.",
+        "options": [{ "label": "None", "value": "none" }]
+      },
+      {
+        "paramName": "indicators", "value": "", "label": "Extra indicators", "type": "text",
+        "description": "Comma separated, e.g. rsi:period=14,sma:period=200"
+      },
+      {
+        "paramName": "source", "value": "local", "label": "Source", "type": "text",
+        "description": "local computes here; eodhd uses their pre-calculated values (5 API calls per indicator, refreshed on bar close)",
+        "options": [
+          { "label": "Local", "value": "local" },
+          { "label": "EODHD", "value": "eodhd" }
+        ]
+      }
+    ],
+    "source": ["EODHD", "kdb+"]
   }
 }

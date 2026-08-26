@@ -17,11 +17,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.classify import split_by_feed
 from app.feeds import FeedManager
 from app.figure import build_figure
 from app.openbb_client import fetch_series
 from app.quotes import QuoteTable
+from app.ta.macros import load_all as load_macros_all
+from app.ta.payload import ChartParams, bars_to_frame, build_payload
+from app.ta.sources import EodhdSource
 
 log = logging.getLogger("live-grid")
 
@@ -165,7 +167,18 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
 
     @app.get("/widgets.json")
     def widgets() -> JSONResponse:
-        return JSONResponse(json.loads(WIDGETS_PATH.read_text()))
+        spec = json.loads(WIDGETS_PATH.read_text())
+        try:
+            macros = load_macros_all()
+        except Exception as exc:  # noqa: BLE001 - a bad macro must not blank the grid
+            log.warning("macro discovery failed: %s", exc)
+            macros = {}
+        for param in spec.get("ta_chart", {}).get("params", []):
+            if param.get("paramName") == "macro":
+                param["options"] = [{"label": "None", "value": "none"}] + [
+                    {"label": m.label, "value": name} for name, m in sorted(macros.items())
+                ]
+        return JSONResponse(spec)
 
     @app.get("/live_grid")
     def live_grid(symbol: str = Query(default="")):
@@ -212,6 +225,37 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
                                 status_code=502)
         return JSONResponse(build_figure(symbol, bars))
 
+    _eodhd = EodhdSource(
+        key or "",
+        min_refetch_s=float(os.getenv("TA_EODHD_MIN_REFETCH_S", "60")),
+    )
+
+    @app.get("/ta_chart")
+    async def ta_chart(symbol: str = "AAPL", interval: str = "1d",
+                       source: str = "local", macro: str = "none",
+                       indicators: str = "", start: str | None = None,
+                       end: str | None = None, provider: str = "kdb"):
+        s, e = _window(start, end)
+        params = ChartParams(symbol, interval, source, macro, indicators, s, e, provider)
+        try:
+            bars, _ = await build_series(
+                symbol, interval, s, e, recorder, _tick_window(), provider
+            )
+        except Exception as exc:  # noqa: BLE001 - a bad macro must still be reported below
+            log.warning("ta_chart bars unavailable for %s: %s", symbol, exc)
+            bars = []
+        try:
+            figure, _, _ = await build_payload(
+                params, bars_to_frame(bars), eodhd_source=_eodhd
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("ta_chart failed for %s: %s", symbol, exc)
+            return JSONResponse(
+                {"data": [], "layout": {"title": {"text": f"{symbol}: {exc}"}}},
+                status_code=502,
+            )
+        return JSONResponse(figure)
+
     @app.get("/demo", response_class=HTMLResponse)
     async def demo():
         return HTMLResponse((_STATIC / "demo.html").read_text())
@@ -222,6 +266,11 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
         if recorder is not None:
             body["ticks"] = recorder.stats()
             body["ticks"]["endpoint"] = getattr(recorder.store.session, "endpoint", None)
+        body["ta"] = {
+            "eodhd_calls": _eodhd.total_calls,
+            "calls_per_indicator": 5,
+            "min_refetch_s": float(os.getenv("TA_EODHD_MIN_REFETCH_S", "60")),
+        }
         return body
 
     @app.websocket("/live_grid_ws")
