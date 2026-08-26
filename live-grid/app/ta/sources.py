@@ -50,7 +50,7 @@ def eodhd_query(req: Req) -> dict:
         raise ValueError(f"{req.name!r} has no EODHD equivalent")
     query = {"function": ind.eodhd.function}
     for their_name, our_name in ind.eodhd.params.items():
-        query[their_name] = req.params[our_name]
+        query[their_name] = req.params[our_name] + ind.eodhd.offsets.get(their_name, 0)
     return query
 
 

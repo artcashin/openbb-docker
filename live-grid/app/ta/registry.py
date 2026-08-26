@@ -39,6 +39,10 @@ class EodhdMap:
     fields: dict[str, str]
     price_basis: str
     note: str
+    # Some EODHD windows are off by one from ours: their `period` counts
+    # intervals where ours counts bars. Measured for stddev -- their period=20
+    # equals our period=21, to 1.4e-14. Applied when building the query.
+    offsets: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -317,9 +321,11 @@ register(Indicator(
             "macd_hist": {"type": "bar", "color": "#5c6370"}},
     eodhd=EodhdMap("macd", {"fast_period": "fast", "slow_period": "slow",
                             "signal_period": "signal"},
-                   {"macd": "macd", "macd_signal": "macd_signal",
-                    "macd_hist": "macd_hist"},
-                   "adjusted", "EODHD macd is adjusted close."),
+                   {"macd": "macd", "signal": "macd_signal",
+                    "divergence": "macd_hist"},
+                   "adjusted",
+                   "EODHD returns macd/signal/divergence -- NOT macd_signal or "
+                   "macd_hist. Verified against the live API."),
 ))
 
 # --- Stochastic oscillator --------------------------------------------------
@@ -329,10 +335,10 @@ def _stoch_build(p: dict, b: dict[str, Base]) -> list[pl.Expr]:
     hh = pl.col(f"max:high:{p['k']}")
     ll = pl.col(f"min:low:{p['k']}")
     raw = 100 * (pl.col("close") - ll) / (hh - ll)
-    k = raw if p["smooth_k"] <= 1 else raw.rolling_mean(p["smooth_k"])
     # A flat window makes hh == ll and the ratio 0/0. Null, not NaN.
-    return [k.fill_nan(None).alias("stoch_k"),
-            k.rolling_mean(p["d"]).fill_nan(None).alias("stoch_d")]
+    # Fill immediately after the division, before %D's rolling mean averages it.
+    k = (raw if p["smooth_k"] <= 1 else raw.rolling_mean(p["smooth_k"])).fill_nan(None)
+    return [k.alias("stoch_k"), k.rolling_mean(p["d"]).alias("stoch_d")]
 
 
 register(Indicator(
@@ -395,9 +401,13 @@ def _adx_build(p: dict, b: dict[str, Base]) -> list[pl.Expr]:
     atr = pl.col("tr:raw:0").ewm_mean(**wilder)
     di_plus = 100 * plus_dm.ewm_mean(**wilder) / atr
     di_minus = 100 * minus_dm.ewm_mean(**wilder) / atr
-    dx = 100 * (di_plus - di_minus).abs() / (di_plus + di_minus)
-    # Zero ATR (a flat window) makes both DI undefined, and DX is then 0/0.
-    return [dx.ewm_mean(**wilder).fill_nan(None).alias("adx"),
+    # Fill BEFORE the smoothing, not after. NaN is not null: ewm_mean skips
+    # nulls but PROPAGATES NaN, so the single bar-0 NaN in dx would contaminate
+    # every later value and a trailing fill would then null the entire series.
+    # Measured: filling after gives 0/912 finite values; filling here gives
+    # 910/912, and matches EODHD to a median of 1.2e-06.
+    dx = (100 * (di_plus - di_minus).abs() / (di_plus + di_minus)).fill_nan(None)
+    return [dx.ewm_mean(**wilder).alias("adx"),
             di_plus.fill_nan(None).alias("di_plus"),
             di_minus.fill_nan(None).alias("di_minus")]
 
@@ -498,7 +508,10 @@ register(Indicator(
     build=lambda p, b: [pl.col(f"std:adj_close:{p['period']}").alias("stddev")],
     render={"stddev": _line("#c678dd")},
     eodhd=EodhdMap("stddev", {"period": "period"}, {"stddev": "stddev"},
-                   "adjusted", "EODHD stddev is adjusted close."),
+                   "adjusted",
+                   "EODHD's period counts intervals, not bars: their period=20 "
+                   "equals our 21 (matched to 1.4e-14). Hence the -1 offset.",
+                   offsets={"period": -1}),
 ))
 
 # --- %B and BandWidth: both reuse the Bollinger bases ------------------------

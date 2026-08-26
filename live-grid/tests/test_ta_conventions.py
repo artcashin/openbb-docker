@@ -111,3 +111,24 @@ def test_every_indicator_renders_every_column_it_builds():
         out = compute(df, [resolve(name)])
         for column in ind.render:
             assert column in out.columns, f"{name} declares render for missing {column}"
+
+
+def test_every_indicator_produces_finite_values_on_real_shaped_input():
+    """Absence of NaN is not presence of data.
+
+    ADX once returned null for every bar on every dataset -- a NaN ahead of a
+    smoothing step propagated through it, and the trailing fill_nan then nulled
+    the whole series. The flat-window test passed throughout, because an
+    all-null column contains no NaN.
+    """
+    import math
+
+    df = fixture_frame()
+    for name, ind in REGISTRY.items():
+        out = compute(df, [resolve(name)])
+        for column in ind.render:
+            values = out[column].to_list()
+            finite = [v for v in values if v is not None and not math.isnan(v)]
+            assert len(finite) > len(values) // 2, (
+                f"{name}/{column}: only {len(finite)}/{len(values)} finite values"
+            )
