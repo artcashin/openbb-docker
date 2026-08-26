@@ -125,6 +125,41 @@ jobs:
         run: |
           pip install -e .[dev]
           PYTHONFAULTHANDLER=1 timeout -s ABRT 600 pytest -q --capture=sys
+  mcp-stores:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with: { python-version: "3.12" }
+      # Pulls arcticdb and pykx. Both resolve on ubuntu-latest because
+      # GitHub's hosted runners are x86_64 -- the same reason openbb-arcticdb
+      # below is amd64-only. The tests need neither a real store nor a q
+      # licence; pykx runs unlicensed and the ArcticDB store is in-process.
+      - name: Test mcp_stores (in-process store, no q licence, no network)
+        working-directory: mcp_stores
+        run: |
+          pip install -e .[dev]
+          PYTHONFAULTHANDLER=1 timeout -s ABRT 600 pytest -q --capture=sys
+
+  stores-explorer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with: { python-version: "3.12" }
+      # stores-explorer depends on mcp-stores, which is a sibling in this repo
+      # and is NOT published to PyPI -- `pip install -e .[dev]` alone fails to
+      # resolve it. Same shape as live-grid installing kdb-store first.
+      - name: Install mcp_stores (sibling dependency, not on PyPI)
+        run: pip install -e ./mcp_stores
+      - name: Test stores-explorer (all mocked, no store or network needed)
+        working-directory: stores-explorer
+        run: |
+          pip install -e .[dev]
+          PYTHONFAULTHANDLER=1 timeout -s ABRT 600 pytest -q --capture=sys
+
   openbb-arcticdb:
     runs-on: ubuntu-latest
     timeout-minutes: 20
