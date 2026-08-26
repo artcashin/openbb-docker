@@ -22,5 +22,6 @@ RUN pip install /srv/kdb-store
 COPY live-grid/pyproject.toml ./
 COPY live-grid/app/ app/
 COPY live-grid/widgets.json ./
+COPY live-grid/macros/ macros/
 RUN pip install . && chmod 644 app/static/plotly.min.js
 CMD ["uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "6903"]

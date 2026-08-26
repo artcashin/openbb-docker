@@ -90,3 +90,44 @@ arrive out of order and an unsorted trades table silently produces wrong
 candles) is verified against a **real** q by
 [`kdb-store/scripts/tick_check.py`](../kdb-store/scripts/tick_check.py), not
 by anything mocked here. See that script and `kdb-store/README.md`.
+
+## Technical Chart (`ta_chart`)
+
+Indicators over the same cached OHLCV the other charts use, in stacked Plotly
+panes. 22 tier-1 indicators; 12 of them can also be drawn from EODHD's own
+pre-calculated values by setting `source=eodhd`, and every one of those 12 is
+checked against EODHD's numbers by a network-gated parity test.
+
+CCI is deliberately local-only. EODHD's CCI disagrees with the standard
+definition by a median of 28.5%, so offering both sources for it would mean the
+line jumped when you toggled `source`. It computes locally and says so in the
+legend.
+
+Layouts are **macros** — YAML files in `macros/`, one pane per entry:
+
+```yaml
+label: Classic Momentum
+panes:
+  - id: price
+    height: 3
+    indicators:
+      - {name: bbands, period: 20, k: 2.0}
+  - id: rsi
+    height: 1
+    indicators: [{name: rsi, period: 14}]
+```
+
+`height` is a relative weight. Exactly one pane must have `id: price`. Drop a
+file into `TA_MACRO_DIR` and it appears in the widget's Macro dropdown without
+a rebuild — `/widgets.json` is generated, not static.
+
+Indicators can also be listed directly:
+`?indicators=rsi:period=14,sma:period=200`.
+
+**On `source=eodhd`:** EODHD bills five API calls per indicator per request, so
+those series are cached and refreshed only on bar close (`TA_EODHD_MIN_REFETCH_S`).
+Locally computed series update at tick speed; EODHD-sourced ones step. Any
+indicator without an EODHD equivalent falls back to local compute and says so
+in the chart title.
+
+Smoke check: `python scripts/smoke_ta.py http://127.0.0.1:6903`
