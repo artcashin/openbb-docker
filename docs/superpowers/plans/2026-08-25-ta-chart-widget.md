@@ -860,6 +860,13 @@ git commit -m "feat(ta): two-pass compute with explicit dependency dedup"
 
 **Interfaces:**
 - Consumes: everything from Tasks 2-4.
+- **Standing convention (applies to every indicator in this task):** any
+  expression that divides must end in `.fill_nan(None)`. `0/0` is not
+  hypothetical — it is deterministic at bar 0 for RSI-shaped indicators and
+  occurs on any flat window for range-normalised ones. Null is already the
+  warmup spelling every rolling indicator uses; NaN is a second, inconsistent
+  spelling of "undefined" that also breaks equality (`NaN != NaN`) in
+  downstream tests and websocket delta diffs.
 - Produces: `REGISTRY` containing 22 entries. New output column names, which later tasks reference:
   `wma`, `kc_mid`/`kc_up`/`kc_lo`, `dc_up`/`dc_mid`/`dc_lo`, `vwap`, `sar`, `volume_bar`,
   `macd`/`macd_signal`/`macd_hist`, `stoch_k`/`stoch_d`, `stochrsi`, `adx`/`di_plus`/`di_minus`,
@@ -943,6 +950,33 @@ def test_bbands_pct_b_and_bandwidth_share_one_base_pair():
                            resolve("pct_b", period=20, k=2.0),
                            resolve("bandwidth", period=20, k=2.0)])
     assert sorted(bases) == ["sma:adj_close:20", "std:adj_close:20"]
+
+
+def test_divide_prone_indicators_yield_null_not_nan_on_a_flat_window():
+    """0/0 must render as a gap, not NaN.
+
+    Null is already how every rolling indicator spells its warmup; NaN would
+    be a second spelling of the same idea, and it breaks equality comparisons
+    (NaN != NaN) in every downstream test and delta diff.
+    """
+    import math
+
+    flat = fixture_frame().with_columns([
+        pl.lit(100.0).alias(c) for c in ("open", "high", "low", "close", "adj_close")
+    ])
+    for name in ("rsi", "stoch", "stochrsi", "adx", "cci", "willr", "pct_b"):
+        out = compute(flat, [resolve(name)])
+        for column in get(name).render:
+            values = out[column].to_list()
+            assert not any(v is not None and math.isnan(v) for v in values), (
+                f"{name}/{column} produced NaN on a flat window; expected null"
+            )
+
+
+def test_rsi_is_null_at_bar_zero_not_nan():
+    """Bar 0 has no previous close, so gain and loss are both 0 and rs is 0/0."""
+    out = compute(fixture_frame(), [resolve("rsi", period=14)])
+    assert out["rsi"][0] is None
 
 
 def test_wilder_indicators_all_declare_it():
@@ -1087,7 +1121,9 @@ def _stoch_build(p: dict, b: dict[str, Base]) -> list[pl.Expr]:
     ll = pl.col(f"min:low:{p['k']}")
     raw = 100 * (pl.col("close") - ll) / (hh - ll)
     k = raw if p["smooth_k"] <= 1 else raw.rolling_mean(p["smooth_k"])
-    return [k.alias("stoch_k"), k.rolling_mean(p["d"]).alias("stoch_d")]
+    # A flat window makes hh == ll and the ratio 0/0. Null, not NaN.
+    return [k.fill_nan(None).alias("stoch_k"),
+            k.rolling_mean(p["d"]).fill_nan(None).alias("stoch_d")]
 
 
 register(Indicator(
@@ -1118,7 +1154,9 @@ def _stochrsi_build(p: dict, b: dict[str, Base]) -> list[pl.Expr]:
     loss = pl.when(delta < 0).then(-delta).otherwise(0.0).ewm_mean(**wilder)
     rsi = 100 - 100 / (1 + gain / loss)
     lo, hi = rsi.rolling_min(p["stoch_period"]), rsi.rolling_max(p["stoch_period"])
-    return [(100 * (rsi - lo) / (hi - lo)).alias("stochrsi")]
+    # Two 0/0 routes here: the inline RSI at bar 0, and hi == lo on a flat
+    # window. Both resolve to null.
+    return [(100 * (rsi - lo) / (hi - lo)).fill_nan(None).alias("stochrsi")]
 
 
 register(Indicator(
@@ -1147,8 +1185,10 @@ def _adx_build(p: dict, b: dict[str, Base]) -> list[pl.Expr]:
     di_plus = 100 * plus_dm.ewm_mean(**wilder) / atr
     di_minus = 100 * minus_dm.ewm_mean(**wilder) / atr
     dx = 100 * (di_plus - di_minus).abs() / (di_plus + di_minus)
-    return [dx.ewm_mean(**wilder).alias("adx"),
-            di_plus.alias("di_plus"), di_minus.alias("di_minus")]
+    # Zero ATR (a flat window) makes both DI undefined, and DX is then 0/0.
+    return [dx.ewm_mean(**wilder).fill_nan(None).alias("adx"),
+            di_plus.fill_nan(None).alias("di_plus"),
+            di_minus.fill_nan(None).alias("di_minus")]
 
 
 register(Indicator(
@@ -1176,7 +1216,8 @@ def _cci_build(p: dict, b: dict[str, Base]) -> list[pl.Expr]:
     # Mean absolute deviation about the rolling mean. Polars has no rolling MAD,
     # so this is the explicit form rather than a clever one.
     mad = (tp - sma_tp).abs().rolling_mean(n)
-    return [((tp - sma_tp) / (0.015 * mad)).alias("cci")]
+    # MAD is zero on a flat window, giving 0/0.
+    return [((tp - sma_tp) / (0.015 * mad)).fill_nan(None).alias("cci")]
 
 
 register(Indicator(
@@ -1203,6 +1244,7 @@ register(Indicator(
     build=lambda p, b: [
         (-100 * (pl.col(f"max:high:{p['period']}") - pl.col("close"))
          / (pl.col(f"max:high:{p['period']}") - pl.col(f"min:low:{p['period']}")))
+        .fill_nan(None)  # hh == ll on a flat window
         .alias("willr"),
     ],
     render={"willr": _line("#56b6c2")},
@@ -1260,7 +1302,9 @@ register(Indicator(
         ((pl.col(price_col("adjusted"))
           - (pl.col(f"sma:adj_close:{p['period']}")
              - p["k"] * pl.col(f"std:adj_close:{p['period']}")))
-         / (2 * p["k"] * pl.col(f"std:adj_close:{p['period']}"))).alias("pct_b"),
+         / (2 * p["k"] * pl.col(f"std:adj_close:{p['period']}")))
+        .fill_nan(None)  # zero stddev on a flat window
+        .alias("pct_b"),
     ],
     render={"pct_b": _line("#e5c07b")},
 ))
