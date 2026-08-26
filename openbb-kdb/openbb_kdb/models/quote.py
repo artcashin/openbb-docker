@@ -2,9 +2,10 @@
 
 `last_price` comes from the newest tick live-grid recorded; `prev_close` from
 the last complete daily bar. Intraday open/high/low/volume are deliberately
-absent during a session: a daily bar has no row for today until the close, and
-deriving them from the single latest tick would report open == high == low ==
-last_price, which looks like data rather than like the absence of it.
+absent during a session: the quote takes only the previous session's close
+from the daily bar and never reads intraday OHLV from it, and deriving them
+from the single latest tick would report open == high == low == last_price,
+which looks like data rather than like the absence of it.
 """
 
 import asyncio
@@ -76,29 +77,51 @@ async def _await_tick(store, symbol: str, deadline: float) -> dict | None:
         await asyncio.sleep(min(POLL_S, remaining))
 
 
+def _row_date(row: dict):
+    """Coerce a bar row's `date` (str, date or datetime) to a plain date."""
+    from datetime import date, datetime
+
+    value = row.get("date")
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    return date.fromisoformat(str(value))
+
+
 async def _prev_close(cache, symbol: str, credentials) -> float | None:
     """Close of the most recent complete daily bar, or None.
 
     Best-effort exactly like the lease: a quote that knows the last price but
     not yesterday's close is still a useful quote, and is what the spec asks
-    for when no bar is available.
+    for when no bar is available. Everything below -- the fetch, the date
+    coercion and the float coercion -- is inside the same try/except: any of
+    them failing must degrade to "no prev_close", never fail the quote.
     """
     from datetime import date, timedelta
 
-    end = date.today()
+    today = date.today()
+    end = today - timedelta(days=1)
     try:
         # get() answers (rows, metadata) -- unpack, do not index the tuple.
         rows, _meta = await cache.get(
             symbol=symbol, interval="1d", start=end - timedelta(days=10), end=end,
             model="EquityHistorical", params={}, credentials=credentials,
         )
+        # Belt and suspenders: ReadThroughCache serves whatever window it is
+        # asked for with no complete-boundary filter, so a same-day forming
+        # bar is real and gets served on any window reaching today (see
+        # test_tail_types.py's module docstring). `end` above already keeps
+        # the request out of today, but a stored forward-dated row should not
+        # be able to leak through either.
+        rows = [row for row in rows if _row_date(row) < today]
+        if not rows:
+            return None
+        close = rows[-1].get("close")
+        return float(close) if close is not None else None
     except Exception as exc:  # noqa: BLE001 - see docstring
         log.debug("prev_close lookup for %s failed: %s", symbol, exc)
         return None
-    if not rows:
-        return None
-    close = rows[-1].get("close")
-    return float(close) if close is not None else None
 
 
 class KdbEquityQuoteFetcher(Fetcher[EquityQuoteQueryParams, list[EquityQuoteData]]):

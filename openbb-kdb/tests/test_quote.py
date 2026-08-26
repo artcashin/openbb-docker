@@ -1,7 +1,7 @@
 """Quote assembly: live tick over daily-bar session fields."""
 
 import os
-from datetime import datetime
+from datetime import date, datetime, timedelta
 
 import pytest
 
@@ -177,3 +177,33 @@ async def test_live_quote_end_to_end():
     rows = KdbEquityQuoteFetcher.transform_data(query, raw)
     assert rows, "no quote returned -- is live-grid reachable and the market open?"
     assert rows[0].last_price and rows[0].last_price > 0
+
+
+@pytest.mark.asyncio
+async def test_prev_close_ignores_todays_still_forming_bar():
+    """A window ending today includes today's forming bar (kdb never caches
+    it as complete -- see test_tail_types.py docstring). _prev_close must
+    skip it and return the previous session's close, not today's."""
+    from openbb_kdb.models.quote import _prev_close
+
+    today = date.today().isoformat()
+    yesterday = (date.today() - timedelta(days=1)).isoformat()
+
+    class Cache:
+        async def get(self, **kwargs):
+            return ([{"date": yesterday, "close": 309.9},
+                     {"date": today, "close": 500.0}], {})
+
+    assert await _prev_close(Cache(), "AAPL", credentials=None) == 309.9
+
+
+@pytest.mark.asyncio
+async def test_prev_close_treats_a_non_numeric_close_as_missing_not_an_error():
+    from openbb_kdb.models.quote import _prev_close
+
+    class Cache:
+        async def get(self, **kwargs):
+            return ([{"date": (date.today() - timedelta(days=1)).isoformat(),
+                       "close": "not-a-number"}], {})
+
+    assert await _prev_close(Cache(), "AAPL", credentials=None) is None
