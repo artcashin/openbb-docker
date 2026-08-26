@@ -29,7 +29,7 @@ arcticdb = "openbb_arcticdb:ext"
 include = ["openbb_arcticdb*"]
 
 [project.optional-dependencies]
-dev = ["ruff", "pytest"]
+dev = ["ruff==0.15.22", "pytest"]
 
 [tool.ruff]
 target-version = "py310"

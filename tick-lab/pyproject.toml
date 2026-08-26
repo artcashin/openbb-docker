@@ -20,7 +20,7 @@ dependencies = [
 tick-lab = "tick_lab.cli:main"
 
 [project.optional-dependencies]
-dev = ["ruff", "pytest"]
+dev = ["ruff==0.15.22", "pytest"]
 
 [tool.setuptools.packages.find]
 include = ["tick_lab*"]
