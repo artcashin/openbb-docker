@@ -1995,6 +1995,13 @@ CASES = [
     ("adx", {"period": 14}, ["adx"]),
     ("cci", {"period": 20}, ["cci"]),
     ("stddev", {"period": 20}, ["stddev"]),
+    # SAR is the only hand-written imperative algorithm in the codebase; every
+    # other indicator is a Polars primitive a reader can check by inspection.
+    # It therefore needs this oracle more than anything else here, not less.
+    ("sar", {"acceleration": 0.02, "maximum": 0.2}, ["sar"]),
+    # stochrsi's scaling convention is unverified -- its own EodhdMap note says
+    # so. This is where that gets settled.
+    ("stochrsi", {"period": 14}, ["stochrsi"]),
 ]
 
 
@@ -2049,7 +2056,7 @@ def test_every_mapped_indicator_is_covered_by_a_parity_case():
     """A new EODHD mapping without a parity case is an untested claim."""
     mapped = {n for n, i in get.__globals__["REGISTRY"].items() if i.eodhd is not None}
     covered = {c[0] for c in CASES}
-    assert mapped - covered <= {"sar", "stochrsi"}, sorted(mapped - covered)
+    assert mapped - covered == set(), sorted(mapped - covered)
 
 
 def test_query_mapping_is_exercised_for_every_case():
