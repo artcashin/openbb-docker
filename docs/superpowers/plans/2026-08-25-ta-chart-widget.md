@@ -2255,6 +2255,21 @@ def test_no_price_pane_is_rejected(tmp_path):
         load_macro(write(tmp_path, bad))
 
 
+def test_a_non_numeric_height_is_rejected_as_a_macro_error(tmp_path):
+    """Not a ValueError: the caller only catches MacroError."""
+    bad = GOOD.replace("height: 1", 'height: "tall"')
+    with pytest.raises(MacroError, match="height must be a number"):
+        load_macro(write(tmp_path, bad))
+
+
+def test_malformed_yaml_is_rejected_with_the_filename(tmp_path):
+    """A mounted macro file can be edited by hand; the error must say which one."""
+    path = tmp_path / "broken.yml"
+    path.write_text("label: Broken\npanes: [\n  - id: price\n")
+    with pytest.raises(MacroError, match="broken.yml"):
+        load_macro(path)
+
+
 def test_a_macro_with_no_panes_is_rejected(tmp_path):
     with pytest.raises(MacroError, match="at least one pane"):
         load_macro(write(tmp_path, "label: Empty\npanes: []\n"))
@@ -2367,7 +2382,15 @@ def load_macro(path: Path) -> Macro:
     panes: list[PaneSpec] = []
     for index, pane in enumerate(panes_raw):
         pane_id = str(pane.get("id") or f"pane{index}")
-        height = float(pane.get("height", 1))
+        try:
+            height = float(pane.get("height", 1))
+        except (TypeError, ValueError):
+            # A bare ValueError here would escape the caller's `except
+            # MacroError` and crash differently than every other bad-macro path.
+            raise MacroError(
+                f"{path.name}: pane {pane_id!r} height must be a number, "
+                f"got {pane.get('height')!r}"
+            ) from None
         if height <= 0:
             raise MacroError(f"{path.name}: pane {pane_id!r} height must be positive")
         reqs = []
