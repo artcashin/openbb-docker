@@ -22,7 +22,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "httpx", "ruff"]
+dev = ["pytest", "pytest-asyncio", "httpx", "ruff"]
 
 [tool.setuptools]
 packages = ["app"]
@@ -34,6 +34,7 @@ markers = [
     "network: hits the live EODHD API; deselected by default",
 ]
 addopts = "-m 'not network'"
+asyncio_mode = "auto"
 
 [tool.ruff]
 target-version = "py312"
