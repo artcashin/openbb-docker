@@ -102,6 +102,23 @@ async def test_an_unusable_payload_degrades_one_series_not_the_whole_chart():
 
 
 @pytest.mark.asyncio
+async def test_a_failing_fetch_is_throttled_rather_than_retried_every_call():
+    """A failure must start the backoff clock, or min_refetch_s never engages."""
+    attempts = []
+
+    async def always_fails(query):
+        attempts.append(query)
+        raise RuntimeError("503 Service Unavailable")
+
+    src = EodhdSource("k", fetch=always_fails, min_refetch_s=3600)
+    df, req = fixture_frame(), [resolve("rsi", period=14)]
+    await src.series(df, req, "AAPL.US", "1d", "2024-01-21")
+    await src.series(df, req, "AAPL.US", "1d", "2024-01-21")
+    await src.series(df, req, "AAPL.US", "1d", "2024-01-21")
+    assert len(attempts) == 1, "a failing indicator must not retry every call"
+
+
+@pytest.mark.asyncio
 async def test_the_cache_is_keyed_on_the_last_closed_bar():
     calls = []
 

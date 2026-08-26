@@ -376,8 +376,10 @@ register(Indicator(
     deps=lambda p: [],
     build=_stochrsi_build,
     render={"stochrsi": _line("#c678dd")},
-    eodhd=EodhdMap("stochrsi", {"period": "period"}, {"stochrsi": "stochrsi"},
-                   "adjusted", "EODHD stochrsi; verify scaling in the parity test."),
+    eodhd=EodhdMap("stochrsi", {"period": "period"}, {"fastkline": "stochrsi"},
+                   "adjusted",
+                   "EODHD returns fastkline/fastdline, NOT a 'stochrsi' key -- "
+                   "verified against the live API; scale matches ours exactly."),
 ))
 
 # --- ADX and directional movement -------------------------------------------

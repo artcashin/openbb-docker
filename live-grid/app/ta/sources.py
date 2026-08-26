@@ -113,17 +113,23 @@ class EodhdSource:
                 fetched.append((req, cached))
                 continue
             if now - self._fetched_at.get(key, -1e9) < self._min_refetch_s:
-                # Same bar, too soon, nothing cached: skip rather than spend.
+                # A recent ATTEMPT failed and the floor has not elapsed.
                 annotations.extend(
                     Annotation(col, "local", "EODHD refetch throttled")
                     for col in get(req.name).render
                 )
                 fetched.append((req, None))
                 continue
+            # Stamp BEFORE the attempt, not on success. Stamping on success
+            # makes this throttle unreachable: whenever _fetched_at holds a real
+            # value the cache check above has already returned, so the only way
+            # to arrive here is a MISS -- i.e. a previous failure, which never
+            # stamped. A persistently-failing indicator would then retry on every
+            # push with no backoff, at five billed calls each time.
+            self._fetched_at[key] = now
             try:
                 rows = await self._fetch({**eodhd_query(req), "_symbol": symbol})
                 self._cache[key] = rows
-                self._fetched_at[key] = now
                 calls += CALLS_PER_REQUEST
                 self.total_calls += CALLS_PER_REQUEST
                 fetched.append((req, rows))
