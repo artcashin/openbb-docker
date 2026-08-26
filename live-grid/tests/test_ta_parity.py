@@ -14,7 +14,7 @@ import statistics
 
 import pytest
 
-from app.ta.registry import REGISTRY, resolve
+from app.ta.registry import REGISTRY, col_suffix, resolve
 from app.ta.sources import EodhdSource, LocalSource, eodhd_query
 
 pytestmark = pytest.mark.network
@@ -77,20 +77,27 @@ async def bars(api_key):
         {"date": r["date"], "open": r["open"], "high": r["high"], "low": r["low"],
          "close": r["close"], "adj_close": r["adjusted_close"], "volume": float(r["volume"])}
         for r in rows
-    ]).with_columns(pl.col("date").str.to_date())
+    # Datetime, not Date: that is what payload.bars_to_frame produces, and an
+    # oracle built on a different shape from production stops testing the real
+    # path -- including EodhdSource._join's date-part join key.
+    ]).with_columns(pl.col("date").str.to_datetime(strict=False))
 
 
 @pytest.mark.parametrize("name,params,columns", CASES, ids=[c[0] for c in CASES])
 async def test_local_matches_eodhd(api_key, bars, name, params, columns):
     req = resolve(name, **params)
+    # Output columns are named per (indicator, params); `columns` holds the
+    # bare registry names, which is what the assertion messages should read.
+    suffix = col_suffix(req)
+    wanted = [c + suffix for c in columns]
     local = LocalSource().series(bars, [req]).frame
     remote = await EodhdSource(api_key).series(
-        bars.drop([c for c in columns if c in bars.columns]),
+        bars.drop([c for c in wanted if c in bars.columns]),
         [req], SYMBOL, "1d", str(bars["date"][-1]),
     )
-    for column in columns:
-        mine = local[column].to_list()
-        theirs = remote.frame[column].to_list()
+    for column, actual in zip(columns, wanted):
+        mine = local[actual].to_list()
+        theirs = remote.frame[actual].to_list()
         warmup = WARMUP.get(name, DEFAULT_WARMUP)
         pairs = [(a, b) for a, b in zip(mine, theirs)
                  if a is not None and b is not None][warmup:]
