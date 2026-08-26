@@ -93,6 +93,26 @@ def test_subscribe_route_rejects_an_empty_symbol_list():
     assert client.post("/subscribe", json={"symbols": []}).status_code == 422
 
 
+def test_subscribe_route_rejects_a_non_list_symbols_value():
+    """A bare string is iterable -- without a type check {"symbols":"AAPL"}
+    silently leases "A", "P", "L" instead of 422ing."""
+    from tests.test_main import make_client
+
+    client = make_client()
+    resp = client.post("/subscribe", json={"symbols": "AAPL"})
+    assert resp.status_code == 422
+    manager = client.app.state.manager
+    assert "A" not in manager._union("us")
+
+
+def test_subscribe_route_rejects_a_non_numeric_ttl():
+    from tests.test_main import make_client
+
+    client = make_client()
+    assert client.post("/subscribe",
+                        json={"symbols": ["AAPL"], "ttl": "soon"}).status_code == 422
+
+
 def test_subscribe_route_puts_the_symbol_into_the_feed_union():
     """The point of the lease: the feed must actually want the symbol."""
     from tests.test_main import make_client
@@ -101,6 +121,15 @@ def test_subscribe_route_puts_the_symbol_into_the_feed_union():
     client.post("/subscribe", json={"symbols": ["AAPL"]})
     manager = client.app.state.manager
     assert "AAPL" in manager._union("us")
+
+
+def test_health_reports_the_active_lease_count():
+    from tests.test_main import make_client
+
+    client = make_client()
+    assert client.get("/health").json()["leases"] == 0
+    client.post("/subscribe", json={"symbols": ["AAPL", "MSFT"]})
+    assert client.get("/health").json()["leases"] == 2
 
 
 def test_snapshot_route_returns_a_delayed_flagged_price():
@@ -137,3 +166,22 @@ def test_snapshot_route_404s_when_the_vendor_gives_nothing():
 
     client = make_client(seed_client=Empty())
     assert client.get("/snapshot", params={"symbol": "ZZZZ"}).status_code == 404
+
+
+def test_snapshot_route_uses_the_real_client_when_none_was_injected(monkeypatch):
+    """Production cold-starts `create_app()` with `seed_client=None`; the
+    route must call `_seed_client()` to lazily build the real REST client
+    (as /live_grid and the websocket baseline seed already do), not read the
+    closure variable directly -- that variant stays `None` forever and every
+    quote 404s on `None.get_live_stock_prices(...)`."""
+    from tests.test_main import make_client
+
+    class FakeRest:
+        def get_live_stock_prices(self, ticker):
+            return {"close": "100", "previousClose": "90"}
+
+    monkeypatch.setattr("app.main._rest_client", lambda key: FakeRest())
+    client = make_client(seed_client=None)
+    resp = client.get("/snapshot", params={"symbol": "AAPL"})
+    assert resp.status_code == 200
+    assert resp.json()["price"] == 100.0

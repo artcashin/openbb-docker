@@ -44,6 +44,11 @@ codes mean forex (`EURUSD`), everything else is a US equity. Feed clients are
 rebuilt (debounced ~1s) when the subscribed union changes; the SDK's
 signal-handler and grow-forever-buffer quirks are handled in `app/feeds.py`.
 
+All three lease values are configurable: `ttl` per request in the `/subscribe`
+body (default 300s -- `LIVE_GRID_LEASE_TTL_S`), and `LIVE_GRID_LEASE_SWEEP_S`
+(default 30s) for how often the sweeper checks for lapsed leases. `/health`
+reports the current lease count.
+
 ## Tick recording and the chart (Ep. 10)
 
 Every trade this service already receives over the websocket is now also

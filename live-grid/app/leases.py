@@ -30,6 +30,10 @@ class LeaseRegistry:
     def _conn_id(symbol: str) -> str:
         return f"lease:{symbol}"
 
+    def __len__(self) -> int:
+        """Count of symbols currently leased, for /health."""
+        return len(self._expiry)
+
     def renew(self, symbols, now: float, ttl: float | None = None) -> dict[str, float]:
         """Create or extend a lease per symbol. Returns symbol -> expiry."""
         span = self._ttl if ttl is None else ttl

@@ -133,7 +133,9 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
         while True:
             await asyncio.sleep(interval)
             try:
-                leases.sweep(asyncio.get_running_loop().time())
+                dropped = leases.sweep(asyncio.get_running_loop().time())
+                if dropped:
+                    log.info("leases lapsed: %s", dropped)
             except Exception:  # noqa: BLE001 - the sweeper must outlive its errors
                 log.warning("lease sweep failed", exc_info=True)
 
@@ -376,7 +378,7 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
 
     @app.get("/health")
     def health():
-        body = {"status": "ok", "feeds": manager.status()}
+        body = {"status": "ok", "feeds": manager.status(), "leases": len(leases)}
         if recorder is not None:
             body["ticks"] = recorder.stats()
             body["ticks"]["endpoint"] = getattr(recorder.store.session, "endpoint", None)
@@ -394,14 +396,24 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
         Tailnet-only, like every live-grid route: it confers no power a caller
         does not already have by opening /live_grid_ws. Never funnel it.
         """
-        symbols = [s for s in (body.get("symbols") or []) if str(s).strip()]
+        raw_symbols = body.get("symbols")
+        if not isinstance(raw_symbols, list):
+            # A bare string ("AAPL") is iterable too -- without this check it
+            # silently leases "A", "P", "L" instead of 422ing.
+            raise HTTPException(status_code=422, detail="symbols must be a list of strings")
+        symbols = [s for s in raw_symbols if str(s).strip()]
         if not symbols:
             raise HTTPException(status_code=422, detail="symbols must be a non-empty list")
         ttl = body.get("ttl")
+        if ttl is not None:
+            try:
+                ttl = float(ttl)
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=422, detail="ttl must be a number") from None
         granted = leases.renew(
             symbols,
             now=asyncio.get_running_loop().time(),
-            ttl=float(ttl) if ttl is not None else None,
+            ttl=ttl,
         )
         base = datetime.now(timezone.utc)
         loop_now = asyncio.get_running_loop().time()
@@ -422,7 +434,12 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
         endpoint, roughly 15-20 minutes behind, never the websocket.
         """
         sym = symbol.strip().upper()
-        rows = await asyncio.to_thread(quotes.seed, [sym], seed_client)
+        # _seed_client(), not the closure variable directly: `seed_client` is
+        # a test seam that stays None in production until _seed_client()
+        # lazily builds it (same as /live_grid and the websocket baseline
+        # seed do), otherwise this route 404s forever on a cold process.
+        client = _seed_client()
+        rows = await asyncio.to_thread(quotes.seed, [sym], client)
         row = rows[0] if rows else None
         price = (row or {}).get("price")
         if price is None:
