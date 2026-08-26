@@ -880,6 +880,7 @@ Create `live-grid/tests/test_ta_conventions.py`:
 """Convention pinning. These guard the exact bug class the spike found twice:
 a library silently returning a different variant under a familiar name."""
 
+import polars as pl
 import pytest
 
 from app.ta.compute import compute
@@ -1579,6 +1580,8 @@ git commit -m "feat(ta): parabolic SAR and the path-dependent escape hatch"
   - `Result(frame: pl.DataFrame, annotations: list[Annotation], calls: int)`.
   - `LocalSource().series(df, reqs) -> Result`.
   - `EodhdSource(api_key, fetch=None, min_refetch_s=60).series(df, reqs, symbol, interval, last_closed) -> Result` — async.
+  - `EodhdSource._join(frame, req, rows) -> tuple[pl.DataFrame, list[str]]` — the
+    joined frame plus the column names EODHD did not supply.
   - `eodhd_query(req) -> dict` — the query params for one indicator, exposed so tests assert the mapping without a network call.
   - Module constant `CALLS_PER_REQUEST = 5`.
 
@@ -1658,6 +1661,35 @@ async def test_a_fetch_failure_degrades_to_local_rather_than_erroring():
                               "AAPL.US", "1d", "2024-01-21")
     assert "rsi" in result.frame.columns
     assert "403" in result.annotations[0].note
+
+
+@pytest.mark.asyncio
+async def test_a_response_missing_a_field_nulls_it_and_says_so():
+    """EODHD field names have drifted before; a partial payload must not raise."""
+    async def partial_fetch(query):
+        # bbands wants uband/mband/lband; lband is absent from every row.
+        return [{"date": "2024-01-21", "uband": 3.0, "mband": 2.0}]
+
+    src = EodhdSource("k", fetch=partial_fetch)
+    result = await src.series(fixture_frame(), [resolve("bbands", period=20, k=2.0)],
+                              "AAPL.US", "1d", "2024-01-21")
+    assert "bb_lo" in result.frame.columns
+    assert result.frame["bb_lo"].null_count() == result.frame.height
+    assert [a.column for a in result.annotations] == ["bb_lo"]
+
+
+@pytest.mark.asyncio
+async def test_an_unusable_payload_degrades_one_series_not_the_whole_chart():
+    """A malformed response must fall back to local compute, per spec D8."""
+    async def broken_fetch(query):
+        return [{"no_date_key_at_all": 1.0}]
+
+    src = EodhdSource("k", fetch=broken_fetch)
+    result = await src.series(fixture_frame(), [resolve("rsi", period=14)],
+                              "AAPL.US", "1d", "2024-01-21")
+    assert "rsi" in result.frame.columns
+    assert result.frame["rsi"].null_count() < result.frame.height
+    assert any("unusable" in a.note for a in result.annotations)
 
 
 @pytest.mark.asyncio
@@ -1859,25 +1891,59 @@ class EodhdSource:
         for req, rows in fetched:
             if rows is None:
                 continue
-            frame = self._join(frame, req, rows)
+            try:
+                frame, absent = self._join(frame, req, rows)
+            except Exception as exc:  # noqa: BLE001 - one bad series, not a dead chart
+                log.warning("eodhd %s returned an unusable payload: %s", req.name, exc)
+                frame = compute(frame, [req])
+                annotations.extend(
+                    Annotation(col, "local", f"EODHD response unusable: {exc}")
+                    for col in get(req.name).render
+                )
+                continue
+            annotations.extend(
+                Annotation(col, "eodhd", "EODHD did not supply this field")
+                for col in absent
+            )
         return Result(frame, annotations, calls)
 
     @staticmethod
-    def _join(frame: pl.DataFrame, req: Req, rows: list[dict]) -> pl.DataFrame:
-        """Rename EODHD's response fields onto our column names and join on date."""
+    def _join(
+        frame: pl.DataFrame, req: Req, rows: list[dict]
+    ) -> tuple[pl.DataFrame, list[str]]:
+        """Rename EODHD's response fields onto our columns and join on date.
+
+        Returns the joined frame plus the columns EODHD did not supply.
+
+        A field missing from EVERY row means their response shape is not what
+        the registry expects. That is not hypothetical: EODHD's stochastic is
+        documented as returning `slow_k`/`slow_d` and actually returns
+        `k_values`/`d_values`. Building the frame from only the keys that
+        happen to be present and then casting the full expected list raises
+        ColumnNotFoundError, so absent columns are materialised as nulls and
+        reported instead.
+        """
         fields = get(req.name).eodhd.fields
+        wanted = list(fields.values())
         if not rows:
-            return frame.with_columns([
-                pl.lit(None, dtype=pl.Float64).alias(col) for col in fields.values()
-            ])
+            nulls = [pl.lit(None, dtype=pl.Float64).alias(c) for c in wanted]
+            return frame.with_columns(nulls), wanted
+
+        present = {fields[k] for r in rows for k in fields if k in r}
+        absent = [c for c in wanted if c not in present]
         incoming = pl.DataFrame([
             {"date": r["date"], **{fields[k]: r.get(k) for k in fields if k in r}}
             for r in rows
-        ]).with_columns([
-            pl.col("date").str.to_date(),
-            pl.col([c for c in fields.values()]).cast(pl.Float64, strict=False),
         ])
-        return frame.join(incoming, on="date", how="left")
+        if absent:
+            incoming = incoming.with_columns(
+                [pl.lit(None, dtype=pl.Float64).alias(c) for c in absent]
+            )
+        incoming = incoming.with_columns([
+            pl.col("date").str.to_date(),
+            pl.col(wanted).cast(pl.Float64, strict=False),
+        ])
+        return frame.join(incoming, on="date", how="left"), absent
 
 
 async def gather_eodhd(source: EodhdSource, *calls) -> list[Result]:
@@ -1888,7 +1954,7 @@ async def gather_eodhd(source: EodhdSource, *calls) -> list[Result]:
 - [ ] **Step 4: Run the unit tests**
 
 Run: `cd live-grid && pytest tests/test_ta_sources.py -v`
-Expected: 9 passed.
+Expected: 11 passed.
 
 - [ ] **Step 5: Write the network-gated parity test**
 
