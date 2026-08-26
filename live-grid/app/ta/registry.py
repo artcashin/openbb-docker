@@ -136,7 +136,11 @@ def _rsi_build(p: dict, b: dict[str, Base]) -> list[pl.Expr]:
     loss = pl.when(delta < 0).then(-delta).otherwise(0.0)
     wilder = dict(alpha=1 / n, adjust=False, ignore_nulls=True)
     rs = gain.ewm_mean(**wilder) / loss.ewm_mean(**wilder)
-    return [(100 - 100 / (1 + rs)).alias("rsi")]
+    # Bar 0 has no previous close, so gain and loss are both 0 and rs is 0/0.
+    # Null is what every rolling indicator already uses for its warmup; NaN
+    # would be a second, inconsistent spelling of "undefined". This also
+    # covers a genuinely flat window, e.g. a halted ticker.
+    return [(100 - 100 / (1 + rs)).fill_nan(None).alias("rsi")]
 
 
 register(Indicator(
