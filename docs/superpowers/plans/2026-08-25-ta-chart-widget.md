@@ -3582,6 +3582,14 @@ In `live-grid/app/main.py`, add after the `/ta_chart` route:
         try:
             while True:
                 started = asyncio.get_running_loop().time()
+                # NOTE: this re-fetches history over HTTP every push, not just
+                # the ticks. Spec D9 costed the indicator recompute (0.66 ms)
+                # but not this round-trip, so the real per-push cost is
+                # dominated by I/O, not arithmetic. Acceptable for v1 because
+                # the kdb read-through cache makes it a local hit and
+                # TA_PUSH_INTERVAL_MS is tunable -- but the cheap win, if this
+                # ever hurts, is to refetch history only on bar close and
+                # re-aggregate ticks in between.
                 bars, _ = await build_series(
                     params.symbol, params.interval, s, e, recorder,
                     _tick_window(), params.provider
