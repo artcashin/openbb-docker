@@ -1168,8 +1168,10 @@ register(Indicator(
     deps=lambda p: [],
     build=_stochrsi_build,
     render={"stochrsi": _line("#c678dd")},
-    eodhd=EodhdMap("stochrsi", {"period": "period"}, {"stochrsi": "stochrsi"},
-                   "adjusted", "EODHD stochrsi; verify scaling in the parity test."),
+    eodhd=EodhdMap("stochrsi", {"period": "period"}, {"fastkline": "stochrsi"},
+                   "adjusted",
+                   "EODHD returns fastkline/fastdline, NOT a 'stochrsi' key -- "
+                   "verified against the live API; scale matches ours exactly."),
 ))
 
 # --- ADX and directional movement -------------------------------------------
@@ -1710,6 +1712,23 @@ async def test_the_cache_is_keyed_on_the_last_closed_bar():
 
 
 @pytest.mark.asyncio
+async def test_a_failing_fetch_is_throttled_rather_than_retried_every_call():
+    """A failure must start the backoff clock, or min_refetch_s never engages."""
+    attempts = []
+
+    async def always_fails(query):
+        attempts.append(query)
+        raise RuntimeError("503 Service Unavailable")
+
+    src = EodhdSource("k", fetch=always_fails, min_refetch_s=3600)
+    df, req = fixture_frame(), [resolve("rsi", period=14)]
+    await src.series(df, req, "AAPL.US", "1d", "2024-01-21")
+    await src.series(df, req, "AAPL.US", "1d", "2024-01-21")
+    await src.series(df, req, "AAPL.US", "1d", "2024-01-21")
+    assert len(attempts) == 1, "a failing indicator must not retry every call"
+
+
+@pytest.mark.asyncio
 async def test_cumulative_call_spend_is_tracked_for_health():
     async def fake_fetch(query):
         return [{"date": "2024-01-21", "rsi": 55.0}]
@@ -1862,17 +1881,23 @@ class EodhdSource:
                 fetched.append((req, cached))
                 continue
             if now - self._fetched_at.get(key, -1e9) < self._min_refetch_s:
-                # Same bar, too soon, nothing cached: skip rather than spend.
+                # A recent ATTEMPT failed and the floor has not elapsed.
                 annotations.extend(
                     Annotation(col, "local", "EODHD refetch throttled")
                     for col in get(req.name).render
                 )
                 fetched.append((req, None))
                 continue
+            # Stamp BEFORE the attempt, not on success. Stamping on success
+            # makes this throttle unreachable: whenever _fetched_at holds a real
+            # value the cache check above has already returned, so the only way
+            # to arrive here is a MISS -- i.e. a previous failure, which never
+            # stamped. A persistently-failing indicator would then retry on every
+            # push with no backoff, at five billed calls each time.
+            self._fetched_at[key] = now
             try:
                 rows = await self._fetch({**eodhd_query(req), "_symbol": symbol})
                 self._cache[key] = rows
-                self._fetched_at[key] = now
                 calls += CALLS_PER_REQUEST
                 self.total_calls += CALLS_PER_REQUEST
                 fetched.append((req, rows))
@@ -2081,7 +2106,9 @@ async def test_local_matches_eodhd(api_key, bars, name, params, columns):
 
 def test_every_mapped_indicator_is_covered_by_a_parity_case():
     """A new EODHD mapping without a parity case is an untested claim."""
-    mapped = {n for n, i in get.__globals__["REGISTRY"].items() if i.eodhd is not None}
+    from app.ta.registry import REGISTRY
+
+    mapped = {n for n, i in REGISTRY.items() if i.eodhd is not None}
     covered = {c[0] for c in CASES}
     assert mapped - covered == set(), sorted(mapped - covered)
 
