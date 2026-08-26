@@ -15,7 +15,7 @@ dependencies = ["pykx>=3.2", "pandas"]
 include = ["kdb_store*"]
 
 [project.optional-dependencies]
-dev = ["ruff", "pytest"]
+dev = ["ruff==0.15.22", "pytest"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

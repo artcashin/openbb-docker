@@ -27,7 +27,7 @@ kdb = "openbb_kdb:kdb_provider"
 include = ["openbb_kdb*"]
 
 [project.optional-dependencies]
-dev = ["ruff", "pytest", "pytest-asyncio"]
+dev = ["ruff==0.15.22", "pytest", "pytest-asyncio"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
