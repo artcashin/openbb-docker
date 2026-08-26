@@ -3828,8 +3828,14 @@ Append to `live-grid/README.md`:
 ## Technical Chart (`ta_chart`)
 
 Indicators over the same cached OHLCV the other charts use, in stacked Plotly
-panes. 22 tier-1 indicators; 13 of them can also be drawn from EODHD's own
-pre-calculated values by setting `source=eodhd`.
+panes. 22 tier-1 indicators; 12 of them can also be drawn from EODHD's own
+pre-calculated values by setting `source=eodhd`, and every one of those 12 is
+checked against EODHD's numbers by a network-gated parity test.
+
+CCI is deliberately local-only. EODHD's CCI disagrees with the standard
+definition by a median of 28.5%, so offering both sources for it would mean the
+line jumped when you toggled `source`. It computes locally and says so in the
+legend.
 
 Layouts are **macros** — YAML files in `macros/`, one pane per entry:
 
