@@ -119,7 +119,12 @@ def build_ta_figure(
                 "line": {"color": "#5c6370", "width": 1, "dash": "dot"},
             })
 
-    marks = ", ".join(sorted({a.column for a in annotations}))
+    # Annotations carry the internal column name, which since the
+    # per-parameter rename looks like `sma|period=3`. The panes already know
+    # the human label for every column, so use it -- a chart title is read by
+    # people, not by the dedup pass that needs the suffix.
+    labels = {s.column: s.label for pane in panes for s in pane.series}
+    marks = ", ".join(sorted({labels.get(a.column, a.column) for a in annotations}))
     bits = [symbol]
     if subtitle:
         bits.append(subtitle)
