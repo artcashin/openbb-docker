@@ -8,9 +8,11 @@ from app.leases import LeaseRegistry
 class FakeManager:
     def __init__(self):
         self.registered = {}
+        self.register_calls = []
         self.unregistered = []
 
     def register(self, conn_id, symbols):
+        self.register_calls.append(conn_id)
         self.registered[conn_id] = list(symbols)
 
     def unregister(self, conn_id):
@@ -34,6 +36,7 @@ def test_renewing_extends_the_expiry_without_a_second_registration():
     assert first["AAPL"] == 1300.0
     assert second["AAPL"] == 1500.0
     assert list(m.registered) == ["lease:AAPL"]
+    assert m.register_calls == ["lease:AAPL"]
 
 
 def test_sweep_unregisters_only_the_lapsed_symbols():
