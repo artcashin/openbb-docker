@@ -3069,6 +3069,18 @@ def test_bars_to_frame_falls_back_when_adjusted_close_is_absent():
     assert frame["adj_close"].to_list() == frame["close"].to_list()
 
 
+def test_bars_to_frame_falls_back_when_adjusted_close_is_an_explicit_null():
+    """A present-but-null adjusted_close must fall back exactly like an absent one.
+
+    `.get(k, default)` does not fire on a null value. Providers return null
+    adjusted_close for indices, forex and crypto, and 13 of the 22 indicators
+    read that column.
+    """
+    nulled = [{**b, "adjusted_close": None} for b in BARS]
+    frame = bars_to_frame(nulled)
+    assert frame["adj_close"].to_list() == frame["close"].to_list()
+
+
 def test_bars_to_frame_on_no_bars_has_the_full_schema():
     frame = bars_to_frame([])
     assert {"date", "open", "high", "low", "close", "adj_close", "volume"} <= set(frame.columns)
@@ -3189,11 +3201,17 @@ def bars_to_frame(bars: list[dict]) -> pl.DataFrame:
     rows = []
     for bar in bars:
         close = bar.get("close")
+        # `.get(key, default)` fires only when the key is ABSENT. Providers
+        # return an explicit null adjusted_close for instruments that have no
+        # adjustment data -- indices, forex, crypto -- and that must fall back
+        # too. Without this, all 13 price_basis="adjusted" indicators render
+        # blank on those symbols, with no error anywhere to explain it.
+        adjusted = bar.get("adjusted_close")
         rows.append({
             "date": str(bar.get("date"))[:10],
             "open": bar.get("open"), "high": bar.get("high"),
             "low": bar.get("low"), "close": close,
-            "adj_close": bar.get("adjusted_close", close),
+            "adj_close": close if adjusted is None else adjusted,
             "volume": bar.get("volume") or 0.0,
         })
     return pl.DataFrame(rows).with_columns([
