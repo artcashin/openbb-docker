@@ -53,3 +53,26 @@ def test_ta_chart_says_why_it_is_empty_when_bars_are_unavailable():
     response = client().get("/ta_chart", params={"symbol": "AAPL", "macro": "none"})
     assert response.status_code == 200
     assert "bars unavailable" in response.json()["layout"]["title"]["text"]
+
+
+def test_a_bars_outage_after_rev_0_sends_a_figure_not_a_silently_emptied_delta(monkeypatch):
+    """bars_error must force a full figure push -- a delta carries no title,
+    so an emptied delta with no explanation is the same silently-blank
+    failure /ta_chart was fixed for, one layer down."""
+    monkeypatch.setenv("TA_PUSH_INTERVAL_MS", "10")
+    calls = {"n": 0}
+    bar = {"date": "2024-01-01", "open": 1, "high": 1, "low": 1, "close": 1, "volume": 1}
+
+    async def fake_build_series(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return [bar], {}
+        raise RuntimeError("kdb down")
+
+    monkeypatch.setattr("app.main.build_series", fake_build_series)
+    with client().websocket_connect("/ta_chart_ws?symbol=AAPL&macro=none") as ws:
+        first = ws.receive_json()
+        assert first["type"] == "figure"
+        second = ws.receive_json()
+        assert second["type"] == "figure"
+        assert "bars unavailable" in second["figure"]["layout"]["title"]["text"]

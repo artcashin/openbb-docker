@@ -7,7 +7,7 @@ from app.ta.registry import REGISTRY, resolve
 from tests.ta_helpers import fixture_frame
 
 
-def test_an_unchanged_series_reports_nothing_revised():
+def test_an_unchanged_series_resends_only_the_forming_bar():
     dates = ["2024-01-01", "2024-01-02"]
     assert revised_from(dates, dates) == len(dates) - 1
 
