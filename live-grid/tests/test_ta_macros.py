@@ -122,3 +122,12 @@ def test_malformed_yaml_is_rejected_with_the_filename(tmp_path):
     path.write_text("label: Broken\npanes: [\n  - id: price\n")
     with pytest.raises(MacroError, match="broken.yml"):
         load_macro(path)
+
+
+def test_one_broken_macro_does_not_blank_the_others(tmp_path):
+    """A hand-edited directory will contain typos. Losing one macro is
+    proportionate; losing every macro, including the baked-in ones, is not."""
+    write(tmp_path, GOOD, "good.yml")
+    (tmp_path / "broken.yml").write_text("label: Broken\npanes: [\n  - id: price\n")
+    loaded = load_macros(tmp_path)
+    assert sorted(loaded) == ["good"]

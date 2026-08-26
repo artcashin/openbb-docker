@@ -47,3 +47,9 @@ def test_health_reports_the_eodhd_call_budget():
 
 def test_health_still_reports_feed_status():
     assert "feeds" in client().get("/health").json()
+
+
+def test_ta_chart_says_why_it_is_empty_when_bars_are_unavailable():
+    response = client().get("/ta_chart", params={"symbol": "AAPL", "macro": "none"})
+    assert response.status_code == 200
+    assert "bars unavailable" in response.json()["layout"]["title"]["text"]

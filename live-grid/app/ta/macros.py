@@ -6,6 +6,7 @@ filename in it rather than an empty pane at render time.
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -13,6 +14,8 @@ from pathlib import Path
 import yaml
 
 from app.ta.registry import Req, resolve
+
+log = logging.getLogger("live-grid.ta")
 
 BAKED_IN = Path(__file__).resolve().parent.parent.parent / "macros"
 
@@ -96,10 +99,27 @@ def load_macro(path: Path) -> Macro:
 
 
 def load_macros(directory: Path) -> dict[str, Macro]:
+    """Every loadable macro in `directory`. A broken one is skipped, not fatal.
+
+    The comprehension this replaces raised on the first bad file, so a single
+    typo in a mounted macro blanked EVERY macro -- including the baked-in ones
+    -- from the widget's dropdown. A hand-edited directory will contain typos;
+    losing one macro is a proportionate consequence, losing all of them is not.
+    The warning plus the file's absence from the dropdown is how its author
+    finds out.
+    """
     directory = Path(directory)
     if not directory.is_dir():
         return {}
-    return {m.name: m for m in (load_macro(p) for p in sorted(directory.glob("*.yml")))}
+    loaded: dict[str, Macro] = {}
+    for path in sorted(directory.glob("*.yml")):
+        try:
+            macro = load_macro(path)
+        except MacroError as exc:
+            log.warning("skipping macro %s: %s", path.name, exc)
+            continue
+        loaded[macro.name] = macro
+    return loaded
 
 
 def load_all() -> dict[str, Macro]:

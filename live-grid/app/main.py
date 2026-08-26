@@ -237,13 +237,14 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
                        end: str | None = None, provider: str = "kdb"):
         s, e = _window(start, end)
         params = ChartParams(symbol, interval, source, macro, indicators, s, e, provider)
+        bars_error = None
         try:
             bars, _ = await build_series(
                 symbol, interval, s, e, recorder, _tick_window(), provider
             )
         except Exception as exc:  # noqa: BLE001 - a bad macro must still be reported below
             log.warning("ta_chart bars unavailable for %s: %s", symbol, exc)
-            bars = []
+            bars, bars_error = [], exc
         try:
             figure, _, _ = await build_payload(
                 params, bars_to_frame(bars), eodhd_source=_eodhd
@@ -254,6 +255,12 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
                 {"data": [], "layout": {"title": {"text": f"{symbol}: {exc}"}}},
                 status_code=502,
             )
+        if bars_error is not None:
+            # An empty chart that does not say why it is empty is the failure
+            # mode this design treats as a defect everywhere else -- an EODHD
+            # fallback annotates the legend, and an indicator that nulled itself
+            # was a Critical bug. Degrading is right; degrading silently is not.
+            figure["layout"]["title"]["text"] += f"  ·  bars unavailable: {bars_error}"
         return JSONResponse(figure)
 
     @app.get("/demo", response_class=HTMLResponse)
