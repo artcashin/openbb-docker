@@ -3751,7 +3751,13 @@ In `live-grid/app/main.py`, add after the `/ta_chart` route:
                     params, bars_to_frame(bars), eodhd_source=_eodhd
                 )
                 dates = [str(d) for d in frame["date"].to_list()] if frame.height else []
-                if rev == 0 or any_repaints(panes):
+                # `bars_error` forces a FIGURE push, not a delta. The
+                # "bars unavailable" note lives in the figure's title, and a
+                # delta carries no title -- so on a delta push the client would
+                # receive an emptied chart with no explanation at all. That is
+                # the same silently-blank failure the REST route was fixed for,
+                # one layer down.
+                if rev == 0 or any_repaints(panes) or bars_error is not None:
                     await ws.send_json({"type": "figure", "rev": rev, "figure": figure})
                 else:
                     payload = ta_delta(frame, panes, revised_from(previous, dates))
