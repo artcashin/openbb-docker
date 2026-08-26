@@ -17,11 +17,20 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.classify import split_by_feed
 from app.feeds import FeedManager
 from app.figure import build_figure
 from app.openbb_client import fetch_series
 from app.quotes import QuoteTable
+from app.ta.figure import delta as ta_delta
+from app.ta.macros import load_all as load_macros_all
+from app.ta.payload import (
+    ChartParams,
+    any_repaints,
+    bars_to_frame,
+    build_payload,
+    revised_from,
+)
+from app.ta.sources import EodhdSource
 
 log = logging.getLogger("live-grid")
 
@@ -165,7 +174,18 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
 
     @app.get("/widgets.json")
     def widgets() -> JSONResponse:
-        return JSONResponse(json.loads(WIDGETS_PATH.read_text()))
+        spec = json.loads(WIDGETS_PATH.read_text())
+        try:
+            macros = load_macros_all()
+        except Exception as exc:  # noqa: BLE001 - a bad macro must not blank the grid
+            log.warning("macro discovery failed: %s", exc)
+            macros = {}
+        for param in spec.get("ta_chart", {}).get("params", []):
+            if param.get("paramName") == "macro":
+                param["options"] = [{"label": "None", "value": "none"}] + [
+                    {"label": m.label, "value": name} for name, m in sorted(macros.items())
+                ]
+        return JSONResponse(spec)
 
     @app.get("/live_grid")
     def live_grid(symbol: str = Query(default="")):
@@ -212,6 +232,126 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
                                 status_code=502)
         return JSONResponse(build_figure(symbol, bars))
 
+    _eodhd = EodhdSource(
+        key or "",
+        min_refetch_s=float(os.getenv("TA_EODHD_MIN_REFETCH_S", "60")),
+    )
+
+    @app.get("/ta_chart")
+    async def ta_chart(symbol: str = "AAPL", interval: str = "1d",
+                       source: str = "local", macro: str = "none",
+                       indicators: str = "", start: str | None = None,
+                       end: str | None = None, provider: str = "kdb"):
+        s, e = _window(start, end)
+        params = ChartParams(symbol, interval, source, macro, indicators, s, e, provider)
+        bars_error = None
+        try:
+            bars, _ = await build_series(
+                symbol, interval, s, e, recorder, _tick_window(), provider
+            )
+        except Exception as exc:  # noqa: BLE001 - a bad macro must still be reported below
+            log.warning("ta_chart bars unavailable for %s: %s", symbol, exc)
+            bars, bars_error = [], exc
+        try:
+            figure, _, _, _ = await build_payload(
+                params, bars_to_frame(bars), eodhd_source=_eodhd
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("ta_chart failed for %s: %s", symbol, exc)
+            return JSONResponse(
+                {"data": [], "layout": {"title": {"text": f"{symbol}: {exc}"}}},
+                status_code=502,
+            )
+        if bars_error is not None:
+            # An empty chart that does not say why it is empty is the failure
+            # mode this design treats as a defect everywhere else -- an EODHD
+            # fallback annotates the legend, and an indicator that nulled itself
+            # was a Critical bug. Degrading is right; degrading silently is not.
+            figure["layout"]["title"]["text"] += f"  ·  bars unavailable: {bars_error}"
+        return JSONResponse(figure)
+
+    @app.websocket("/ta_chart_ws")
+    async def ta_chart_ws(ws: WebSocket) -> None:
+        await ws.accept()
+        query = ws.query_params
+        s, e = _window(query.get("start"), query.get("end"))
+        params = ChartParams(
+            symbol=query.get("symbol", "AAPL"),
+            interval=query.get("interval", "1d"),
+            source=query.get("source", "local"),
+            macro=query.get("macro", "none"),
+            indicators=query.get("indicators", ""),
+            start=s, end=e, provider=query.get("provider", "kdb"),
+        )
+        interval_s = float(os.getenv("TA_PUSH_INTERVAL_MS", "1000")) / 1000.0
+        previous: list[str] = []
+        previous_marks: tuple[str, ...] = ()
+        rev = 0
+        try:
+            while True:
+                started = asyncio.get_running_loop().time()
+                # NOTE: this re-fetches history over HTTP every push, not just
+                # the ticks. Spec D9 costed the indicator recompute (0.66 ms)
+                # but not this round-trip, so the real per-push cost is
+                # dominated by I/O, not arithmetic. Acceptable for v1 because
+                # the kdb read-through cache makes it a local hit and
+                # TA_PUSH_INTERVAL_MS is tunable -- but the cheap win, if this
+                # ever hurts, is to refetch history only on bar close and
+                # re-aggregate ticks in between.
+                bars_error = None
+                try:
+                    bars, _ = await build_series(
+                        params.symbol, params.interval, s, e, recorder,
+                        _tick_window(), params.provider
+                    )
+                # Degrade like /ta_chart: keep the connection open with a
+                # blank-and-say-why chart instead of going silently dark
+                # (Task 11 review).
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("ta_chart_ws bars unavailable for %s: %s", params.symbol, exc)
+                    bars, bars_error = [], exc
+                try:
+                    figure, panes, frame, annotations = await build_payload(
+                        params, bars_to_frame(bars), eodhd_source=_eodhd
+                    )
+                # Mirrors /ta_chart's 502: not a missing-bars degradation, this
+                # is unrecoverable (bad macro, bad indicator params), so end
+                # the stream rather than looping on a permanent failure.
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("ta_chart_ws failed for %s: %s", params.symbol, exc)
+                    await ws.close(code=1011, reason=str(exc)[:120])
+                    return
+                if bars_error is not None:
+                    figure["layout"]["title"]["text"] += f"  ·  bars unavailable: {bars_error}"
+                dates = [str(d) for d in frame["date"].to_list()] if frame.height else []
+                # `bars_error` forces a FIGURE push, not a delta. The
+                # "bars unavailable" note lives in the figure's title, and a
+                # delta carries no title -- so on a delta push the client would
+                # receive an emptied chart with no explanation at all. That is
+                # the same silently-blank failure the REST route was fixed for,
+                # one layer down.
+                # A change in ANNOTATIONS forces a figure too. They live only
+                # in the title, so an EODHD fetch that starts failing mid-stream
+                # would otherwise swap the series to local values while the
+                # title, frozen at rev 0, still reads "eodhd".
+                marks = tuple(sorted({a.column for a in annotations}))
+                if (rev == 0 or any_repaints(panes) or bars_error is not None
+                        or marks != previous_marks):
+                    await ws.send_json({"type": "figure", "rev": rev, "figure": figure})
+                else:
+                    payload = ta_delta(frame, panes, revised_from(previous, dates))
+                    await ws.send_json({"type": "delta", "rev": rev, **payload})
+                previous, previous_marks, rev = dates, marks, rev + 1
+                # Drop rather than queue: a recompute that overran its slot must
+                # not build a backlog that never drains.
+                elapsed = asyncio.get_running_loop().time() - started
+                await asyncio.sleep(max(0.0, interval_s - elapsed))
+        except WebSocketDisconnect:
+            return
+        except Exception as exc:  # noqa: BLE001
+            log.warning("ta_chart_ws ended for %s: %s", params.symbol, exc)
+            return
+
     @app.get("/demo", response_class=HTMLResponse)
     async def demo():
         return HTMLResponse((_STATIC / "demo.html").read_text())
@@ -222,6 +362,11 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
         if recorder is not None:
             body["ticks"] = recorder.stats()
             body["ticks"]["endpoint"] = getattr(recorder.store.session, "endpoint", None)
+        body["ta"] = {
+            "eodhd_calls": _eodhd.total_calls,
+            "calls_per_indicator": 5,
+            "min_refetch_s": float(os.getenv("TA_EODHD_MIN_REFETCH_S", "60")),
+        }
         return body
 
     @app.websocket("/live_grid_ws")

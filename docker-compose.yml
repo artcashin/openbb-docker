@@ -306,6 +306,14 @@ services:
     environment:
       - LIVE_GRID_CHART=true
       - LIVE_TICK_WINDOW_SECONDS=86400
+      # TA chart (see docs/superpowers/specs/2026-08-25-ta-chart-widget-design.md).
+      # TA_EODHD_MIN_REFETCH_S is a cost guard, not a performance knob: EODHD
+      # bills 5 API calls per indicator per request, so an unthrottled live
+      # chart would spend a 100k/day budget in under an hour.
+      - TA_PUSH_INTERVAL_MS=1000
+      - TA_EODHD_MIN_REFETCH_S=60
+      # Mount a directory here to add chart macros without rebuilding.
+      # - TA_MACRO_DIR=/srv/macros-custom
       - KDB_EMBEDDED=false
       - QLIC=/opt/kx-license
     env_file:
