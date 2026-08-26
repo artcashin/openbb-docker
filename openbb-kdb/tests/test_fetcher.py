@@ -80,7 +80,7 @@ def test_provider_registers_all_five_models():
 
     assert set(kdb_provider.fetcher_dict) == {
         "EquityHistorical", "EtfHistorical", "CryptoHistorical",
-        "CurrencyHistorical", "IndexHistorical",
+        "CurrencyHistorical", "IndexHistorical", "EquityQuote",
     }
 
 
