@@ -107,3 +107,18 @@ def test_the_baked_in_macros_all_load():
         loaded.update(load_macros(directory))
     assert "classic-momentum" in loaded
     assert "volatility-squeeze" in loaded
+
+
+def test_a_non_numeric_height_is_rejected_as_a_macro_error(tmp_path):
+    """Not a ValueError: the caller only catches MacroError."""
+    bad = GOOD.replace("height: 1", 'height: "tall"')
+    with pytest.raises(MacroError, match="height must be a number"):
+        load_macro(write(tmp_path, bad))
+
+
+def test_malformed_yaml_is_rejected_with_the_filename(tmp_path):
+    """A mounted macro file can be edited by hand; the error must say which one."""
+    path = tmp_path / "broken.yml"
+    path.write_text("label: Broken\npanes: [\n  - id: price\n")
+    with pytest.raises(MacroError, match="broken.yml"):
+        load_macro(path)

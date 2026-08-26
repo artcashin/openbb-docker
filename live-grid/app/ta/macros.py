@@ -60,7 +60,15 @@ def load_macro(path: Path) -> Macro:
     panes: list[PaneSpec] = []
     for index, pane in enumerate(panes_raw):
         pane_id = str(pane.get("id") or f"pane{index}")
-        height = float(pane.get("height", 1))
+        try:
+            height = float(pane.get("height", 1))
+        except (TypeError, ValueError):
+            # A bare ValueError here would escape the caller's `except
+            # MacroError` and crash differently than every other bad-macro path.
+            raise MacroError(
+                f"{path.name}: pane {pane_id!r} height must be a number, "
+                f"got {pane.get('height')!r}"
+            ) from None
         if height <= 0:
             raise MacroError(f"{path.name}: pane {pane_id!r} height must be positive")
         reqs = []
