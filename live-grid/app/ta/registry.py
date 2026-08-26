@@ -214,7 +214,7 @@ register(Indicator(
 register(Indicator(
     name="wma", label="WMA", params={"period": 50}, pane="price",
     price_basis="adjusted",
-    convention="Linearly weighted mean; weight i = i for i in 1..period.",
+    convention="Linearly weighted mean of adjusted close; weight i = i for i in 1..period.",
     deps=lambda p: [],
     build=lambda p, b: [
         pl.col(price_col("adjusted"))
@@ -370,7 +370,7 @@ register(Indicator(
     name="stochrsi", label="StochRSI",
     params={"period": 14, "stoch_period": 14}, pane="own",
     price_basis="adjusted", guides=[20.0, 80.0],
-    convention="Stochastic of Wilder RSI(period) over stoch_period bars, scaled 0-100.",
+    convention="Stochastic of Wilder RSI(period) over stoch_period bars, scaled 0-100, on adjusted close.",
     deps=lambda p: [],
     build=_stochrsi_build,
     render={"stochrsi": _line("#c678dd")},
@@ -502,7 +502,7 @@ register(Indicator(
 register(Indicator(
     name="pct_b", label="%B", params={"period": 20, "k": 2.0}, pane="own",
     price_basis="adjusted", guides=[0.0, 1.0],
-    convention="(close - lower) / (upper - lower). Shares Bollinger's bases exactly.",
+    convention="(close - lower) / (upper - lower), on adjusted close. Shares Bollinger's bases exactly.",
     deps=lambda p: [Base("sma", price_col("adjusted"), p["period"]),
                     Base("std", price_col("adjusted"), p["period"])],
     build=lambda p, b: [
@@ -519,7 +519,7 @@ register(Indicator(
 register(Indicator(
     name="bandwidth", label="Bollinger BandWidth",
     params={"period": 20, "k": 2.0}, pane="own", price_basis="adjusted",
-    convention="(upper - lower) / middle * 100. Shares Bollinger's bases exactly.",
+    convention="(upper - lower) / middle * 100, on adjusted close. Shares Bollinger's bases exactly.",
     deps=lambda p: [Base("sma", price_col("adjusted"), p["period"]),
                     Base("std", price_col("adjusted"), p["period"])],
     build=lambda p, b: [
