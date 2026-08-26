@@ -76,6 +76,31 @@ async def _await_tick(store, symbol: str, deadline: float) -> dict | None:
         await asyncio.sleep(min(POLL_S, remaining))
 
 
+async def _prev_close(cache, symbol: str, credentials) -> float | None:
+    """Close of the most recent complete daily bar, or None.
+
+    Best-effort exactly like the lease: a quote that knows the last price but
+    not yesterday's close is still a useful quote, and is what the spec asks
+    for when no bar is available.
+    """
+    from datetime import date, timedelta
+
+    end = date.today()
+    try:
+        # get() answers (rows, metadata) -- unpack, do not index the tuple.
+        rows, _meta = await cache.get(
+            symbol=symbol, interval="1d", start=end - timedelta(days=10), end=end,
+            model="EquityHistorical", params={}, credentials=credentials,
+        )
+    except Exception as exc:  # noqa: BLE001 - see docstring
+        log.debug("prev_close lookup for %s failed: %s", symbol, exc)
+        return None
+    if not rows:
+        return None
+    close = rows[-1].get("close")
+    return float(close) if close is not None else None
+
+
 class KdbEquityQuoteFetcher(Fetcher[EquityQuoteQueryParams, list[EquityQuoteData]]):
     """The newest live tick for a symbol, leasing a feed if one is not running."""
 
@@ -96,7 +121,8 @@ class KdbEquityQuoteFetcher(Fetcher[EquityQuoteQueryParams, list[EquityQuoteData
         store = cache.store
         deadline = float(os.getenv("KDB_QUOTE_DEADLINE_S", DEADLINE_S))
         tick = await _await_tick(store, symbol, deadline)
-        return {"symbol": symbol, "tick": tick, "prev_close": None}
+        prev = await _prev_close(cache, symbol, credentials)
+        return {"symbol": symbol, "tick": tick, "prev_close": prev}
 
     @staticmethod
     def transform_data(query, data: dict, **kwargs) -> list[EquityQuoteData]:

@@ -22,6 +22,17 @@ Every response carries cache telemetry in `extra["results_metadata"]`:
 `cache` is `hit` (no upstream call), `partial` (gaps fetched), `miss` (nothing
 cached) or `bypass` (kdb unavailable — served straight from upstream).
 
+## Quotes
+
+`/equity/price/quote?provider=kdb` returns the newest live tick, leasing a
+live-grid subscription for symbols that are not already being fed. During a
+session the payload carries `last_price`, `last_size`, `last_timestamp`,
+`prev_close` and `change`; today's `open`/`high`/`low`/`volume` stay empty
+because daily bars only exist after the close.
+
+Environment: `LIVE_GRID_SUBSCRIBE_URL` (default
+`http://127.0.0.1:6903/subscribe`), `KDB_QUOTE_DEADLINE_S` (default 3).
+
 ## Configuration
 
 | Env var | Default | Meaning |

@@ -22,6 +22,23 @@ a chart that joins cached history to bars built from the live feed.
 - `GET /demo` — a standalone scroll page for the chart, moved here from the
   now-removed `cache-chart` service.
 
+### `POST /subscribe`
+
+Leases a live feed for symbols, keyed by symbol and renewable:
+
+    curl -X POST http://127.0.0.1:6903/subscribe \
+      -H 'content-type: application/json' \
+      -d '{"symbols":["AAPL"],"ttl":300}'
+    {"leases":{"AAPL":"2026-08-26T15:20:00+00:00"}}
+
+Posting a symbol that is already leased extends its expiry rather than adding
+a second registration. Leases lapse after their TTL unless renewed; a sweeper
+drops them. Tailnet-only, like every route here — never funnel it.
+
+Leasing a symbol that is not already fed rebuilds its EODHD feed, because the
+SDK fixes symbols at construction. That briefly interrupts ticks for other
+symbols on the same feed, which is why the TTL is generous rather than tight.
+
 Symbols route by shape: a dash means crypto (`BTC-USD`), two ISO currency
 codes mean forex (`EURUSD`), everything else is a US equity. Feed clients are
 rebuilt (debounced ~1s) when the subscribed union changes; the SDK's

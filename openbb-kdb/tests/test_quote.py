@@ -1,5 +1,6 @@
 """Quote assembly: live tick over daily-bar session fields."""
 
+import os
 from datetime import datetime
 
 import pytest
@@ -131,3 +132,48 @@ async def test_waiting_is_capped_by_the_deadline_even_when_a_single_call_blocks_
 
     assert got is None
     assert elapsed < 0.6
+
+
+@pytest.mark.asyncio
+async def test_prev_close_comes_from_the_last_complete_daily_bar():
+    from openbb_kdb.models.quote import _prev_close
+
+    class Cache:
+        async def get(self, **kwargs):
+            # ReadThroughCache.get returns (rows, metadata), not rows.
+            return ([{"date": "2026-08-24", "close": 300.0},
+                     {"date": "2026-08-25", "close": 309.9}], {})
+
+    assert await _prev_close(Cache(), "AAPL", credentials=None) == 309.9
+
+
+@pytest.mark.asyncio
+async def test_a_failing_bar_lookup_does_not_fail_the_quote():
+    """Spec: a missing daily bar yields last_price only, never an error."""
+    from openbb_kdb.models.quote import _prev_close
+
+    class Broken:
+        async def get(self, **kwargs):
+            raise RuntimeError("kdb down")
+
+    assert await _prev_close(Broken(), "AAPL", credentials=None) is None
+
+
+@pytest.mark.skipif(
+    not os.getenv("KDB_QUOTE_LIVE_TEST"),
+    reason="needs a running live-grid, kdb and EODHD key; set KDB_QUOTE_LIVE_TEST=1",
+)
+@pytest.mark.asyncio
+async def test_live_quote_end_to_end():
+    """Leases a real symbol, waits for a real tick, asserts a sane quote.
+
+    Deliberately not asserting an exact price: the point is that the lease
+    reached live-grid, a tick landed in kdb and the fields assembled.
+    """
+    from openbb_kdb.models.quote import KdbEquityQuoteFetcher
+
+    query = KdbEquityQuoteFetcher.transform_query({"symbol": "AAPL"})
+    raw = await KdbEquityQuoteFetcher.aextract_data(query, credentials=None)
+    rows = KdbEquityQuoteFetcher.transform_data(query, raw)
+    assert rows, "no quote returned -- is live-grid reachable and the market open?"
+    assert rows[0].last_price and rows[0].last_price > 0
