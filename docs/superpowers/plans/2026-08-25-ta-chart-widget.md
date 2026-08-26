@@ -2072,6 +2072,23 @@ def test_load_macros_on_a_missing_directory_is_empty_not_an_error(tmp_path):
     assert load_macros(tmp_path / "nope") == {}
 
 
+def test_a_macro_style_survives_loading_and_reaches_the_request(tmp_path):
+    """`style:` in a macro is documented; it must not be silently dropped."""
+    styled = GOOD.replace(
+        "- {name: sma, period: 200}",
+        '- {name: sma, period: 200, style: {color: "#e8b923"}}',
+    )
+    macro = load_macro(write(tmp_path, styled))
+    sma = next(r for p in macro.panes for r in p.reqs if r.name == "sma")
+    assert sma.params["style"] == {"color": "#e8b923"}
+
+
+def test_an_indicator_without_style_resolves_to_none(tmp_path):
+    macro = load_macro(write(tmp_path, GOOD))
+    rsi = next(r for p in macro.panes for r in p.reqs if r.name == "rsi")
+    assert rsi.params["style"] is None
+
+
 def test_the_baked_in_macros_all_load():
     loaded = {}
     for directory in macro_dirs():
@@ -2159,7 +2176,10 @@ def load_macro(path: Path) -> Macro:
         for entry in pane.get("indicators") or []:
             spec = dict(entry)
             name = spec.pop("name", None)
-            spec.pop("style", None)
+            # `style` stays in spec deliberately: resolve() accepts it as
+            # per-series presentation, and panes.py merges it over the
+            # registry's default render. Popping it here silently discarded
+            # a documented macro feature.
             if name not in _registry():
                 raise MacroError(f"{path.name}: unknown indicator {name!r}")
             try:
@@ -2276,7 +2296,8 @@ git commit -m "feat(ta): macro loading with load-time validation"
 **Interfaces:**
 - Consumes: `Macro`/`PaneSpec` (Task 8), `REGISTRY`/`get`/`Req` (Tasks 3, 5, 6).
 - Produces:
-  - `Series(column: str, label: str, render: dict)`.
+  - `Series(column: str, label: str, render: dict)` — `render` is the registry's
+    default for that column, with the request's `style` merged over it key by key.
   - `Pane(id: str, height: float, is_price: bool, series: list[Series], guides: list[float])`.
   - `assign(macro: Macro | None, picks: list[Req]) -> list[Pane]`.
   - `domains(panes: list[Pane], gap: float = 0.02) -> list[tuple[float, float]]` — top-down; index 0 is the top pane.
@@ -2377,6 +2398,24 @@ def test_gaps_are_subtracted_before_weighting():
     assert total == pytest.approx(0.9)
 
 
+def test_a_macro_style_overrides_the_registry_render_colour():
+    panes = assign(None, [resolve("sma", period=50, style={"color": "#ff0000"})])
+    assert panes[0].series[0].render["color"] == "#ff0000"
+
+
+def test_style_overrides_key_by_key_and_keeps_the_render_type():
+    """Recolouring a bar must not turn it into a line."""
+    panes = assign(None, [resolve("volume", style={"color": "#ff0000"})])
+    series = panes[1].series[0]
+    assert series.render["color"] == "#ff0000"
+    assert series.render["type"] == "bar"
+
+
+def test_no_style_leaves_the_registry_render_untouched():
+    panes = assign(None, [resolve("sma", period=50)])
+    assert panes[0].series[0].render["color"] == "#4c9be8"
+
+
 def test_all_reqs_deduplicates_across_panes():
     macro = macro_of(
         PaneSpec("price", 3.0, [resolve("bbands", period=20, k=2.0)]),
@@ -2429,8 +2468,11 @@ class Pane:
 def _series_for(req: Req) -> list[Series]:
     ind = get(req.name)
     suffix = _suffix(req)
+    # A macro's per-series `style` overrides the registry's defaults key by
+    # key, so `{color: ...}` recolours a line without discarding its type.
+    style = req.params.get("style") or {}
     return [
-        Series(column, f"{ind.label}{suffix}" if i == 0 else column, render)
+        Series(column, f"{ind.label}{suffix}" if i == 0 else column, {**render, **style})
         for i, (column, render) in enumerate(ind.render.items())
     ]
 
