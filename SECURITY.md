@@ -65,6 +65,43 @@ therefore point at fixed source. **Published container images are rebuilt
 separately**, so if you pulled an image before its rebuild, re-pull and
 re-run `verify-auth.sh`.
 
+### Remediating a running deployment
+
+Re-cutting the tags fixes the *source*. A long-lived deployment still runs
+whatever image it was built from, and on 2026-08-26 an Ep. 11 stack was found
+still serving every path above without credentials, behind Funnel — that is,
+reachable from the public internet, not merely from the tailnet. Assume a
+running stack is affected until `verify-auth.sh` says otherwise; do not infer
+it from the tag the repo is checked out at.
+
+**Which remediation applies depends on how the API is started**, and getting
+this wrong takes the stack down rather than fixing it:
+
+- **`command: ["openbb-api", ...]` with no `--app`** — the container serves
+  `openbb_core.api.rest_api` directly. Pull the republished image for its
+  version and recreate.
+
+- **`command: ["openbb-api", "--app", "/opt/api_app.py", "--factory", ...]`** —
+  the container serves the `api_app.py` factory, which postdates every tag.
+  Swapping to a published tagged image **will not start**: that image is built
+  from a tree with no `api_app.py`, so the file the command names does not
+  exist. Instead, add the guard to the image already in use:
+
+      FROM <the image the stack already runs>
+      COPY api_app.py /opt/api_app.py
+      RUN python -c "import ast; ast.parse(open('/opt/api_app.py').read())"
+
+  Diff the container's `/opt/api_app.py` against this repo's before copying.
+  If they differ by more than the guard, the deployment carries local changes
+  that a blind copy would discard.
+
+Deployments whose services share a Tailscale sidecar via
+`network_mode: service:tailscale` need one more step. Recreating any one
+service restarts the sidecar, which leaves every sibling attached to a dead
+network namespace: they continue to report `Up` while returning 502. Recreate
+the siblings too, and re-check each published port afterwards rather than
+trusting `docker ps`.
+
 ### Credit
 
 Found on 2026-08-05 while auditing the metadata endpoints. The fix sat
