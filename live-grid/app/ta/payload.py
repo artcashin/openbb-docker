@@ -120,3 +120,28 @@ async def build_payload(
     subtitle = f"{params.interval} · {params.source}"
     figure = build_ta_figure(params.symbol, computed, panes, annotations, subtitle)
     return figure, panes, computed
+
+
+def any_repaints(panes: list[Pane]) -> bool:
+    """True when a pane holds an indicator whose history can change.
+
+    Tail deltas assume causality: a revision to bar t changes bar t alone. That
+    is false for ZigZag, whose pivots move well back into history when a new
+    extreme arrives, so such a chart resends in full (spec D10).
+    """
+    from app.ta.registry import get
+
+    return any(get(req.name).repaints for pane in panes for req in pane.reqs)
+
+
+def revised_from(previous_dates: list[str], current_dates: list[str]) -> int:
+    """The first row index whose value may have changed since the last push.
+
+    The last bar of the previous push is always included: it was forming, so
+    ticks since then have revised it.
+    """
+    if not previous_dates or len(current_dates) < len(previous_dates):
+        return 0
+    if current_dates[:len(previous_dates)] != previous_dates:
+        return 0
+    return max(0, len(previous_dates) - 1)

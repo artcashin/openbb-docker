@@ -21,8 +21,15 @@ from app.feeds import FeedManager
 from app.figure import build_figure
 from app.openbb_client import fetch_series
 from app.quotes import QuoteTable
+from app.ta.figure import delta as ta_delta
 from app.ta.macros import load_all as load_macros_all
-from app.ta.payload import ChartParams, bars_to_frame, build_payload
+from app.ta.payload import (
+    ChartParams,
+    any_repaints,
+    bars_to_frame,
+    build_payload,
+    revised_from,
+)
 from app.ta.sources import EodhdSource
 
 log = logging.getLogger("live-grid")
@@ -262,6 +269,75 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
             # was a Critical bug. Degrading is right; degrading silently is not.
             figure["layout"]["title"]["text"] += f"  ·  bars unavailable: {bars_error}"
         return JSONResponse(figure)
+
+    @app.websocket("/ta_chart_ws")
+    async def ta_chart_ws(ws: WebSocket) -> None:
+        await ws.accept()
+        query = ws.query_params
+        s, e = _window(query.get("start"), query.get("end"))
+        params = ChartParams(
+            symbol=query.get("symbol", "AAPL"),
+            interval=query.get("interval", "1d"),
+            source=query.get("source", "local"),
+            macro=query.get("macro", "none"),
+            indicators=query.get("indicators", ""),
+            start=s, end=e, provider=query.get("provider", "kdb"),
+        )
+        interval_s = float(os.getenv("TA_PUSH_INTERVAL_MS", "1000")) / 1000.0
+        previous: list[str] = []
+        rev = 0
+        try:
+            while True:
+                started = asyncio.get_running_loop().time()
+                # NOTE: this re-fetches history over HTTP every push, not just
+                # the ticks. Spec D9 costed the indicator recompute (0.66 ms)
+                # but not this round-trip, so the real per-push cost is
+                # dominated by I/O, not arithmetic. Acceptable for v1 because
+                # the kdb read-through cache makes it a local hit and
+                # TA_PUSH_INTERVAL_MS is tunable -- but the cheap win, if this
+                # ever hurts, is to refetch history only on bar close and
+                # re-aggregate ticks in between.
+                bars_error = None
+                try:
+                    bars, _ = await build_series(
+                        params.symbol, params.interval, s, e, recorder,
+                        _tick_window(), params.provider
+                    )
+                # Degrade like /ta_chart: keep the connection open with a
+                # blank-and-say-why chart instead of going silently dark
+                # (Task 11 review).
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("ta_chart_ws bars unavailable for %s: %s", params.symbol, exc)
+                    bars, bars_error = [], exc
+                try:
+                    figure, panes, frame = await build_payload(
+                        params, bars_to_frame(bars), eodhd_source=_eodhd
+                    )
+                # Mirrors /ta_chart's 502: not a missing-bars degradation, this
+                # is unrecoverable (bad macro, bad indicator params), so end
+                # the stream rather than looping on a permanent failure.
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("ta_chart_ws failed for %s: %s", params.symbol, exc)
+                    await ws.close(code=1011, reason=str(exc)[:120])
+                    return
+                if bars_error is not None:
+                    figure["layout"]["title"]["text"] += f"  ·  bars unavailable: {bars_error}"
+                dates = [str(d) for d in frame["date"].to_list()] if frame.height else []
+                if rev == 0 or any_repaints(panes):
+                    await ws.send_json({"type": "figure", "rev": rev, "figure": figure})
+                else:
+                    payload = ta_delta(frame, panes, revised_from(previous, dates))
+                    await ws.send_json({"type": "delta", "rev": rev, **payload})
+                previous, rev = dates, rev + 1
+                # Drop rather than queue: a recompute that overran its slot must
+                # not build a backlog that never drains.
+                elapsed = asyncio.get_running_loop().time() - started
+                await asyncio.sleep(max(0.0, interval_s - elapsed))
+        except WebSocketDisconnect:
+            return
+        except Exception as exc:  # noqa: BLE001
+            log.warning("ta_chart_ws ended for %s: %s", params.symbol, exc)
+            return
 
     @app.get("/demo", response_class=HTMLResponse)
     async def demo():
