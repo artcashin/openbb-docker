@@ -115,4 +115,8 @@ def test_a_degradation_appearing_mid_stream_forces_a_figure_not_a_delta(monkeypa
 
     assert first["type"] == "figure"
     assert second["type"] == "figure", "a degradation must not arrive as a delta"
-    assert "sma|period=3" in second["figure"]["layout"]["title"]["text"]
+    # The human label, not the internal column name: `sma|period=3` is for
+    # the dedup pass, and a chart title is read by people.
+    title = second["figure"]["layout"]["title"]["text"]
+    assert "SMA(3)" in title
+    assert "sma|period=3" not in title

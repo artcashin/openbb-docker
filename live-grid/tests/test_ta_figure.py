@@ -70,7 +70,29 @@ def test_annotations_appear_in_the_subtitle():
     frame, panes, _ = built(resolve("vwap"))
     fig = build_ta_figure("AAPL", frame, panes,
                           [Annotation(col("vwap"), "local", "no EODHD equivalent")])
-    assert col("vwap") in fig["layout"]["title"]["text"]
+    # The human label. This asserted the internal column name until the
+    # per-parameter rename made those names like `sma|period=3`, which has
+    # no business in text a user reads.
+    assert "VWAP" in fig["layout"]["title"]["text"]
+
+
+def test_annotation_marks_use_human_labels_not_internal_columns():
+    """A chart title is read by people.
+
+    Output columns carry a parameter signature (`sma|period=50`) so two
+    periods of one indicator cannot collapse onto one column. That suffix is
+    for the dedup pass; surfacing it in visible chart text leaks an
+    implementation detail at exactly the moment a user is being told
+    something went wrong.
+    """
+    frame, panes, _ = built(resolve("sma", period=50))
+    column = panes[0].series[0].column
+    assert "|" in column, "guard: this test is meaningless without the suffix"
+    fig = build_ta_figure("AAPL", frame, panes,
+                          [Annotation(column, "local", "no EODHD equivalent")])
+    title = fig["layout"]["title"]["text"]
+    assert "SMA(50)" in title
+    assert column not in title
 
 
 def test_the_symbol_appears_in_the_title():
