@@ -9,7 +9,7 @@ import logging
 import os
 import uuid
 from contextlib import asynccontextmanager
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
@@ -19,6 +19,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.feeds import FeedManager
 from app.figure import build_figure
+from app.leases import DEFAULT_TTL, LeaseRegistry
 from app.openbb_client import fetch_series
 from app.quotes import QuoteTable
 from app.ta.figure import delta as ta_delta
@@ -125,22 +126,39 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
     )
     manager_kwargs = {} if client_factory is None else {"client_factory": client_factory}
     manager = FeedManager(key or "", quotes, recorder=recorder, **manager_kwargs)
+    leases = LeaseRegistry(manager, ttl=float(os.getenv("LIVE_GRID_LEASE_TTL_S", DEFAULT_TTL)))
+
+    async def _sweep_leases() -> None:
+        interval = float(os.getenv("LIVE_GRID_LEASE_SWEEP_S", "30"))
+        while True:
+            await asyncio.sleep(interval)
+            try:
+                leases.sweep(asyncio.get_running_loop().time())
+            except Exception:  # noqa: BLE001 - the sweeper must outlive its errors
+                log.warning("lease sweep failed", exc_info=True)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         task = asyncio.create_task(manager.run())
+        sweep_task = asyncio.create_task(_sweep_leases())
         try:
             yield
         finally:
             task.cancel()
+            sweep_task.cancel()
             try:
                 await task
+            except asyncio.CancelledError:
+                pass
+            try:
+                await sweep_task
             except asyncio.CancelledError:
                 pass
 
     app = FastAPI(lifespan=lifespan)
     app.state.quotes = quotes
     app.state.manager = manager
+    app.state.leases = leases
 
     # The Workspace origin (pro.openbb.co) fetches cross-origin from the
     # browser; BDOBB's non-streaming calls come via plugin-http (no CORS).
@@ -368,6 +386,31 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
             "min_refetch_s": float(os.getenv("TA_EODHD_MIN_REFETCH_S", "60")),
         }
         return body
+
+    @app.post("/subscribe")
+    async def subscribe(body: dict):
+        """Lease a live feed for symbols, keyed by symbol and renewable.
+
+        Tailnet-only, like every live-grid route: it confers no power a caller
+        does not already have by opening /live_grid_ws. Never funnel it.
+        """
+        symbols = [s for s in (body.get("symbols") or []) if str(s).strip()]
+        if not symbols:
+            raise HTTPException(status_code=422, detail="symbols must be a non-empty list")
+        ttl = body.get("ttl")
+        granted = leases.renew(
+            symbols,
+            now=asyncio.get_running_loop().time(),
+            ttl=float(ttl) if ttl is not None else None,
+        )
+        base = datetime.now(timezone.utc)
+        loop_now = asyncio.get_running_loop().time()
+        return {
+            "leases": {
+                sym: (base + timedelta(seconds=exp - loop_now)).isoformat()
+                for sym, exp in granted.items()
+            }
+        }
 
     @app.websocket("/live_grid_ws")
     async def live_grid_ws(ws: WebSocket) -> None:
