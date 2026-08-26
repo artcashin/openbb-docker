@@ -19,7 +19,7 @@ from openbb_core.provider.standard_models.equity_quote import (
     EquityQuoteQueryParams,
 )
 
-from openbb_kdb.leasing import lease
+from openbb_kdb.leasing import lease, snapshot
 
 log = logging.getLogger(__name__)
 
@@ -47,6 +47,21 @@ def build_quote(symbol: str, tick: dict | None, prev_close: float | None) -> dic
         row["change"] = tick["price"] - prev_close
         if prev_close:
             row["change_percent"] = (tick["price"] - prev_close) / prev_close
+    return row
+
+
+def build_quote_from_snapshot(symbol: str, snap: dict | None) -> dict | None:
+    """Assemble a row from the delayed REST snapshot. None when unavailable."""
+    if not snap or snap.get("price") is None:
+        return None
+    price = float(snap["price"])
+    prev = snap.get("prev_close")
+    row: dict[str, Any] = {"symbol": symbol, "last_price": price}
+    if prev is not None:
+        row["prev_close"] = float(prev)
+        row["change"] = price - float(prev)
+        if float(prev):
+            row["change_percent"] = row["change"] / float(prev)
     return row
 
 
@@ -143,11 +158,18 @@ class KdbEquityQuoteFetcher(Fetcher[EquityQuoteQueryParams, list[EquityQuoteData
         cache = _cache(credentials)
         store = cache.store
         deadline = float(os.getenv("KDB_QUOTE_DEADLINE_S", DEADLINE_S))
-        tick = await _await_tick(store, symbol, deadline)
+        try:
+            tick = await _await_tick(store, symbol, deadline)
+        except Exception as exc:  # noqa: BLE001 - kdb down falls back, per the spec
+            log.debug("tick read for %s failed: %s", symbol, exc)
+            tick = None
         prev = await _prev_close(cache, symbol, credentials)
-        return {"symbol": symbol, "tick": tick, "prev_close": prev}
+        snap = None if tick else await snapshot(symbol)
+        return {"symbol": symbol, "tick": tick, "prev_close": prev, "snapshot": snap}
 
     @staticmethod
     def transform_data(query, data: dict, **kwargs) -> list[EquityQuoteData]:
         row = build_quote(data["symbol"], data.get("tick"), data.get("prev_close"))
+        if row is None:
+            row = build_quote_from_snapshot(data["symbol"], data.get("snapshot"))
         return [EquityQuoteData.model_validate(row)] if row else []

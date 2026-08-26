@@ -101,3 +101,26 @@ def test_subscribe_route_puts_the_symbol_into_the_feed_union():
     client.post("/subscribe", json={"symbols": ["AAPL"]})
     manager = client.app.state.manager
     assert "AAPL" in manager._union("us")
+
+
+def test_snapshot_route_returns_a_delayed_flagged_price():
+    from tests.test_main import make_client
+
+    client = make_client()
+    body = client.get("/snapshot", params={"symbol": "AAPL"}).json()
+    assert body["symbol"] == "AAPL"
+    assert body["delayed"] is True, "a REST snapshot is delayed and must say so"
+    assert isinstance(body["price"], float)
+
+
+def test_snapshot_route_404s_when_the_vendor_gives_nothing():
+    """A missing snapshot is not something the caller should crash on; the
+    fetcher reads 404 as 'no fallback available' and returns no rows."""
+    from tests.test_main import make_client
+
+    class Empty:
+        def get_live_stock_prices(self, ticker):
+            return None
+
+    client = make_client(seed_client=Empty())
+    assert client.get("/snapshot", params={"symbol": "ZZZZ"}).status_code == 404

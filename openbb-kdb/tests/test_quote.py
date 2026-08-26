@@ -207,3 +207,43 @@ async def test_prev_close_treats_a_non_numeric_close_as_missing_not_an_error():
                        "close": "not-a-number"}], {})
 
     assert await _prev_close(Cache(), "AAPL", credentials=None) is None
+
+
+@pytest.mark.asyncio
+async def test_snapshot_client_returns_none_when_live_grid_is_down():
+    from openbb_kdb.leasing import snapshot
+
+    async def boom(url, params, timeout):
+        raise OSError("connection refused")
+
+    assert await snapshot("AAPL", get=boom) is None
+
+
+@pytest.mark.asyncio
+async def test_snapshot_client_returns_none_on_404():
+    from openbb_kdb.leasing import snapshot
+
+    async def missing(url, params, timeout):
+        raise LookupError("404")
+
+    assert await snapshot("AAPL", get=missing) is None
+
+
+def test_a_snapshot_builds_a_quote_when_no_tick_exists():
+    from openbb_kdb.models.quote import build_quote_from_snapshot
+
+    got = build_quote_from_snapshot("AAPL", {"price": 312.95, "prev_close": 309.9})
+    assert got["last_price"] == 312.95
+    assert got["prev_close"] == 309.9
+    assert round(got["change"], 2) == 3.05
+
+
+def test_no_tick_and_no_snapshot_yields_no_rows():
+    """The only case the spec allows to return nothing."""
+    from openbb_kdb.models.quote import KdbEquityQuoteFetcher
+
+    query = KdbEquityQuoteFetcher.transform_query({"symbol": "AAPL"})
+    rows = KdbEquityQuoteFetcher.transform_data(
+        query, {"symbol": "AAPL", "tick": None, "prev_close": None, "snapshot": None}
+    )
+    assert rows == []

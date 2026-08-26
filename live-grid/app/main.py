@@ -412,6 +412,28 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
             }
         }
 
+    @app.get("/snapshot")
+    async def snapshot(symbol: str):
+        """The delayed REST snapshot for one symbol.
+
+        Exists so the kdb quote provider has a fallback without taking on the
+        eodhd client, the AAPL -> AAPL.US mapping and the snapshot cache that
+        already live here. `delayed` is always true: this is EODHD's REST
+        endpoint, roughly 15-20 minutes behind, never the websocket.
+        """
+        sym = symbol.strip().upper()
+        rows = await asyncio.to_thread(quotes.seed, [sym], seed_client)
+        row = rows[0] if rows else None
+        price = (row or {}).get("price")
+        if price is None:
+            raise HTTPException(status_code=404, detail=f"no snapshot for {sym}")
+        return {
+            "symbol": sym,
+            "price": float(price),
+            "prev_close": row.get("prev_close"),
+            "delayed": True,
+        }
+
     @app.websocket("/live_grid_ws")
     async def live_grid_ws(ws: WebSocket) -> None:
         await ws.accept()

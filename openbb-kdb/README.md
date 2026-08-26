@@ -34,6 +34,12 @@ the daily bar and never reads intraday OHLV from it.
 Environment: `LIVE_GRID_SUBSCRIBE_URL` (default
 `http://127.0.0.1:6903/subscribe`), `KDB_QUOTE_DEADLINE_S` (default 3).
 
+When no tick arrives before `KDB_QUOTE_DEADLINE_S`, the quote falls back to
+live-grid's `GET /snapshot` — EODHD's REST price, roughly 15-20 minutes
+delayed. Only when that is unavailable too does the route return no rows.
+Environment: `LIVE_GRID_SNAPSHOT_URL` (default
+`http://127.0.0.1:6903/snapshot`).
+
 ## Configuration
 
 | Env var | Default | Meaning |

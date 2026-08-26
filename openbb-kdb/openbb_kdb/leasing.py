@@ -39,3 +39,28 @@ async def lease(symbol: str, url: str | None = None, ttl: float | None = None, p
     except Exception as exc:  # noqa: BLE001 - a lease failure must not fail a quote
         log.debug("lease for %s failed: %s", sym, exc)
         return False
+
+
+DEFAULT_SNAPSHOT_URL = "http://127.0.0.1:6903/snapshot"
+
+
+async def _get(url: str, params: dict, timeout: float):
+    import httpx
+
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        response = await client.get(url, params=params)
+        response.raise_for_status()
+        return response.json()
+
+
+async def snapshot(symbol: str, url: str | None = None, get=None) -> dict | None:
+    """Delayed REST snapshot for a symbol, or None. Never raises."""
+    sym = str(symbol).strip().upper()
+    if not sym:
+        return None
+    target = url or os.getenv("LIVE_GRID_SNAPSHOT_URL", DEFAULT_SNAPSHOT_URL)
+    try:
+        return await (get or _get)(target, params={"symbol": sym}, timeout=TIMEOUT_S)
+    except Exception as exc:  # noqa: BLE001 - a missing fallback is not an error
+        log.debug("snapshot for %s failed: %s", sym, exc)
+        return None
