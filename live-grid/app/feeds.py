@@ -67,7 +67,13 @@ class FeedManager:
         self._active: dict[str, frozenset[str]] = {}  # feed -> subscribed set
         self._rebuild_pending = False
         self._last_rebuild = float("-inf")
-        self._last_prune = 0.0
+        # -inf, not 0.0, and for the same reason as _last_rebuild above:
+        # loop.time() is CLOCK_MONOTONIC, so 0.0 is not a harmless "long
+        # ago" -- it is a real instant this host may not have reached yet.
+        # Comparing against it made the startup prune depend on machine
+        # uptime, skipping it entirely on a host booted less than
+        # PRUNE_INTERVAL ago (a CI runner is exactly that).
+        self._last_prune = float("-inf")
 
     # -- subscription tracking ------------------------------------------------
     def register(self, conn_id: str, symbols: list[str]) -> None:
