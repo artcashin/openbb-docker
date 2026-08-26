@@ -2281,6 +2281,15 @@ def test_load_macros_skips_nothing_and_keys_on_name(tmp_path):
     assert sorted(load_macros(tmp_path)) == ["one", "two"]
 
 
+def test_one_broken_macro_does_not_blank_the_others(tmp_path):
+    """A hand-edited directory will contain typos. Losing one macro is
+    proportionate; losing every macro, including the baked-in ones, is not."""
+    write(tmp_path, GOOD, "good.yml")
+    (tmp_path / "broken.yml").write_text("label: Broken\npanes: [\n  - id: price\n")
+    loaded = load_macros(tmp_path)
+    assert sorted(loaded) == ["good"]
+
+
 def test_load_macros_on_a_missing_directory_is_empty_not_an_error(tmp_path):
     assert load_macros(tmp_path / "nope") == {}
 
@@ -2328,6 +2337,7 @@ filename in it rather than an empty pane at render time.
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -2335,6 +2345,8 @@ from pathlib import Path
 import yaml
 
 from app.ta.registry import Req, resolve
+
+log = logging.getLogger("live-grid.ta")
 
 BAKED_IN = Path(__file__).resolve().parent.parent.parent / "macros"
 
@@ -2418,10 +2430,27 @@ def load_macro(path: Path) -> Macro:
 
 
 def load_macros(directory: Path) -> dict[str, Macro]:
+    """Every loadable macro in `directory`. A broken one is skipped, not fatal.
+
+    The comprehension this replaces raised on the first bad file, so a single
+    typo in a mounted macro blanked EVERY macro -- including the baked-in ones
+    -- from the widget's dropdown. A hand-edited directory will contain typos;
+    losing one macro is a proportionate consequence, losing all of them is not.
+    The warning plus the file's absence from the dropdown is how its author
+    finds out.
+    """
     directory = Path(directory)
     if not directory.is_dir():
         return {}
-    return {m.name: m for m in (load_macro(p) for p in sorted(directory.glob("*.yml")))}
+    loaded: dict[str, Macro] = {}
+    for path in sorted(directory.glob("*.yml")):
+        try:
+            macro = load_macro(path)
+        except MacroError as exc:
+            log.warning("skipping macro %s: %s", path.name, exc)
+            continue
+        loaded[macro.name] = macro
+    return loaded
 
 
 def load_all() -> dict[str, Macro]:
@@ -3456,10 +3485,17 @@ Add this route immediately after the existing `chart` route:
                        end: str | None = None, provider: str = "kdb"):
         s, e = _window(start, end)
         params = ChartParams(symbol, interval, source, macro, indicators, s, e, provider)
+        # Two blocks, not one: a single try/except lets an upstream connection
+        # error mask a bad macro name, so the caller is told the wrong thing.
+        bars_error = None
         try:
             bars, _ = await build_series(
                 symbol, interval, s, e, recorder, _tick_window(), provider
             )
+        except Exception as exc:  # noqa: BLE001 - a bad macro must still be reported
+            log.warning("ta_chart bars unavailable for %s: %s", symbol, exc)
+            bars, bars_error = [], exc
+        try:
             figure, _, _ = await build_payload(
                 params, bars_to_frame(bars), eodhd_source=_eodhd
             )
@@ -3469,6 +3505,12 @@ Add this route immediately after the existing `chart` route:
                 {"data": [], "layout": {"title": {"text": f"{symbol}: {exc}"}}},
                 status_code=502,
             )
+        if bars_error is not None:
+            # An empty chart that does not say why it is empty is the failure
+            # mode this design treats as a defect everywhere else -- an EODHD
+            # fallback annotates the legend, and an indicator that nulled itself
+            # was a Critical bug. Degrading is right; degrading silently is not.
+            figure["layout"]["title"]["text"] += f"  ·  bars unavailable: {bars_error}"
         return JSONResponse(figure)
 ```
 
