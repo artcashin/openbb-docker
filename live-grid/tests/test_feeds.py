@@ -154,12 +154,14 @@ class TestRecorderIntegration:
         asyncio.run(_run_until(m, lambda: calls["n"] >= 2))  # must not raise
 
     def test_prune_only_fires_once_per_interval(self, fake_ws_client_factory):
-        # loop.time() is a monotonic clock with an arbitrary (non-zero) origin,
-        # so with _last_prune initialised to 0.0 the very first drain cycle
-        # always clears "now - 0.0 >= PRUNE_INTERVAL" -- the first prune is
-        # effectively "on startup". What the interval must still guarantee is
-        # that it does NOT re-fire on every one of the several cycles that fit
-        # inside this test's short run (default PRUNE_INTERVAL is 60s).
+        # _last_prune starts at -inf, so the first drain cycle always clears
+        # the interval check and the first prune is effectively "on startup".
+        # (It used to start at 0.0, which only cleared on a host whose
+        # CLOCK_MONOTONIC had already passed PRUNE_INTERVAL -- see
+        # test_the_first_prune_does_not_depend_on_host_uptime.) What the
+        # interval must still guarantee is that prune does NOT re-fire on every
+        # one of the several cycles that fit inside this test's short run
+        # (default PRUNE_INTERVAL is 60s).
         recorder = MagicMock()
         m = FeedManager(
             "k", QuoteTable(), client_factory=fake_ws_client_factory,
@@ -170,6 +172,32 @@ class TestRecorderIntegration:
         # asserting after just one cycle would prove nothing about the interval.
         asyncio.run(_run_until(m, lambda: recorder.flush.call_count >= 2))
         assert recorder.flush.called
+        assert recorder.prune.call_count == 1
+
+    def test_the_first_prune_does_not_depend_on_host_uptime(
+        self, fake_ws_client_factory, monkeypatch
+    ):
+        """The startup prune must fire on any host, however recently it booted.
+
+        `loop.time()` is CLOCK_MONOTONIC -- time since boot. Initialising
+        `_last_prune` to 0.0 and comparing `now - 0.0 >= PRUNE_INTERVAL` only
+        clears on a host that has been up longer than the interval, so on a
+        freshly-booted machine (a CI runner is exactly that) the first prune
+        was silently skipped. That made this suite flaky and, worse, made
+        production behaviour a function of machine uptime.
+
+        Setting the interval above any reachable monotonic value isolates the
+        property: no elapsed-time comparison can ever satisfy it, so a prune
+        here proves the first one is driven by "never pruned yet" rather than
+        by where the clock happens to start.
+        """
+        monkeypatch.setattr(feeds_mod, "PRUNE_INTERVAL", 1e9)  # ~31 years of uptime
+        recorder = MagicMock()
+        m = FeedManager(
+            "k", QuoteTable(), client_factory=fake_ws_client_factory,
+            drain_interval=0.01, rebuild_delay=0.0, recorder=recorder,
+        )
+        asyncio.run(_run_until(m, lambda: recorder.flush.call_count >= 2))
         assert recorder.prune.call_count == 1
 
     def test_prune_runs_once_the_interval_elapses(self, fake_ws_client_factory, monkeypatch):
