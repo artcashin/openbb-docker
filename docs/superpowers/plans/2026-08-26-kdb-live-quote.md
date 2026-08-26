@@ -367,7 +367,6 @@ Inside `create_app`, after `manager` is constructed and before the routes:
 
 ```python
     leases = LeaseRegistry(manager, ttl=float(os.getenv("LIVE_GRID_LEASE_TTL_S", DEFAULT_TTL)))
-    app_state_leases = leases
 ```
 
 Add the route immediately after `/health`:
