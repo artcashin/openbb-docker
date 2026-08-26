@@ -4,7 +4,6 @@ import polars as pl
 import pytest
 
 from app.ta.exprs import Base, price_col, true_range
-
 from tests.ta_helpers import fixture_frame
 
 

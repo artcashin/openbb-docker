@@ -9,8 +9,9 @@ indicator that is silently wrong somewhere.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 import polars as pl
 
@@ -134,7 +135,7 @@ def _rsi_build(p: dict, b: dict[str, Base]) -> list[pl.Expr]:
     delta = pl.col(col).diff()
     gain = pl.when(delta > 0).then(delta).otherwise(0.0)
     loss = pl.when(delta < 0).then(-delta).otherwise(0.0)
-    wilder = dict(alpha=1 / n, adjust=False, ignore_nulls=True)
+    wilder = {"alpha": 1 / n, "adjust": False, "ignore_nulls": True}
     rs = gain.ewm_mean(**wilder) / loss.ewm_mean(**wilder)
     # Bar 0 has no previous close, so gain and loss are both 0 and rs is 0/0.
     # Null is what every rolling indicator already uses for its warmup; NaN

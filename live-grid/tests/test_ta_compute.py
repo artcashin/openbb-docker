@@ -5,7 +5,6 @@ import pytest
 
 from app.ta.compute import collect_bases, compute, compute_with_bases
 from app.ta.registry import resolve
-
 from tests.ta_helpers import fixture_frame
 
 

@@ -5,7 +5,6 @@ import pytest
 
 from app.ta.compute import compute
 from app.ta.registry import REGISTRY, get, resolve
-
 from tests.ta_helpers import fixture_frame
 
 
