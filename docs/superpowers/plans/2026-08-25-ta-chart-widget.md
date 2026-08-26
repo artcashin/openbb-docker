@@ -2627,6 +2627,8 @@ Create `live-grid/tests/test_ta_figure.py`:
 ```python
 """Multi-pane figure assembly and tail deltas."""
 
+import polars as pl
+
 from app.ta.compute import compute
 from app.ta.figure import build_ta_figure, delta, trace_index
 from app.ta.panes import assign
@@ -2722,6 +2724,29 @@ def test_a_delta_includes_the_candlestick_ohlc():
     assert set(d["traces"]["0"]) == {"open", "high", "low", "close"}
 
 
+def test_a_nan_in_a_series_serialises_as_null_rather_than_raising():
+    """Starlette renders with allow_nan=False: a surviving NaN RAISES.
+
+    So this is not a cosmetic check. If the guard in _column regresses, the
+    /ta_chart endpoint returns 500 for any series containing a NaN, rather
+    than drawing that bar as a gap.
+    """
+    import json
+
+    from fastapi.responses import JSONResponse
+
+    frame, panes, _ = built(resolve("rsi", period=14))
+    poisoned = frame.with_columns(
+        pl.when(pl.int_range(pl.len()) == 5)
+        .then(float("nan"))
+        .otherwise(pl.col("rsi"))
+        .alias("rsi")
+    )
+    fig = build_ta_figure("AAPL", poisoned, panes)
+    body = JSONResponse(fig).body.decode()  # raises if any NaN survived
+    assert json.loads(body)["data"][1]["y"][5] is None
+
+
 def test_an_empty_frame_still_builds_a_valid_figure():
     empty = fixture_frame().head(0)
     panes = assign(None, [resolve("rsi", period=14)])
@@ -2749,6 +2774,7 @@ without shipping the whole figure again.
 
 from __future__ import annotations
 
+import math
 from typing import Sequence
 
 import polars as pl
@@ -2775,9 +2801,21 @@ def trace_index(panes: Sequence[Pane]) -> list[str]:
 
 
 def _column(frame: pl.DataFrame, name: str) -> list:
+    """One column as JSON-safe values.
+
+    NaN becomes None rather than passing through. Starlette renders with
+    `allow_nan=False`, so a single NaN anywhere in a series makes the whole
+    response RAISE — the endpoint 500s instead of drawing a gap in one line.
+    Indicators already null their own 0/0 cases, but this is the boundary
+    where the damage would actually occur, and a missed `fill_nan` upstream
+    should not be able to take the chart down.
+    """
     if name not in frame.columns:
         return [None] * frame.height
-    return [None if v is None else float(v) for v in frame[name].to_list()]
+    return [
+        None if v is None or (isinstance(v, float) and math.isnan(v)) else float(v)
+        for v in frame[name].to_list()
+    ]
 
 
 def _dates(frame: pl.DataFrame) -> list[str]:
