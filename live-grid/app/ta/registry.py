@@ -451,8 +451,12 @@ register(Indicator(
     deps=lambda p: [],
     build=_cci_build,
     render={"cci": _line("#d19a66")},
-    eodhd=EodhdMap("cci", {"period": "period"}, {"cci": "cci"}, "raw",
-                   "EODHD cci is raw OHLC."),
+    # No eodhd map, deliberately. EODHD's CCI disagrees with the standard
+    # definition by a median of 28.5% across 754 bars, and the ratio is not
+    # constant (0.21-1.24), so it is not the 0.015 divisor. No period offset
+    # (19-22, 40) and no MAD/stddev denominator variant reconciles it. Spec D6
+    # requires that toggling `source` not move the line; here it would move it
+    # by a quarter. So CCI is local-only and says so in the legend.
 ))
 
 # --- Williams %R ------------------------------------------------------------
