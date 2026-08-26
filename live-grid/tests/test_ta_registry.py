@@ -1,9 +1,10 @@
 """Registry shape, convention pinning, and the first five indicators."""
 
+import polars as pl
 import pytest
 
 from app.ta.compute import compute
-from app.ta.registry import REGISTRY, Req, get, resolve
+from app.ta.registry import REGISTRY, get, resolve
 
 from tests.ta_helpers import fixture_frame
 
@@ -26,22 +27,44 @@ def test_resolve_rejects_an_unknown_parameter():
         resolve("sma", window=200)
 
 
+def test_resolve_accepts_a_style_override_but_still_rejects_unknown_keys():
+    assert resolve("sma", style={"color": "#fff"}).params["style"] == {"color": "#fff"}
+    assert resolve("sma").params["style"] is None
+    with pytest.raises(ValueError, match="unknown parameter 'window'"):
+        resolve("sma", window=200)
+
+
 def test_get_rejects_an_unknown_indicator():
     with pytest.raises(KeyError, match="ichimoku"):
         get("ichimoku")
 
 
-def test_rsi_reads_adjusted_close_and_bounds_to_zero_hundred():
+def test_rsi_reads_adjusted_close_and_ignores_raw_close():
+    """The mirror image: perturbing raw close must not move RSI."""
+    df = fixture_frame()
+    base = compute(df, [resolve("rsi", period=14)])["rsi"].to_list()
+    perturbed = compute(
+        df.with_columns(pl.col("close") * 1.5), [resolve("rsi", period=14)]
+    )["rsi"].to_list()
+    assert base == perturbed
+
+
+def test_rsi_bounds_to_zero_hundred():
+    """RSI values always fall in [0, 100]."""
     out = compute(fixture_frame(), [resolve("rsi", period=14)])
     vals = [v for v in out["rsi"].to_list() if v is not None]
     assert len(vals) > 250
     assert min(vals) >= 0.0 and max(vals) <= 100.0
 
 
-def test_atr_reads_raw_ohlc_not_adjusted():
-    assert get("atr").price_basis == "raw"
-    out = compute(fixture_frame(), [resolve("atr", period=14)])
-    assert all(v >= 0 for v in out["atr"].to_list() if v is not None)
+def test_atr_reads_raw_ohlc_and_ignores_adjusted_close():
+    """Perturbing adj_close must not move ATR. Bounds checks cannot show this."""
+    df = fixture_frame()
+    base = compute(df, [resolve("atr", period=14)])["atr"].to_list()
+    perturbed = compute(
+        df.with_columns(pl.col("adj_close") * 1.5), [resolve("atr", period=14)]
+    )["atr"].to_list()
+    assert base == perturbed
 
 
 def test_bbands_emits_three_ordered_bands():

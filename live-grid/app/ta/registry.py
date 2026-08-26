@@ -74,15 +74,21 @@ def get(name: str) -> Indicator:
 
 
 def resolve(name: str, **overrides: Any) -> Req:
-    """Defaults from the registry, overridden by keyword. Unknown keys raise."""
+    """Defaults from the registry, overridden by keyword. Unknown keys raise.
+
+    `style` is accepted for every indicator: it is per-series presentation
+    carried from a macro, not an indicator parameter, so it is not in
+    `Indicator.params`.
+    """
     ind = get(name)
+    style = overrides.pop("style", None)
     for key in overrides:
         if key not in ind.params:
             raise ValueError(
                 f"unknown parameter {key!r} for {name!r}; "
                 f"expected one of {sorted(ind.params)}"
             )
-    return Req(name, {**ind.params, "style": None, **overrides})
+    return Req(name, {**ind.params, "style": style, **overrides})
 
 
 def _line(color: str | None = None) -> dict:
