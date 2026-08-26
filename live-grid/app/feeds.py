@@ -77,8 +77,14 @@ class FeedManager:
 
     # -- subscription tracking ------------------------------------------------
     def register(self, conn_id: str, symbols: list[str]) -> None:
-        self._conns[conn_id] = split_by_feed(symbols)
+        # _dirty FIRST. These are two separate statements, so another thread
+        # can observe the dict between them; establishing the dirty set before
+        # the connection becomes visible means "conn_id is in _conns" always
+        # implies "conn_id is in _dirty". The reverse order let a caller that
+        # waited on _conns write a dirty mark into a dict that did not have the
+        # key yet -- the mark went nowhere and the row was never flushed.
         self._dirty.setdefault(conn_id, set())
+        self._conns[conn_id] = split_by_feed(symbols)
         self._rebuild_pending = True
 
     def unregister(self, conn_id: str) -> None:
