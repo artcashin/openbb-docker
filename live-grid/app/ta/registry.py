@@ -54,6 +54,7 @@ class Indicator:
     render: dict[str, dict]
     guides: list[float] = field(default_factory=list)
     repaints: bool = False
+    iterative: bool = False
     eodhd: EodhdMap | None = None
 
 
@@ -528,4 +529,22 @@ register(Indicator(
          / pl.col(f"sma:adj_close:{p['period']}") * 100).alias("bandwidth"),
     ],
     render={"bandwidth": _line("#d19a66")},
+))
+
+# --- Parabolic SAR: a recurrence, handled by iterative.py --------------------
+
+register(Indicator(
+    name="sar", label="Parabolic SAR",
+    params={"acceleration": 0.02, "maximum": 0.2}, pane="price",
+    price_basis="raw", iterative=True,
+    convention=(
+        "Wilder's Parabolic SAR on raw OHLC. Path-dependent: the value at each "
+        "bar carries the extreme point and acceleration factor forward, so it "
+        "cannot be a Polars expression."
+    ),
+    deps=lambda p: [],
+    build=lambda p, b: [],  # produced by iterative.parabolic_sar
+    render={"sar": {"type": "scatter", "mode": "markers", "color": "#abb2bf"}},
+    eodhd=EodhdMap("sar", {"acceleration": "acceleration", "maximum": "maximum"},
+                   {"sar": "sar"}, "raw", "EODHD sar is raw OHLC."),
 ))

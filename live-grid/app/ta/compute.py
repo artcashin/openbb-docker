@@ -13,6 +13,7 @@ from __future__ import annotations
 import polars as pl
 
 from app.ta.exprs import Base
+from app.ta.iterative import ITERATIVE
 from app.ta.registry import Req, get
 
 
@@ -47,6 +48,16 @@ def compute_with_bases(
             exprs.append(expr)
     if exprs:
         frame = frame.with_columns(exprs)
+
+    # Path-dependent indicators run after the vectorised pass; they read the
+    # frame rather than contributing expressions to it.
+    for req in reqs:
+        if not get(req.name).iterative:
+            continue
+        for column, values in ITERATIVE[req.name](frame, req.params).items():
+            if column not in frame.columns:
+                frame = frame.with_columns(pl.Series(column, values, dtype=pl.Float64))
+
     return frame, bases
 
 
