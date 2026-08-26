@@ -88,6 +88,78 @@ path.write_text(src)
 print(f"cftc_router patched: {n_getattr} getattr + {n_attr} attribute call(s) guarded")
 PY
 
+# Patch openbb_core.api.rest_api to require Basic auth on the WHOLE app.
+# Upstream wires authenticate_user only into the /api/v1 command router, so
+# the Workspace metadata routes that openbb_platform_api.main hangs off this
+# same app (/, /widgets.json, /apps.json, /agents.json) and FastAPI's own
+# /docs, /redoc and /openapi.json are served unauthenticated even with
+# OPENBB_API_AUTH=true. Funnel can publish this port to the public internet,
+# so the lock has to cover everything -- see docker-compose.yml's header,
+# which has told the reader since v2.0.0 that /widgets.json returns 401
+# without credentials. Until this patch, it did not.
+#
+# Middleware rather than a route dependency: /docs and /openapi.json are
+# registered by FastAPI itself and have no router to attach one to, and
+# middleware stays correct if a future OpenBB adds another root route.
+#
+# ORDER IS LOAD-BEARING. Starlette's add_middleware inserts at index 0 and
+# builds the stack in reverse, so the middleware registered LAST runs FIRST.
+# This block is injected ABOVE the CORSMiddleware registration, which leaves
+# CORS outermost. Get it backwards and auth outranks CORS: a browser preflight
+# (which by definition carries no credentials) gets a bare 401 with no
+# Access-Control-Allow-* headers, and every cross-origin caller -- OpenBB
+# Workspace at pro.openbb.co, the whole point of the stack -- is locked out.
+# curl never sends a preflight, so no amount of curl testing catches it.
+RUN python - <<'PY'
+import pathlib
+p = pathlib.Path("/usr/local/lib/python3.12/site-packages/openbb_core/api/rest_api.py")
+src = p.read_text()
+anchor = "app.add_middleware(\n    CORSMiddleware,"
+assert anchor in src, "rest_api.py CORS registration not found - upstream changed"
+guard = '''
+import base64 as _base64
+import binascii as _binascii
+import secrets as _secrets
+
+from starlette.responses import Response as _Response
+
+
+@app.middleware("http")
+async def _require_basic_auth(request, call_next):
+    """Require HTTP Basic auth on every path when OPENBB_API_AUTH is set.
+
+    No-ops when auth is off, which is what keeps the in-process openbb-mcp
+    wrapper (started deliberately without api-auth.env) working.
+    """
+    env = Env()
+    if not env.API_AUTH:
+        return await call_next(request)
+    username = env.API_USERNAME or ""
+    password = env.API_PASSWORD or ""
+    header = request.headers.get("authorization", "")
+    supplied_user = supplied_pw = ""
+    if header[:6].lower() == "basic ":
+        try:
+            supplied_user, _, supplied_pw = (
+                _base64.b64decode(header[6:]).decode("utf8").partition(":")
+            )
+        except (_binascii.Error, UnicodeDecodeError, ValueError):
+            supplied_user = supplied_pw = ""
+    ok_user = _secrets.compare_digest(supplied_user.encode(), username.encode())
+    ok_pw = _secrets.compare_digest(supplied_pw.encode(), password.encode())
+    # `username and password` fails CLOSED when either is unconfigured:
+    # without it, compare_digest("", "") is true on both halves and
+    # `Basic <base64 of ":">` would authenticate against an empty pair.
+    if not (username and password and ok_user and ok_pw):
+        return _Response(status_code=401, headers={"WWW-Authenticate": "Basic"})
+    return await call_next(request)
+
+
+'''
+p.write_text(src.replace(anchor, guard + anchor, 1))
+PY
+RUN python -c "import ast; ast.parse(open('/usr/local/lib/python3.12/site-packages/openbb_core/api/rest_api.py').read()); print('rest_api auth patch parses OK')"
+
 # Patch openbb_core.api.rest_api CORS setup to answer Chrome's Private Network
 # Access preflight. OpenBB Workspace runs at https://pro.openbb.co (a public
 # origin); when the browser classifies your backend's address as private/local
