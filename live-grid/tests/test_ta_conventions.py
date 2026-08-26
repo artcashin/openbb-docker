@@ -5,13 +5,23 @@ import polars as pl
 import pytest
 
 from app.ta.compute import compute
-from app.ta.registry import REGISTRY, get, resolve
+from app.ta.registry import REGISTRY, col_suffix, get, resolve
 from tests.ta_helpers import fixture_frame
 
 
+def _computed(reqs, df=None):
+    """Compute, then rename each output back to its bare registry name.
+
+    Columns carry a parameter suffix so two periods of one indicator cannot
+    collide; these conventions are about the values, so the suffix is undone
+    here and every assertion below reads as it always did.
+    """
+    out = compute(fixture_frame() if df is None else df, reqs)
+    return out.rename({c + col_suffix(r): c for r in reqs for c in get(r.name).render})
+
+
 def _series(name, **params):
-    out = compute(fixture_frame(), [resolve(name, **params)])
-    return out
+    return _computed([resolve(name, **params)])
 
 
 def test_fast_slow_and_full_stochastic_are_three_different_series():
@@ -50,16 +60,16 @@ def test_macd_histogram_is_line_minus_signal():
 
 
 def test_percent_b_is_zero_at_the_lower_band_and_one_at_the_upper():
-    out = compute(fixture_frame(), [resolve("bbands", period=20, k=2.0),
-                                    resolve("pct_b", period=20, k=2.0)])
+    out = _computed([resolve("bbands", period=20, k=2.0),
+                     resolve("pct_b", period=20, k=2.0)])
     row = out.row(100, named=True)
     expected = (row["adj_close"] - row["bb_lo"]) / (row["bb_up"] - row["bb_lo"])
     assert row["pct_b"] == pytest.approx(expected, rel=1e-9)
 
 
 def test_bandwidth_is_band_span_over_the_middle():
-    out = compute(fixture_frame(), [resolve("bbands", period=20, k=2.0),
-                                    resolve("bandwidth", period=20, k=2.0)])
+    out = _computed([resolve("bbands", period=20, k=2.0),
+                     resolve("bandwidth", period=20, k=2.0)])
     row = out.row(100, named=True)
     expected = (row["bb_up"] - row["bb_lo"]) / row["bb_mid"] * 100
     assert row["bandwidth"] == pytest.approx(expected, rel=1e-9)
@@ -86,7 +96,7 @@ def test_divide_prone_indicators_yield_null_not_nan_on_a_flat_window():
         pl.lit(100.0).alias(c) for c in ("open", "high", "low", "close", "adj_close")
     ])
     for name in ("rsi", "stoch", "stochrsi", "adx", "cci", "willr", "pct_b"):
-        out = compute(flat, [resolve(name)])
+        out = _computed([resolve(name)], flat)
         for column in get(name).render:
             values = out[column].to_list()
             assert not any(v is not None and math.isnan(v) for v in values), (
@@ -96,7 +106,7 @@ def test_divide_prone_indicators_yield_null_not_nan_on_a_flat_window():
 
 def test_rsi_is_null_at_bar_zero_not_nan():
     """Bar 0 has no previous close, so gain and loss are both 0 and rs is 0/0."""
-    out = compute(fixture_frame(), [resolve("rsi", period=14)])
+    out = _series("rsi", period=14)
     assert out["rsi"][0] is None
 
 
@@ -108,7 +118,7 @@ def test_wilder_indicators_all_declare_it():
 def test_every_indicator_renders_every_column_it_builds():
     df = fixture_frame()
     for name, ind in REGISTRY.items():
-        out = compute(df, [resolve(name)])
+        out = _computed([resolve(name)], df)
         for column in ind.render:
             assert column in out.columns, f"{name} declares render for missing {column}"
 
@@ -125,10 +135,10 @@ def test_every_indicator_produces_finite_values_on_real_shaped_input():
 
     df = fixture_frame()
     for name, ind in REGISTRY.items():
-        out = compute(df, [resolve(name)])
+        out = _computed([resolve(name)], df)
         for column in ind.render:
             values = out[column].to_list()
-            finite = [v for v in values if v is not None and not math.isnan(v)]
+            finite = [v for v in values if v is not None and math.isfinite(v)]
             assert len(finite) > len(values) // 2, (
                 f"{name}/{column}: only {len(finite)}/{len(values)} finite values"
             )

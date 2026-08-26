@@ -128,6 +128,8 @@ Indicators can also be listed directly:
 those series are cached and refreshed only on bar close (`TA_EODHD_MIN_REFETCH_S`).
 Locally computed series update at tick speed; EODHD-sourced ones step. Any
 indicator without an EODHD equivalent falls back to local compute and says so
-in the chart title.
+in the chart title. EODHD's technical endpoint is daily only, so on any
+interval other than `1d` the whole request is computed locally and annotated
+rather than fanning one daily value across every bar of the day.
 
 Smoke check: `python scripts/smoke_ta.py http://127.0.0.1:6903`

@@ -9,12 +9,12 @@ from app.ta.sources import (
     LocalSource,
     eodhd_query,
 )
-from tests.ta_helpers import fixture_frame
+from tests.ta_helpers import col, cols, fixture_frame
 
 
 def test_local_source_produces_the_registry_column_names():
     result = LocalSource().series(fixture_frame(), [resolve("rsi", period=14)])
-    assert "rsi" in result.frame.columns
+    assert col("rsi", period=14) in result.frame.columns
     assert result.annotations == []
     assert result.calls == 0
 
@@ -43,7 +43,7 @@ async def test_eodhd_source_renames_response_fields_to_our_columns():
     df = fixture_frame()
     result = await src.series(df, [resolve("bbands", period=20, k=2.0)],
                               "AAPL.US", "1d", "2024-01-21")
-    assert {"bb_up", "bb_mid", "bb_lo"} <= set(result.frame.columns)
+    assert set(cols(resolve("bbands", period=20, k=2.0))) <= set(result.frame.columns)
     assert result.calls == CALLS_PER_REQUEST
 
 
@@ -55,7 +55,7 @@ async def test_an_unmapped_indicator_falls_back_to_local_and_is_annotated():
     src = EodhdSource("k", fetch=fake_fetch)
     result = await src.series(fixture_frame(), [resolve("vwap")],
                               "AAPL.US", "1d", "2024-01-21")
-    assert "vwap" in result.frame.columns
+    assert col("vwap") in result.frame.columns
     assert [a.source for a in result.annotations] == ["local"]
     assert result.calls == 0
 
@@ -68,7 +68,7 @@ async def test_a_fetch_failure_degrades_to_local_rather_than_erroring():
     src = EodhdSource("k", fetch=failing_fetch)
     result = await src.series(fixture_frame(), [resolve("rsi", period=14)],
                               "AAPL.US", "1d", "2024-01-21")
-    assert "rsi" in result.frame.columns
+    assert col("rsi", period=14) in result.frame.columns
     assert "403" in result.annotations[0].note
 
 
@@ -82,9 +82,10 @@ async def test_a_response_missing_a_field_nulls_it_and_says_so():
     src = EodhdSource("k", fetch=partial_fetch)
     result = await src.series(fixture_frame(), [resolve("bbands", period=20, k=2.0)],
                               "AAPL.US", "1d", "2024-01-21")
-    assert "bb_lo" in result.frame.columns
-    assert result.frame["bb_lo"].null_count() == result.frame.height
-    assert [a.column for a in result.annotations] == ["bb_lo"]
+    bb_lo = col("bbands", "bb_lo", period=20, k=2.0)
+    assert bb_lo in result.frame.columns
+    assert result.frame[bb_lo].null_count() == result.frame.height
+    assert [a.column for a in result.annotations] == [bb_lo]
 
 
 @pytest.mark.asyncio
@@ -96,8 +97,9 @@ async def test_an_unusable_payload_degrades_one_series_not_the_whole_chart():
     src = EodhdSource("k", fetch=broken_fetch)
     result = await src.series(fixture_frame(), [resolve("rsi", period=14)],
                               "AAPL.US", "1d", "2024-01-21")
-    assert "rsi" in result.frame.columns
-    assert result.frame["rsi"].null_count() < result.frame.height
+    rsi = col("rsi", period=14)
+    assert rsi in result.frame.columns
+    assert result.frame[rsi].null_count() < result.frame.height
     assert any("unusable" in a.note for a in result.annotations)
 
 
@@ -149,3 +151,21 @@ async def test_cumulative_call_spend_is_tracked_for_health():
     await src.series(fixture_frame(), [resolve("rsi", period=14)],
                      "AAPL.US", "1d", "2024-01-21")
     assert src.total_calls == CALLS_PER_REQUEST
+
+
+@pytest.mark.asyncio
+async def test_an_intraday_chart_never_asks_eodhd_and_says_why():
+    """EODHD's technical endpoint is daily only, and eodhd_query sends no
+    interval -- so a 5m chart would fan one daily value across every bar."""
+    async def fake_fetch(query):  # pragma: no cover - must not be called
+        raise AssertionError("EODHD has no intraday technical data")
+
+    src = EodhdSource("k", fetch=fake_fetch)
+    result = await src.series(fixture_frame(), [resolve("sma", period=50)],
+                              "AAPL.US", "5m", "2024-01-21")
+    sma = col("sma", period=50)
+    assert result.frame[sma].null_count() < result.frame.height
+    assert result.calls == 0
+    assert [(a.column, a.note) for a in result.annotations] == [
+        (sma, "EODHD has no intraday data")
+    ]

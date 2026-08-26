@@ -5,6 +5,7 @@
 
 import json
 import sys
+import urllib.error
 import urllib.request
 
 
@@ -28,7 +29,15 @@ def main(base: str) -> int:
         print("FAIL: classic-momentum macro not discovered")
         return 1
 
-    figure = get(base, "/ta_chart", symbol="AAPL", macro="classic-momentum")
+    # A degraded /ta_chart answers 502 with a titled figure -- exactly the case
+    # this script exists to catch -- and urlopen raises HTTPError on it, so
+    # without this the script prints a traceback instead of its FAIL line.
+    try:
+        figure = get(base, "/ta_chart", symbol="AAPL", macro="classic-momentum")
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode(errors="replace")[:300]
+        print(f"FAIL: /ta_chart returned {exc.code}: {body}")
+        return 1
     traces = figure.get("data", [])
     axes = sorted(k for k in figure.get("layout", {}) if k.startswith("yaxis"))
     print(f"traces: {len(traces)}  panes: {len(axes)}  axes: {axes}")

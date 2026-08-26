@@ -65,7 +65,7 @@ def bars_to_frame(bars: list[dict]) -> pl.DataFrame:
     correct rather than a fudge: intraday ticks are already unadjusted, and the
     alternative is a null column that silently voids every adjusted indicator.
     """
-    schema = {"date": pl.Date, "open": pl.Float64, "high": pl.Float64,
+    schema = {"date": pl.Datetime, "open": pl.Float64, "high": pl.Float64,
               "low": pl.Float64, "close": pl.Float64, "adj_close": pl.Float64,
               "volume": pl.Float64}
     if not bars:
@@ -80,14 +80,18 @@ def bars_to_frame(bars: list[dict]) -> pl.DataFrame:
         # blank on those symbols, with no error anywhere to explain it.
         adjusted = bar.get("adjusted_close")
         rows.append({
-            "date": str(bar.get("date"))[:10],
+            # NOT truncated to 10 chars: widgets.json offers 1h/5m/1m and kdb
+            # tick bars carry a full timestamp, so a day's worth of intraday
+            # bars would all plot at one x. /chart passes timestamps through
+            # untouched; this route must not be the sibling that flattens them.
+            "date": str(bar.get("date")),
             "open": bar.get("open"), "high": bar.get("high"),
             "low": bar.get("low"), "close": close,
             "adj_close": close if adjusted is None else adjusted,
             "volume": bar.get("volume") or 0.0,
         })
     return pl.DataFrame(rows).with_columns([
-        pl.col("date").str.to_date(),
+        pl.col("date").str.to_datetime(strict=False),
         pl.col(["open", "high", "low", "close", "adj_close", "volume"])
           .cast(pl.Float64, strict=False),
     ])
@@ -95,8 +99,13 @@ def bars_to_frame(bars: list[dict]) -> pl.DataFrame:
 
 async def build_payload(
     params: ChartParams, frame: pl.DataFrame, eodhd_source=None,
-) -> tuple[dict, list[Pane], pl.DataFrame]:
-    """The figure, its panes, and the computed frame."""
+) -> tuple[dict, list[Pane], pl.DataFrame, list]:
+    """The figure, its panes, the computed frame, and its annotations.
+
+    Annotations come back rather than being folded into the title and dropped:
+    the title only ships on a FIGURE push, so a caller that cannot see them
+    change cannot know to send one (see main.ta_chart_ws).
+    """
     macro = None
     if params.macro and params.macro != "none":
         macros = load_all()
@@ -119,7 +128,7 @@ async def build_payload(
 
     subtitle = f"{params.interval} · {params.source}"
     figure = build_ta_figure(params.symbol, computed, panes, annotations, subtitle)
-    return figure, panes, computed
+    return figure, panes, computed, annotations
 
 
 def any_repaints(panes: list[Pane]) -> bool:

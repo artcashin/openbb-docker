@@ -76,3 +76,43 @@ def test_a_bars_outage_after_rev_0_sends_a_figure_not_a_silently_emptied_delta(m
         second = ws.receive_json()
         assert second["type"] == "figure"
         assert "bars unavailable" in second["figure"]["layout"]["title"]["text"]
+
+
+def test_a_degradation_appearing_mid_stream_forces_a_figure_not_a_delta(monkeypatch):
+    """Annotations live only in the figure's title, and a delta carries no
+    title. Without watching them, an EODHD fetch that starts failing swaps the
+    series to local values under a title, frozen at rev 0, still reading eodhd.
+    """
+    from app import main as main_module
+    from app.ta.sources import EodhdSource
+
+    def bar(day):
+        return {"date": f"2024-01-{day:02d}", "open": 1.0, "high": 2.0,
+                "low": 0.5, "close": 1.5, "adjusted_close": 1.5, "volume": 10}
+
+    pushes = []
+
+    async def fake_series(*args, **kwargs):
+        # A new closed bar each push: that is what re-opens the EODHD cache key.
+        pushes.append(1)
+        return [bar(d) for d in range(2, 6 + len(pushes))], None
+
+    fetches = []
+
+    async def flaky(self, query):
+        fetches.append(query)
+        if len(fetches) == 1:
+            return [{"date": f"2024-01-{d:02d}", "sma": 1.0} for d in range(2, 8)]
+        raise RuntimeError("503 Service Unavailable")
+
+    monkeypatch.setattr(main_module, "build_series", fake_series)
+    monkeypatch.setattr(EodhdSource, "_http_fetch", flaky)
+    monkeypatch.setenv("TA_PUSH_INTERVAL_MS", "0")
+
+    url = "/ta_chart_ws?symbol=AAPL&source=eodhd&indicators=sma:period=3"
+    with client().websocket_connect(url) as ws:
+        first, second = ws.receive_json(), ws.receive_json()
+
+    assert first["type"] == "figure"
+    assert second["type"] == "figure", "a degradation must not arrive as a delta"
+    assert "sma|period=3" in second["figure"]["layout"]["title"]["text"]

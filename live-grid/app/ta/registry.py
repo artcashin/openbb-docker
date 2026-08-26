@@ -88,6 +88,8 @@ def resolve(name: str, **overrides: Any) -> Req:
     """
     ind = get(name)
     style = overrides.pop("style", None)
+    if style is not None and not isinstance(style, dict):
+        raise ValueError(f"style must be a mapping, got {style!r}")
     for key in overrides:
         if key not in ind.params:
             raise ValueError(
@@ -95,6 +97,18 @@ def resolve(name: str, **overrides: Any) -> Req:
                 f"expected one of {sorted(ind.params)}"
             )
     return Req(name, {**ind.params, "style": style, **overrides})
+
+
+def col_suffix(req: Req) -> str:
+    """The parameter signature appended to this request's output columns.
+
+    Columns were named per indicator while requests dedup per (indicator,
+    params), so two periods of one indicator collapsed onto a single column
+    and the second was silently dropped as a duplicate.
+    """
+    parts = [f"{k}={v}" for k, v in sorted(req.params.items())
+             if k != "style" and v is not None]
+    return "|" + ",".join(parts) if parts else ""
 
 
 def _line(color: str | None = None) -> dict:
@@ -337,7 +351,8 @@ def _stoch_build(p: dict, b: dict[str, Base]) -> list[pl.Expr]:
     raw = 100 * (pl.col("close") - ll) / (hh - ll)
     # A flat window makes hh == ll and the ratio 0/0. Null, not NaN.
     # Fill immediately after the division, before %D's rolling mean averages it.
-    k = (raw if p["smooth_k"] <= 1 else raw.rolling_mean(p["smooth_k"])).fill_nan(None)
+    k = raw.fill_nan(None)
+    k = k if p["smooth_k"] <= 1 else k.rolling_mean(p["smooth_k"])
     return [k.alias("stoch_k"), k.rolling_mean(p["d"]).alias("stoch_d")]
 
 

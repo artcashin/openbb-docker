@@ -14,7 +14,7 @@ import polars as pl
 
 from app.ta.exprs import Base
 from app.ta.iterative import ITERATIVE
-from app.ta.registry import Req, get
+from app.ta.registry import Req, col_suffix, get
 
 
 def collect_bases(reqs: list[Req]) -> dict[str, Base]:
@@ -40,12 +40,13 @@ def compute_with_bases(
     seen: set[str] = set()
     exprs: list[pl.Expr] = []
     for req in reqs:
+        suffix = col_suffix(req)
         for expr in get(req.name).build(req.params, bases):
-            name = expr.meta.output_name()
+            name = expr.meta.output_name() + suffix
             if name in seen:
-                continue  # the same indicator requested twice
+                continue  # the same indicator, same params, requested twice
             seen.add(name)
-            exprs.append(expr)
+            exprs.append(expr.alias(name))
     if exprs:
         frame = frame.with_columns(exprs)
 
@@ -54,7 +55,9 @@ def compute_with_bases(
     for req in reqs:
         if not get(req.name).iterative:
             continue
+        suffix = col_suffix(req)
         for column, values in ITERATIVE[req.name](frame, req.params).items():
+            column += suffix
             if column not in frame.columns:
                 frame = frame.with_columns(pl.Series(column, values, dtype=pl.Float64))
 

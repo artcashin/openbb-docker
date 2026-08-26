@@ -5,6 +5,7 @@ import pytest
 from app.ta.macros import Macro, PaneSpec
 from app.ta.panes import all_reqs, assign, domains
 from app.ta.registry import resolve
+from tests.ta_helpers import col, cols
 
 
 def macro_of(*panes):
@@ -14,7 +15,7 @@ def macro_of(*panes):
 def test_manual_mode_puts_overlays_on_price_and_oscillators_below():
     panes = assign(None, [resolve("sma", period=50), resolve("rsi", period=14)])
     assert panes[0].is_price and panes[0].id == "price"
-    assert [s.column for s in panes[0].series] == ["sma"]
+    assert [s.column for s in panes[0].series] == [col("sma", period=50)]
     assert [p.id for p in panes[1:]] == ["rsi"]
 
 
@@ -64,7 +65,8 @@ def test_the_same_indicator_at_a_different_period_is_a_different_pane():
 
 def test_a_multi_output_indicator_contributes_every_series():
     panes = assign(None, [resolve("macd", fast=12, slow=26, signal=9)])
-    assert {s.column for s in panes[1].series} == {"macd", "macd_signal", "macd_hist"}
+    assert ({s.column for s in panes[1].series}
+            == set(cols(resolve("macd", fast=12, slow=26, signal=9))))
 
 
 def test_domains_span_zero_to_one_top_down():
@@ -112,3 +114,12 @@ def test_all_reqs_deduplicates_across_panes():
         PaneSpec("b", 1.0, [resolve("pct_b", period=20, k=2.0)]),
     )
     assert len(all_reqs(assign(macro, []))) == 2
+
+
+def test_domains_do_not_invert_when_there_are_many_panes():
+    """At 0.02 a pane, 60 panes' gaps alone exceed 1.0 and every span comes out
+    y0 > y1, which Plotly rejects."""
+    panes = assign(None, [resolve("rsi", period=p) for p in range(2, 62)])
+    assert len(panes) == 61
+    for y0, y1 in domains(panes):
+        assert 0.0 <= y0 < y1 <= 1.0

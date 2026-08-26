@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from app.ta.macros import Macro
-from app.ta.registry import Req, get
+from app.ta.registry import Req, col_suffix, get
 
 
 @dataclass(frozen=True)
@@ -35,9 +35,13 @@ def _series_for(req: Req) -> list[Series]:
     # A macro's per-series `style` overrides the registry's defaults key by
     # key, so `{color: ...}` recolours a line without discarding its type.
     style = req.params.get("style") or {}
+    # `ind.render` is keyed by BASE column names; the computed frame names its
+    # columns per (indicator, params), so each one is mapped to its suffix.
     return [
-        Series(column, f"{ind.label}{suffix}" if i == 0 else column, {**render, **style})
-        for i, (column, render) in enumerate(ind.render.items())
+        Series(base + col_suffix(req),
+               f"{ind.label}{suffix}" if i == 0 else base,
+               {**render, **style})
+        for i, (base, render) in enumerate(ind.render.items())
     ]
 
 
@@ -89,6 +93,9 @@ def domains(panes: list[Pane], gap: float = 0.02) -> list[tuple[float, float]]:
     """Vertical (y0, y1) per pane, top-down. Index 0 is the top pane."""
     if not panes:
         return []
+    # Enough panes and the gaps alone exceed 1.0, making every span negative
+    # (y0 > y1), which Plotly rejects. Cap the total gap at half the height.
+    gap = min(gap, 0.5 / max(len(panes) - 1, 1))
     available = 1.0 - gap * (len(panes) - 1)
     total = sum(p.height for p in panes) or 1.0
     out: list[tuple[float, float]] = []

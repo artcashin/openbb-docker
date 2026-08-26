@@ -11,7 +11,6 @@ and gated on bar close. A six-indicator macro refreshed every second would be
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
@@ -19,7 +18,7 @@ from dataclasses import dataclass, field
 import polars as pl
 
 from app.ta.compute import compute
-from app.ta.registry import Req, get
+from app.ta.registry import Req, col_suffix, get
 
 log = logging.getLogger("live-grid.ta")
 
@@ -41,6 +40,12 @@ class Result:
     frame: pl.DataFrame
     annotations: list[Annotation] = field(default_factory=list)
     calls: int = 0
+
+
+def _columns(req: Req) -> list[str]:
+    """The frame columns this request produces, suffixed per its parameters."""
+    suffix = col_suffix(req)
+    return [c + suffix for c in get(req.name).render]
 
 
 def eodhd_query(req: Req) -> dict:
@@ -93,12 +98,22 @@ class EodhdSource:
         self, df: pl.DataFrame, reqs: list[Req], symbol: str,
         interval: str, last_closed: str,
     ) -> Result:
+        # EODHD's technical endpoint has no intraday, and eodhd_query sends no
+        # interval at all -- so on a 5m chart their daily value would be fanned
+        # across every bar of the day and passed off as intraday. Compute
+        # locally and say so, rather than draw a plausible lie.
+        if interval != "1d":
+            return Result(compute(df, reqs), [
+                Annotation(col, "local", "EODHD has no intraday data")
+                for r in reqs for col in _columns(r)
+            ])
+
         mapped = [r for r in reqs if get(r.name).eodhd is not None]
         unmapped = [r for r in reqs if get(r.name).eodhd is None]
 
         annotations = [
             Annotation(col, "local", f"{r.name} has no EODHD equivalent")
-            for r in unmapped for col in get(r.name).render
+            for r in unmapped for col in _columns(r)
         ]
         frame = compute(df, unmapped) if unmapped else df
         calls = 0
@@ -116,7 +131,7 @@ class EodhdSource:
                 # A recent ATTEMPT failed and the floor has not elapsed.
                 annotations.extend(
                     Annotation(col, "local", "EODHD refetch throttled")
-                    for col in get(req.name).render
+                    for col in _columns(req)
                 )
                 fetched.append((req, None))
                 continue
@@ -137,7 +152,7 @@ class EodhdSource:
                 log.warning("eodhd %s failed for %s: %s", req.name, symbol, exc)
                 annotations.extend(
                     Annotation(col, "local", f"EODHD fetch failed: {exc}")
-                    for col in get(req.name).render
+                    for col in _columns(req)
                 )
                 fetched.append((req, None))
 
@@ -155,7 +170,7 @@ class EodhdSource:
                 frame = compute(frame, [req])
                 annotations.extend(
                     Annotation(col, "local", f"EODHD response unusable: {exc}")
-                    for col in get(req.name).render
+                    for col in _columns(req)
                 )
                 continue
             annotations.extend(
@@ -181,15 +196,17 @@ class EodhdSource:
         reported instead.
         """
         fields = get(req.name).eodhd.fields
-        wanted = list(fields.values())
+        suffix = col_suffix(req)
+        wanted = [c + suffix for c in fields.values()]
         if not rows:
             nulls = [pl.lit(None, dtype=pl.Float64).alias(c) for c in wanted]
             return frame.with_columns(nulls), wanted
 
-        present = {fields[k] for r in rows for k in fields if k in r}
+        present = {fields[k] + suffix for r in rows for k in fields if k in r}
         absent = [c for c in wanted if c not in present]
         incoming = pl.DataFrame([
-            {"date": r["date"], **{fields[k]: r.get(k) for k in fields if k in r}}
+            {"date": r["date"],
+             **{fields[k] + suffix: r.get(k) for k in fields if k in r}}
             for r in rows
         ])
         if absent:
@@ -200,9 +217,10 @@ class EodhdSource:
             pl.col("date").str.to_date(),
             pl.col(wanted).cast(pl.Float64, strict=False),
         ])
-        return frame.join(incoming, on="date", how="left"), absent
-
-
-async def gather_eodhd(source: EodhdSource, *calls) -> list[Result]:
-    """Run several EodhdSource.series calls concurrently."""
-    return list(await asyncio.gather(*calls))
+        # Bar dates are timestamps now (intraday keeps its time of day), while
+        # EODHD dates them by day. Join on the date PART so a daily bar stamped
+        # at anything other than midnight still matches.
+        joined = frame.join(
+            incoming, left_on=pl.col("date").dt.date(), right_on="date", how="left"
+        )
+        return joined.drop("date_right", strict=False), absent

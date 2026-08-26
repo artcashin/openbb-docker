@@ -9,7 +9,7 @@ from app.ta.figure import build_ta_figure, delta, trace_index
 from app.ta.panes import assign
 from app.ta.registry import resolve
 from app.ta.sources import Annotation
-from tests.ta_helpers import fixture_frame
+from tests.ta_helpers import col, cols, fixture_frame
 
 
 def built(*reqs):
@@ -69,8 +69,8 @@ def test_only_the_bottom_axis_shows_tick_labels():
 def test_annotations_appear_in_the_subtitle():
     frame, panes, _ = built(resolve("vwap"))
     fig = build_ta_figure("AAPL", frame, panes,
-                          [Annotation("vwap", "local", "no EODHD equivalent")])
-    assert "vwap" in fig["layout"]["title"]["text"]
+                          [Annotation(col("vwap"), "local", "no EODHD equivalent")])
+    assert col("vwap") in fig["layout"]["title"]["text"]
 
 
 def test_the_symbol_appears_in_the_title():
@@ -81,7 +81,7 @@ def test_the_symbol_appears_in_the_title():
 def test_trace_index_lists_the_candlestick_then_every_series():
     _, panes, _ = built(resolve("macd"))
     assert trace_index(panes)[0] == "__price__"
-    assert trace_index(panes)[1:] == ["macd", "macd_signal", "macd_hist"]
+    assert trace_index(panes)[1:] == cols(resolve("macd"))
 
 
 def test_a_delta_carries_only_the_requested_tail():
@@ -110,11 +110,12 @@ def test_a_nan_in_a_series_serialises_as_null_rather_than_raising():
     from fastapi.responses import JSONResponse
 
     frame, panes, _ = built(resolve("rsi", period=14))
+    rsi = col("rsi", period=14)
     poisoned = frame.with_columns(
         pl.when(pl.int_range(pl.len()) == 5)
         .then(float("nan"))
-        .otherwise(pl.col("rsi"))
-        .alias("rsi")
+        .otherwise(pl.col(rsi))
+        .alias(rsi)
     )
     fig = build_ta_figure("AAPL", poisoned, panes)
     body = JSONResponse(fig).body.decode()  # raises if any NaN survived
@@ -126,3 +127,31 @@ def test_an_empty_frame_still_builds_a_valid_figure():
     panes = assign(None, [resolve("rsi", period=14)])
     fig = build_ta_figure("AAPL", compute(empty, [resolve("rsi", period=14)]), panes)
     assert fig["data"][0]["x"] == []
+
+
+def test_two_periods_of_one_oscillator_do_not_draw_the_same_series():
+    _, panes, fig = built(resolve("rsi", period=14), resolve("rsi", period=2))
+    assert len(panes) == 3, [p.id for p in panes]
+    fast, slow = fig["data"][1]["y"], fig["data"][2]["y"]
+    assert fast != slow
+
+
+def test_an_inf_in_a_series_serialises_as_null_rather_than_raising():
+    """JSONResponse rejects Infinity exactly as it rejects NaN, and that raise
+    happens outside the route's try: a blank 500 with no title to say why.
+    roc, bandwidth and vwap all divide by something that can be zero."""
+    import json
+
+    from fastapi.responses import JSONResponse
+
+    frame, panes, _ = built(resolve("rsi", period=14))
+    rsi = col("rsi", period=14)
+    poisoned = frame.with_columns(
+        pl.when(pl.int_range(pl.len()) == 5)
+        .then(float("inf"))
+        .otherwise(pl.col(rsi))
+        .alias(rsi)
+    )
+    fig = build_ta_figure("AAPL", poisoned, panes)
+    body = JSONResponse(fig).body.decode()  # raises if any inf survived
+    assert json.loads(body)["data"][1]["y"][5] is None

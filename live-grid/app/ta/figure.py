@@ -37,9 +37,12 @@ def trace_index(panes: Sequence[Pane]) -> list[str]:
 def _column(frame: pl.DataFrame, name: str) -> list:
     """One column as JSON-safe values.
 
-    NaN becomes None rather than passing through. Starlette renders with
-    `allow_nan=False`, so a single NaN anywhere in a series makes the whole
-    response RAISE — the endpoint 500s instead of drawing a gap in one line.
+    Anything non-finite -- NaN or +/-inf alike -- becomes None rather than
+    passing through. Starlette renders with `allow_nan=False`, which rejects
+    `Infinity` exactly as it rejects `NaN`, so one such value anywhere in a
+    series makes the whole response RAISE, and it raises OUTSIDE the route's
+    try: a blank 500 with no title to say why. roc, bandwidth and vwap all
+    divide by a value that can be zero, so they all reach this boundary.
     Indicators already null their own 0/0 cases, but this is the boundary
     where the damage would actually occur, and a missed `fill_nan` upstream
     should not be able to take the chart down.
@@ -47,7 +50,7 @@ def _column(frame: pl.DataFrame, name: str) -> list:
     if name not in frame.columns:
         return [None] * frame.height
     return [
-        None if v is None or (isinstance(v, float) and math.isnan(v)) else float(v)
+        None if v is None or (isinstance(v, float) and not math.isfinite(v)) else float(v)
         for v in frame[name].to_list()
     ]
 

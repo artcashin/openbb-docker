@@ -5,7 +5,7 @@ import pytest
 
 from app.ta.compute import compute
 from app.ta.registry import REGISTRY, get, resolve
-from tests.ta_helpers import fixture_frame
+from tests.ta_helpers import col, fixture_frame
 
 
 def test_every_registered_indicator_states_its_conventions():
@@ -41,17 +41,18 @@ def test_get_rejects_an_unknown_indicator():
 def test_rsi_reads_adjusted_close_and_ignores_raw_close():
     """The mirror image: perturbing raw close must not move RSI."""
     df = fixture_frame()
-    base = compute(df, [resolve("rsi", period=14)])["rsi"].to_list()
+    rsi = col("rsi", period=14)
+    base = compute(df, [resolve("rsi", period=14)])[rsi].to_list()
     perturbed = compute(
         df.with_columns(pl.col("close") * 1.5), [resolve("rsi", period=14)]
-    )["rsi"].to_list()
+    )[rsi].to_list()
     assert base == perturbed
 
 
 def test_rsi_bounds_to_zero_hundred():
     """RSI values always fall in [0, 100]."""
     out = compute(fixture_frame(), [resolve("rsi", period=14)])
-    vals = [v for v in out["rsi"].to_list() if v is not None]
+    vals = [v for v in out[col("rsi", period=14)].to_list() if v is not None]
     assert len(vals) > 250
     assert min(vals) >= 0.0 and max(vals) <= 100.0
 
@@ -59,17 +60,20 @@ def test_rsi_bounds_to_zero_hundred():
 def test_atr_reads_raw_ohlc_and_ignores_adjusted_close():
     """Perturbing adj_close must not move ATR. Bounds checks cannot show this."""
     df = fixture_frame()
-    base = compute(df, [resolve("atr", period=14)])["atr"].to_list()
+    atr = col("atr", period=14)
+    base = compute(df, [resolve("atr", period=14)])[atr].to_list()
     perturbed = compute(
         df.with_columns(pl.col("adj_close") * 1.5), [resolve("atr", period=14)]
-    )["atr"].to_list()
+    )[atr].to_list()
     assert base == perturbed
 
 
 def test_bbands_emits_three_ordered_bands():
     out = compute(fixture_frame(), [resolve("bbands", period=20, k=2.0)])
     row = out.row(100, named=True)
-    assert row["bb_lo"] < row["bb_mid"] < row["bb_up"]
+    lo, mid, up = (col("bbands", c, period=20, k=2.0)
+                   for c in ("bb_lo", "bb_mid", "bb_up"))
+    assert row[lo] < row[mid] < row[up]
 
 
 def test_sma_and_ema_land_on_the_price_pane():
@@ -84,3 +88,10 @@ def test_tier_one_is_twenty_two_indicators_with_twelve_eodhd_maps():
     assert len(REGISTRY) == 22, sorted(REGISTRY)
     mapped = [n for n, i in REGISTRY.items() if i.eodhd is not None]
     assert len(mapped) == 12, sorted(mapped)  # cci is local-only (see registry)
+
+
+def test_resolve_rejects_a_style_that_is_not_a_mapping():
+    """`?indicators=sma:style=x` reaches here as a bare string; `{**r, **"x"}`
+    is a TypeError, not the 502-with-a-reason every other bad param gets."""
+    with pytest.raises(ValueError, match="style must be a mapping"):
+        resolve("sma", style="x")

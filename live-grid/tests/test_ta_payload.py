@@ -68,14 +68,14 @@ def test_bars_to_frame_on_no_bars_has_the_full_schema():
 
 async def test_build_payload_from_a_macro_produces_stacked_panes():
     params = ChartParams(symbol="AAPL", macro="classic-momentum")
-    fig, panes, _frame = await build_payload(params, fixture_frame())
+    fig, panes, _frame, _notes = await build_payload(params, fixture_frame())
     assert [p.id for p in panes] == ["price", "rsi", "macd", "vol"]
     assert fig["data"][0]["type"] == "candlestick"
 
 
 async def test_build_payload_from_picks_alone_needs_no_macro():
     params = ChartParams(symbol="AAPL", indicators="rsi:period=14")
-    _fig, panes, _ = await build_payload(params, fixture_frame())
+    _fig, panes, _, _ = await build_payload(params, fixture_frame())
     assert [p.id for p in panes] == ["price", "rsi"]
 
 
@@ -92,5 +92,14 @@ async def test_source_local_makes_no_eodhd_calls():
         async def series(self, *a, **k):  # pragma: no cover
             raise AssertionError("source=local must not touch EODHD")
 
-    fig, _, _ = await build_payload(params, fixture_frame(), eodhd_source=Boom())
+    fig, *_ = await build_payload(params, fixture_frame(), eodhd_source=Boom())
     assert fig["data"][0]["type"] == "candlestick"
+
+
+def test_intraday_bars_keep_their_time_of_day():
+    """widgets.json offers 1h/5m/1m and kdb tick bars carry a full timestamp.
+    Truncated to 10 chars, a whole day of them plotted at one x."""
+    bars = [{"date": f"2024-01-02T09:{m}:00", "open": 1.0, "high": 2.0,
+             "low": 0.5, "close": 1.5, "adjusted_close": 1.5, "volume": 10}
+            for m in (30, 35, 40, 45, 50, 55)]
+    assert bars_to_frame(bars)["date"].n_unique() == 6

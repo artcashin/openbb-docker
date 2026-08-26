@@ -253,7 +253,7 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
             log.warning("ta_chart bars unavailable for %s: %s", symbol, exc)
             bars, bars_error = [], exc
         try:
-            figure, _, _ = await build_payload(
+            figure, _, _, _ = await build_payload(
                 params, bars_to_frame(bars), eodhd_source=_eodhd
             )
         except Exception as exc:  # noqa: BLE001
@@ -285,6 +285,7 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
         )
         interval_s = float(os.getenv("TA_PUSH_INTERVAL_MS", "1000")) / 1000.0
         previous: list[str] = []
+        previous_marks: tuple[str, ...] = ()
         rev = 0
         try:
             while True:
@@ -310,7 +311,7 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
                     log.warning("ta_chart_ws bars unavailable for %s: %s", params.symbol, exc)
                     bars, bars_error = [], exc
                 try:
-                    figure, panes, frame = await build_payload(
+                    figure, panes, frame, annotations = await build_payload(
                         params, bars_to_frame(bars), eodhd_source=_eodhd
                     )
                 # Mirrors /ta_chart's 502: not a missing-bars degradation, this
@@ -329,12 +330,18 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
                 # receive an emptied chart with no explanation at all. That is
                 # the same silently-blank failure the REST route was fixed for,
                 # one layer down.
-                if rev == 0 or any_repaints(panes) or bars_error is not None:
+                # A change in ANNOTATIONS forces a figure too. They live only
+                # in the title, so an EODHD fetch that starts failing mid-stream
+                # would otherwise swap the series to local values while the
+                # title, frozen at rev 0, still reads "eodhd".
+                marks = tuple(sorted({a.column for a in annotations}))
+                if (rev == 0 or any_repaints(panes) or bars_error is not None
+                        or marks != previous_marks):
                     await ws.send_json({"type": "figure", "rev": rev, "figure": figure})
                 else:
                     payload = ta_delta(frame, panes, revised_from(previous, dates))
                     await ws.send_json({"type": "delta", "rev": rev, **payload})
-                previous, rev = dates, rev + 1
+                previous, previous_marks, rev = dates, marks, rev + 1
                 # Drop rather than queue: a recompute that overran its slot must
                 # not build a backlog that never drains.
                 elapsed = asyncio.get_running_loop().time() - started

@@ -5,7 +5,7 @@ import pytest
 
 from app.ta.compute import collect_bases, compute, compute_with_bases
 from app.ta.registry import resolve
-from tests.ta_helpers import fixture_frame
+from tests.ta_helpers import col, cols, fixture_frame
 
 
 def test_two_indicators_sharing_a_base_collect_it_once():
@@ -28,7 +28,7 @@ def test_differing_price_basis_is_not_collapsed():
 def test_base_columns_are_dropped_from_the_public_result():
     out = compute(fixture_frame(), [resolve("bbands", period=20, k=2.0)])
     assert [c for c in out.columns if ":" in c] == []
-    assert {"bb_up", "bb_mid", "bb_lo"} <= set(out.columns)
+    assert set(cols(resolve("bbands", period=20, k=2.0))) <= set(out.columns)
 
 
 def test_original_bar_columns_survive():
@@ -43,7 +43,7 @@ def test_empty_request_list_returns_the_frame_unchanged():
 
 def test_duplicate_requests_do_not_produce_duplicate_columns():
     out = compute(fixture_frame(), [resolve("sma", period=50), resolve("sma", period=50)])
-    assert out.columns.count("sma") == 1
+    assert out.columns.count(col("sma", period=50)) == 1
 
 
 def test_compute_with_bases_exposes_the_intermediate_columns():
@@ -55,3 +55,13 @@ def test_a_frame_missing_adj_close_fails_loudly():
     df = fixture_frame().drop("adj_close")
     with pytest.raises(pl.exceptions.ColumnNotFoundError):
         compute(df, [resolve("sma", period=50)])
+
+
+def test_two_periods_of_one_indicator_are_two_distinct_columns():
+    """The 50/200 cross. Columns were named per indicator, requests dedup per
+    (indicator, params), so the 200 was dropped as a duplicate of the 50."""
+    out = compute(fixture_frame(), [resolve("sma", period=50), resolve("sma", period=200)])
+    made = [c for c in out.columns if c.startswith("sma")]
+    assert len(made) == 2, made
+    fifty, two_hundred = (out[c].to_list() for c in made)
+    assert fifty != two_hundred
