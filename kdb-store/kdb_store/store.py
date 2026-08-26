@@ -336,6 +336,10 @@ class KdbStore:
             ).pd()
             if got is None or got.empty:
                 return None
+            # On a `time` tie, iloc[-1] picks the last row in table order --
+            # correct because kdb preserves insertion order and TickRecorder
+            # appends ticks in arrival order, so the last row is the newest
+            # arrival, not an arbitrary one.
             row = got.iloc[-1]
             if pd.isna(row["time"]):
                 return None

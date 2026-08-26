@@ -17,6 +17,12 @@ def test_a_tick_supplies_last_price_size_and_timestamp():
     assert got["last_timestamp"] == datetime(2026, 8, 26, 15, 14)
 
 
+def test_a_tick_sourced_quote_is_not_marked_delayed():
+    got = build_quote("AAPL", {"time": datetime(2026, 8, 26), "price": 312.95, "size": 1.0},
+                      prev_close=309.9)
+    assert got["delayed"] is False
+
+
 def test_change_is_computed_against_the_previous_close():
     got = build_quote("AAPL", {"time": datetime(2026, 8, 26), "price": 312.95, "size": 1.0},
                       prev_close=309.9)
@@ -140,6 +146,13 @@ async def test_prev_close_comes_from_the_last_complete_daily_bar():
 
     class Cache:
         async def get(self, **kwargs):
+            # The real ReadThroughCache compares start/end against
+            # last_complete_boundary()'s datetime (ranges.trim_tail /
+            # .subtract) -- a bare `date` raises TypeError there, which
+            # _get() swallows and routes to a live upstream bypass. A fake
+            # that only checked values, not types, would never catch that.
+            assert isinstance(kwargs["start"], datetime), "start must be a datetime"
+            assert isinstance(kwargs["end"], datetime), "end must be a datetime"
             # ReadThroughCache.get returns (rows, metadata), not rows.
             return ([{"date": "2026-08-24", "close": 300.0},
                      {"date": "2026-08-25", "close": 309.9}], {})
@@ -210,6 +223,30 @@ async def test_prev_close_treats_a_non_numeric_close_as_missing_not_an_error():
 
 
 @pytest.mark.asyncio
+async def test_prev_close_is_bounded_by_a_timeout(monkeypatch):
+    """D1 gives the tick read a 3s budget; a wedged bars fetch must not be
+    allowed to push total quote latency past that unbounded."""
+    import asyncio
+    import time
+
+    from openbb_kdb.models import quote as quote_mod
+
+    monkeypatch.setattr(quote_mod, "PREV_CLOSE_TIMEOUT_S", 0.1)
+
+    class Wedged:
+        async def get(self, **kwargs):
+            await asyncio.sleep(5)
+            return ([], {})  # pragma: no cover - never reached
+
+    start = time.monotonic()
+    got = await quote_mod._prev_close(Wedged(), "AAPL", credentials=None)
+    elapsed = time.monotonic() - start
+
+    assert got is None
+    assert elapsed < 1.0
+
+
+@pytest.mark.asyncio
 async def test_snapshot_client_returns_none_when_live_grid_is_down():
     from openbb_kdb.leasing import snapshot
 
@@ -236,6 +273,16 @@ def test_a_snapshot_builds_a_quote_when_no_tick_exists():
     assert got["last_price"] == 312.95
     assert got["prev_close"] == 309.9
     assert round(got["change"], 2) == 3.05
+
+
+def test_a_snapshot_sourced_quote_is_marked_delayed():
+    """/snapshot always returns delayed: true; the marker must survive onto
+    the assembled row so a consumer can tell a live tick from a ~20-minute
+    -old REST price (spec asks for this in three places)."""
+    from openbb_kdb.models.quote import build_quote_from_snapshot
+
+    got = build_quote_from_snapshot("AAPL", {"price": 312.95, "delayed": True})
+    assert got["delayed"] is True
 
 
 def test_a_non_dict_snapshot_does_not_raise():

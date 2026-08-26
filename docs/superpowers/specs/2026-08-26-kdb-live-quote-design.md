@@ -89,7 +89,8 @@ here.
       +-- 2. newest tick for AAPL from kdb
       |        hit  -> use it
       |        miss -> poll to deadline (3s)
-      |        none -> EODHD REST snapshot, flagged delayed
+      |        none -> GET http://127.0.0.1:6903/snapshot?symbol=AAPL,
+      |                 live-grid's delayed EODHD REST snapshot, flagged delayed
       |
       +-- 3. prev_close from the last complete daily bar (ReadThroughCache)
 
@@ -136,15 +137,23 @@ generous rather than tight.
 
 ## Error handling
 
+The fallback (`GET /snapshot`) is served *by live-grid*, not called directly
+against EODHD by `openbb-kdb` — so "live-grid unreachable" means no lease
+**and** no snapshot, not "skip the lease and fall back to EODHD REST" as an
+earlier draft of this table said.
+
 | failure | behaviour |
 |---|---|
-| live-grid unreachable | skip the lease, read kdb, fall back to EODHD REST |
-| kdb unreachable | EODHD REST, flagged delayed |
-| no tick within the deadline | EODHD REST, flagged delayed |
-| EODHD REST also fails | empty results — the only case returning nothing |
+| live-grid unreachable | no lease taken, no snapshot available (it also goes through live-grid); the quote returns whatever tick kdb already holds, or nothing |
+| kdb unreachable (tick read) | no tick; fall back to live-grid's `/snapshot`, flagged delayed |
+| no tick within the deadline | fall back to live-grid's `/snapshot`, flagged delayed |
+| live-grid's own snapshot lookup also fails/404s | empty results |
 | daily bar missing | `last_price` and timestamp only; `prev_close`/`change` null |
 
-The invariant: nothing in the subscribe leg can fail a quote.
+The invariant: nothing in the subscribe leg can fail a quote. The only case
+returning nothing is no tick **and** no snapshot — whether because live-grid
+itself is unreachable or because live-grid reached EODHD and still came up
+empty.
 
 ## Security
 

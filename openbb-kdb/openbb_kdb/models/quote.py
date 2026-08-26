@@ -25,6 +25,22 @@ log = logging.getLogger(__name__)
 
 DEADLINE_S = 3.0
 POLL_S = 0.1
+PREV_CLOSE_TIMEOUT_S = 3.0  # bounds the daily-bar fetch; D1's 3s only covers the tick read
+
+
+def _add_change(row: dict[str, Any], price: float, prev_close: float | None) -> None:
+    """Set prev_close/change/change_percent on `row`, or leave them absent.
+
+    Shared by both quote builders below: change math (and the zero-prev_close
+    divide-by-zero guard) must not drift between the tick path and the
+    snapshot path.
+    """
+    if prev_close is None:
+        return
+    row["prev_close"] = prev_close
+    row["change"] = price - prev_close
+    if prev_close:
+        row["change_percent"] = row["change"] / prev_close
 
 
 def build_quote(symbol: str, tick: dict | None, prev_close: float | None) -> dict | None:
@@ -35,6 +51,7 @@ def build_quote(symbol: str, tick: dict | None, prev_close: float | None) -> dic
         "symbol": symbol,
         "last_price": tick["price"],
         "last_timestamp": tick["time"],
+        "delayed": False,
     }
     # EquityQuoteData.last_size is int | None; kdb reports size as a float.
     # A whole-valued float (40.0) coerces cleanly, but a fractional one would
@@ -42,11 +59,7 @@ def build_quote(symbol: str, tick: dict | None, prev_close: float | None) -> dic
     size = tick.get("size")
     if size is not None and float(size).is_integer():
         row["last_size"] = int(size)
-    if prev_close is not None:
-        row["prev_close"] = prev_close
-        row["change"] = tick["price"] - prev_close
-        if prev_close:
-            row["change_percent"] = (tick["price"] - prev_close) / prev_close
+    _add_change(row, tick["price"], prev_close)
     return row
 
 
@@ -60,18 +73,15 @@ def build_quote_from_snapshot(symbol: str, snap: dict | None) -> dict | None:
         price = float(snap["price"])
     except (TypeError, ValueError):
         return None
-    row: dict[str, Any] = {"symbol": symbol, "last_price": price}
+    row: dict[str, Any] = {"symbol": symbol, "last_price": price,
+                            "delayed": bool(snap.get("delayed", True))}
     prev = snap.get("prev_close")
     if prev is not None:
         try:
             prev = float(prev)
         except (TypeError, ValueError):
             prev = None
-    if prev is not None:
-        row["prev_close"] = prev
-        row["change"] = price - prev
-        if prev:
-            row["change_percent"] = row["change"] / prev
+    _add_change(row, price, prev)
     return row
 
 
@@ -83,6 +93,11 @@ async def _await_tick(store, symbol: str, deadline: float) -> dict | None:
     connect budget (kdb_store.session._CONNECT_BUDGET_S = 5.0) or a wedged
     call could otherwise block past -- or forever past -- our 3.0s default,
     defeating the reason this deadline exists.
+
+    `wait_for` around `to_thread` abandons the worker thread on timeout, it
+    cannot cancel it -- a wedged q leaves that thread blocked indefinitely.
+    That degrades to "this call always falls back", never a hang, because we
+    stop waiting on it; it does not free the thread.
     """
     loop = asyncio.get_running_loop()
     stop = loop.time() + deadline
@@ -125,13 +140,24 @@ async def _prev_close(cache, symbol: str, credentials) -> float | None:
     """
     from datetime import date, timedelta
 
+    from openbb_kdb.models.historical import _as_datetime
+
     today = date.today()
     end = today - timedelta(days=1)
     try:
         # get() answers (rows, metadata) -- unpack, do not index the tuple.
-        rows, _meta = await cache.get(
-            symbol=symbol, interval="1d", start=end - timedelta(days=10), end=end,
-            model="EquityHistorical", params={}, credentials=credentials,
+        # ReadThroughCache compares start/end against last_complete_boundary(),
+        # which is a datetime (see cache.py) -- a bare `date` fails that
+        # comparison with a TypeError that _get() swallows into a live
+        # upstream bypass, defeating D5. _as_datetime is the same converter
+        # historical.py's _extract() uses for this exact purpose.
+        rows, _meta = await asyncio.wait_for(
+            cache.get(
+                symbol=symbol, interval="1d",
+                start=_as_datetime(end - timedelta(days=10)), end=_as_datetime(end),
+                model="EquityHistorical", params={}, credentials=credentials,
+            ),
+            timeout=PREV_CLOSE_TIMEOUT_S,
         )
         # Belt and suspenders: ReadThroughCache serves whatever window it is
         # asked for with no complete-boundary filter, so a same-day forming
