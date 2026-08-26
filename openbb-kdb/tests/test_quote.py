@@ -85,3 +85,49 @@ def test_the_fetcher_is_registered_for_the_quote_model():
     import openbb_kdb
 
     assert openbb_kdb.kdb_provider.fetcher_dict["EquityQuote"] is not None
+
+
+def test_transform_data_omits_a_fractional_last_size_rather_than_raising():
+    """last_size is int | None on EquityQuoteData; kdb reports size as a
+    float. A fractional size must not raise ValidationError -- it must
+    validate through the real model with last_size simply absent."""
+    from openbb_kdb.models.quote import KdbEquityQuoteFetcher
+
+    data = {"symbol": "AAPL",
+            "tick": {"time": datetime(2026, 8, 26), "price": 312.95, "size": 40.5},
+            "prev_close": None}
+    rows = KdbEquityQuoteFetcher.transform_data(None, data)
+    assert len(rows) == 1
+    assert rows[0].last_size is None
+
+
+def test_transform_data_keeps_a_whole_last_size():
+    from openbb_kdb.models.quote import KdbEquityQuoteFetcher
+
+    data = {"symbol": "AAPL",
+            "tick": {"time": datetime(2026, 8, 26), "price": 312.95, "size": 40.0},
+            "prev_close": None}
+    rows = KdbEquityQuoteFetcher.transform_data(None, data)
+    assert rows[0].last_size == 40
+
+
+@pytest.mark.asyncio
+async def test_waiting_is_capped_by_the_deadline_even_when_a_single_call_blocks_past_it():
+    """A cold/dead kdb session's own connect budget (or a wedged call) must
+    not be able to push the total wait past `deadline` -- each `to_thread`
+    call is bounded by `wait_for`, not just checked for between calls."""
+    import time
+
+    from openbb_kdb.models.quote import _await_tick
+
+    class SlowThenTick:
+        def latest_tick(self, symbol):
+            time.sleep(0.6)
+            return {"time": datetime(2026, 8, 26), "price": 1.0, "size": 1.0}
+
+    start = time.monotonic()
+    got = await _await_tick(SlowThenTick(), "AAPL", deadline=0.2)
+    elapsed = time.monotonic() - start
+
+    assert got is None
+    assert elapsed < 0.6

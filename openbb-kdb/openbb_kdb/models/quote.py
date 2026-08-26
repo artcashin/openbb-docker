@@ -33,9 +33,14 @@ def build_quote(symbol: str, tick: dict | None, prev_close: float | None) -> dic
     row: dict[str, Any] = {
         "symbol": symbol,
         "last_price": tick["price"],
-        "last_size": tick.get("size"),
         "last_timestamp": tick["time"],
     }
+    # EquityQuoteData.last_size is int | None; kdb reports size as a float.
+    # A whole-valued float (40.0) coerces cleanly, but a fractional one would
+    # raise ValidationError and 500 the route -- omit it instead of guessing.
+    size = tick.get("size")
+    if size is not None and float(size).is_integer():
+        row["last_size"] = int(size)
     if prev_close is not None:
         row["prev_close"] = prev_close
         row["change"] = tick["price"] - prev_close
@@ -45,16 +50,30 @@ def build_quote(symbol: str, tick: dict | None, prev_close: float | None) -> dic
 
 
 async def _await_tick(store, symbol: str, deadline: float) -> dict | None:
-    """Poll for a first tick until the deadline. Returns None if none arrives."""
+    """Poll for a first tick until the deadline. Returns None if none arrives.
+
+    Each `store.latest_tick` call runs in a worker thread and is bounded by
+    `asyncio.wait_for` against the *remaining* deadline: a cold session's own
+    connect budget (kdb_store.session._CONNECT_BUDGET_S = 5.0) or a wedged
+    call could otherwise block past -- or forever past -- our 3.0s default,
+    defeating the reason this deadline exists.
+    """
     loop = asyncio.get_running_loop()
     stop = loop.time() + deadline
     while True:
-        tick = await asyncio.to_thread(store.latest_tick, symbol)
+        remaining = stop - loop.time()
+        try:
+            tick = await asyncio.wait_for(
+                asyncio.to_thread(store.latest_tick, symbol), timeout=max(remaining, 0)
+            )
+        except asyncio.TimeoutError:
+            return None
         if tick is not None:
             return tick
-        if loop.time() >= stop:
+        remaining = stop - loop.time()
+        if remaining <= 0:
             return None
-        await asyncio.sleep(POLL_S)
+        await asyncio.sleep(min(POLL_S, remaining))
 
 
 class KdbEquityQuoteFetcher(Fetcher[EquityQuoteQueryParams, list[EquityQuoteData]]):
