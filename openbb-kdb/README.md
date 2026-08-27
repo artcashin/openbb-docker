@@ -113,3 +113,7 @@ Everything except `QLIC` also accepts an OpenBB credential
 ## Test
 
     pip install -e .[dev] && pytest    # no kdb license or provider key needed
+
+## License
+
+AGPL-3.0-only.

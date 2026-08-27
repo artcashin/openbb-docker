@@ -258,3 +258,8 @@ OPENBB_URL=https://openbb.<your-tailnet>.ts.net scripts/smoke.sh
 # CI equivalent (no tailnet needed): build the image, boot the API, hit
 # widgets.json from inside the container — see .github/workflows/ci.yml
 ```
+
+## License
+
+AGPL-3.0-only — this repo builds and serves OpenBB Platform itself, which is
+AGPL-3.0-only upstream.
