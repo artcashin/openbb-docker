@@ -23,35 +23,35 @@
     "${TS_CERT_DOMAIN}:443": {
       "Handlers": {
         "/": {
-          "Proxy": "http://127.0.0.1:6900"
+          "Proxy": "http://openbb-api:6900"
         }
       }
     },
     "${TS_CERT_DOMAIN}:10000": {
       "Handlers": {
         "/": {
-          "Proxy": "http://127.0.0.1:8447"
+          "Proxy": "http://key-maint:8447"
         }
       }
     },
     "${TS_CERT_DOMAIN}:8443": {
       "Handlers": {
         "/": {
-          "Proxy": "http://127.0.0.1:6901"
+          "Proxy": "http://openbb-mcp:6901"
         }
       }
     },
     "${TS_CERT_DOMAIN}:6903": {
       "Handlers": {
         "/": {
-          "Proxy": "http://127.0.0.1:6903"
+          "Proxy": "http://live-grid:6903"
         }
       }
     },
     "${TS_CERT_DOMAIN}:6904": {
       "Handlers": {
         "/": {
-          "Proxy": "http://127.0.0.1:6904"
+          "Proxy": "http://stores-explorer:6904"
         }
       }
     },
