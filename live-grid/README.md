@@ -171,9 +171,22 @@ feed manager at startup, so a restart restores the subscriptions rather than jus
 the list.
 
 `LIVE_GRID_MAX_SYMBOLS` (default 50) caps the account-wide EODHD budget. The
-count is the **union** of pinned and leased symbols: a symbol that is both is one
-subscription at the vendor, and quote leases occupy the same allowance. An add
-that would exceed the cap returns 507. Leased symbols appear in the widget but
-cannot be removed there — they lapse on their own TTL.
+count is everything actually subscribed at EODHD right now — pinned, leased,
+*and* whatever a `/live_grid_ws` grid connection has registered, all read off
+the feed manager's own view, so a symbol subscribed twice over is still one
+slot. An add that would exceed the cap returns 507. Leased symbols appear in
+the widget but cannot be removed there — they lapse on their own TTL. A
+watchlist file with more symbols than the cap only has the first `cap` of
+them (sorted) registered at startup; the rest are logged as dropped.
 
-Tailnet-only, like every route here. Never funnel it.
+The widget itself needs `LIVE_GRID_PUBLIC_URL` set (e.g.
+`https://openbb.<your-tailnet>.ts.net:6903`) — an `iframe` widget's endpoint
+must be an absolute URL, so without it the subscriptions widget is left out
+of `/widgets.json` entirely rather than shipping a broken one.
+
+Tailnet-only, like every route here. Never funnel it. `POST`/`DELETE
+/api/subscriptions` additionally reject a request whose browser `Origin`
+header does not match `LIVE_GRID_PUBLIC_URL` (a request with no `Origin`,
+e.g. curl, is unaffected) — CORS here is wide open for the Workspace origin's
+reads, and this keeps some other page an operator has open from silently
+mutating the durable watchlist.

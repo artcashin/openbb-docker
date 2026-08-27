@@ -13,6 +13,7 @@ scripts/scrub-private-patterns.txt
 ts-state/
 ts-state-minio/
 kdb-data/
+live-grid-data/
 *.log
 
 # kdb+ license -- bring your own; never commit it.
