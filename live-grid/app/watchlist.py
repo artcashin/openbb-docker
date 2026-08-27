@@ -57,8 +57,16 @@ class Watchlist:
         sym = _normalise(symbol)
         if not sym or sym in self._symbols:
             return False
+        previous = set(self._symbols)
         self._symbols.add(sym)
-        self._save()
+        try:
+            self._save()
+        except Exception:
+            # A failed write must not leave memory ahead of disk: the symbol
+            # would be pinned, fed and reported by the API for the rest of
+            # this process, then silently vanish on the next restart.
+            self._symbols = previous
+            raise
         return True
 
     def remove(self, symbol: str) -> bool:
@@ -66,8 +74,13 @@ class Watchlist:
         sym = _normalise(symbol)
         if sym not in self._symbols:
             return False
+        previous = set(self._symbols)
         self._symbols.discard(sym)
-        self._save()
+        try:
+            self._save()
+        except Exception:
+            self._symbols = previous
+            raise
         return True
 
     def _save(self) -> None:

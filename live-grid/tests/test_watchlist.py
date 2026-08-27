@@ -86,3 +86,29 @@ def test_an_empty_or_blank_symbol_is_rejected(tmp_path):
     w = Watchlist(tmp_path / "w.json")
     assert w.add("   ") is False
     assert w.symbols() == []
+
+
+def test_add_rolls_back_memory_when_the_write_fails(tmp_path):
+    """A failed write must not leave the symbol pinned in memory-only: it
+    would be fed and reported by the API, then vanish silently on restart."""
+    # Point the watchlist file AT a directory: opening it for write raises
+    # IsADirectoryError, a real failure _save() cannot swallow.
+    p = tmp_path / "w.json"
+    p.mkdir()
+    w = Watchlist(p / "nested.json")
+    w._path = p  # a directory, not a file -- os.replace(tmp, p) must fail
+    with pytest.raises(OSError):
+        w.add("AAPL")
+    assert w.symbols() == []
+
+
+def test_remove_rolls_back_memory_when_the_write_fails(tmp_path):
+    p = tmp_path / "w.json"
+    w = Watchlist(p)
+    w.add("AAPL")
+    real_dir = tmp_path / "blocker"
+    real_dir.mkdir()
+    w._path = real_dir  # same trick: os.replace onto a directory fails
+    with pytest.raises(OSError):
+        w.remove("AAPL")
+    assert w.symbols() == ["AAPL"]
