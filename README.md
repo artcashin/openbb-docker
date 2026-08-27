@@ -15,15 +15,19 @@ from later chapters is.
 
 Two containers, one tailnet node, zero exposed ports:
 
-- a small **Tailscale sidecar** that owns the network namespace and joins your
-  tailnet as a node named `openbb`;
+- a small **Tailscale sidecar** that joins your tailnet as a node named
+  `openbb`;
 - the **OpenBB Platform REST API** (all standard providers + the technical,
-  quantitative, and econometrics extensions) sharing that namespace, bound to
-  loopback only.
+  quantitative, and econometrics extensions), which the sidecar reaches over a
+  private `openbb-internal` bridge — it has no tailnet presence of its own.
 
 **Tailscale Serve is the only way in** — real HTTPS with a Let's Encrypt
 certificate at `https://openbb.<your-tailnet>.ts.net`, reachable from every
-device on your tailnet and invisible to everything else.
+device on your tailnet and invisible to everything off this host.
+
+The API sits on a private Docker bridge, so other processes **on this Docker
+host** can reach it directly — but from Ep. 2 they meet the same HTTP Basic auth
+as everyone else, on every path. Nothing on your LAN can reach it at all.
 
 **New in v2.0.0 (Ep. 2):** the API enforces **HTTP Basic auth**
 (`api-auth.env`, required — the stack will not start without it), and port
