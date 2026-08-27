@@ -113,3 +113,41 @@ def test_the_symbol_path_parameter_is_case_insensitive(tmp_path, monkeypatch):
     client = _client(tmp_path, monkeypatch)
     client.post("/api/subscriptions", json={"symbol": "AAPL"})
     assert client.delete("/api/subscriptions/aapl").status_code == 200
+
+
+def test_a_pinned_symbol_reaches_the_feed(tmp_path, monkeypatch):
+    """The point of pinning: the feed must actually want the symbol."""
+    client = _client(tmp_path, monkeypatch)
+    client.post("/api/subscriptions", json={"symbol": "AAPL"})
+    assert "AAPL" in client.app.state.manager._union("us")
+
+
+def test_unpinning_removes_it_from_the_feed(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+    client.post("/api/subscriptions", json={"symbol": "AAPL"})
+    client.delete("/api/subscriptions/AAPL")
+    assert "AAPL" not in client.app.state.manager._union("us")
+
+
+def test_symbols_already_on_disk_are_fed_at_startup(tmp_path, monkeypatch):
+    """A restart must restore the subscriptions, not just the list."""
+    import json
+
+    p = tmp_path / "w.json"
+    p.write_text(json.dumps(["AAPL", "EURUSD"]))
+    monkeypatch.setenv("LIVE_GRID_WATCHLIST", str(p))
+    monkeypatch.setenv("LIVE_GRID_MAX_SYMBOLS", "50")
+    client = make_client()
+    with client:  # entering the context runs lifespan
+        manager = client.app.state.manager
+        assert "AAPL" in manager._union("us")
+        assert "EURUSD" in manager._union("forex")
+
+
+def test_pinning_does_not_disturb_a_lease_on_another_symbol(tmp_path, monkeypatch):
+    """Watchlist and leases are separate _conns entries; _union merges them."""
+    client = _client(tmp_path, monkeypatch)
+    client.post("/subscribe", json={"symbols": ["NVDA"], "ttl": 300})
+    client.post("/api/subscriptions", json={"symbol": "AAPL"})
+    union = client.app.state.manager._union("us")
+    assert {"AAPL", "NVDA"} <= union

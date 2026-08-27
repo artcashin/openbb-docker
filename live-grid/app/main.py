@@ -148,6 +148,9 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
+        # Restore the pinned subscriptions before the drain loop starts, so the
+        # first _sync_feeds already has them and a restart does not drop the feed.
+        _apply_watchlist()
         task = asyncio.create_task(manager.run())
         sweep_task = asyncio.create_task(_sweep_leases())
         try:
@@ -444,7 +447,23 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
     _GROUP_NAMES = {"us": "Equity", "crypto": "Crypto", "forex": "Forex"}
 
     def _apply_watchlist() -> None:
-        """Register the watchlist with the feed manager. Filled in by Task 3."""
+        """Register every pinned symbol with the feed manager.
+
+        One synthetic id per symbol -- `watchlist:<SYMBOL>` -- mirroring the lease
+        registry, because `_sync_feeds` unions symbols across every `_conns` entry
+        and does not care which of them came from a websocket. Unregistering the
+        symbols that are no longer pinned is what makes a removal take effect.
+        """
+        wanted = set(watchlist.symbols())
+        current = {
+            conn_id[len("watchlist:"):]
+            for conn_id in list(manager._conns)
+            if conn_id.startswith("watchlist:")
+        }
+        for sym in wanted - current:
+            manager.register(f"watchlist:{sym}", [sym])
+        for sym in current - wanted:
+            manager.unregister(f"watchlist:{sym}")
 
     def _subscription_payload() -> dict:
         """Pinned, leased, and the budget they share.
