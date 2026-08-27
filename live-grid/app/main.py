@@ -18,6 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from app.classify import classify
 from app.feeds import FeedManager
 from app.figure import build_figure
 from app.leases import DEFAULT_TTL, LeaseRegistry
@@ -129,6 +130,11 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
     manager = FeedManager(key or "", quotes, recorder=recorder, **manager_kwargs)
     leases = LeaseRegistry(manager, ttl=float(os.getenv("LIVE_GRID_LEASE_TTL_S", DEFAULT_TTL)))
 
+    from app.watchlist import DEFAULT_PATH as WATCHLIST_DEFAULT, Watchlist
+
+    watchlist = Watchlist(os.getenv("LIVE_GRID_WATCHLIST", WATCHLIST_DEFAULT))
+    max_symbols = int(os.getenv("LIVE_GRID_MAX_SYMBOLS", "50"))
+
     async def _sweep_leases() -> None:
         interval = float(os.getenv("LIVE_GRID_LEASE_SWEEP_S", "30"))
         while True:
@@ -162,6 +168,7 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
     app.state.quotes = quotes
     app.state.manager = manager
     app.state.leases = leases
+    app.state.watchlist = watchlist
 
     # The Workspace origin (pro.openbb.co) fetches cross-origin from the
     # browser; BDOBB's non-streaming calls come via plugin-http (no CORS).
@@ -433,6 +440,62 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
                 for sym, exp in granted.items()
             }
         }
+
+    _GROUP_NAMES = {"us": "Equity", "crypto": "Crypto", "forex": "Forex"}
+
+    def _apply_watchlist() -> None:
+        """Register the watchlist with the feed manager. Filled in by Task 3."""
+
+    def _subscription_payload() -> dict:
+        """Pinned, leased, and the budget they share.
+
+        `used` is the size of the UNION. EODHD subscribes a SET of symbols per
+        connection, so a symbol that is both pinned and leased is one slot, not
+        two -- summing would refuse adds while capacity was still free.
+        """
+        pinned = watchlist.symbols()
+        leased = leases.symbols()
+        groups: dict[str, list[str]] = {name: [] for name in _GROUP_NAMES.values()}
+        for sym in pinned:
+            groups[_GROUP_NAMES[classify(sym)]].append(sym)
+        return {
+            "service": "EODHD",
+            "cap": max_symbols,
+            "used": len(set(pinned) | set(leased)),
+            "pinned": pinned,
+            "leased": leased,
+            "groups": groups,
+        }
+
+    @app.get("/api/subscriptions")
+    async def list_subscriptions():
+        return _subscription_payload()
+
+    @app.post("/api/subscriptions", status_code=201)
+    async def add_subscription(body: dict):
+        sym = str(body.get("symbol") or "").strip().upper()
+        if not sym:
+            raise HTTPException(status_code=422, detail="symbol must be a non-empty string")
+        if sym in set(watchlist.symbols()):
+            raise HTTPException(status_code=409, detail=f"{sym} is already subscribed")
+        # Union again: adding a symbol that is ALREADY leased costs no new slot.
+        projected = set(watchlist.symbols()) | set(leases.symbols()) | {sym}
+        if len(projected) > max_symbols:
+            raise HTTPException(
+                status_code=507,
+                detail=f"cap of {max_symbols} reached for EODHD; remove a symbol first",
+            )
+        watchlist.add(sym)
+        _apply_watchlist()
+        return _subscription_payload()
+
+    @app.delete("/api/subscriptions/{symbol}")
+    async def remove_subscription(symbol: str):
+        sym = symbol.strip().upper()
+        if not watchlist.remove(sym):
+            raise HTTPException(status_code=404, detail=f"{sym} is not subscribed")
+        _apply_watchlist()
+        return _subscription_payload()
 
     @app.get("/snapshot")
     async def snapshot(symbol: str):

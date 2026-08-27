@@ -1,0 +1,115 @@
+"""The subscription API: grouping, and a cap that counts the vendor's view."""
+
+import asyncio
+
+import pytest
+
+from tests.test_main import make_client
+
+
+def _client(tmp_path, monkeypatch, cap=50):
+    monkeypatch.setenv("LIVE_GRID_WATCHLIST", str(tmp_path / "w.json"))
+    monkeypatch.setenv("LIVE_GRID_MAX_SYMBOLS", str(cap))
+    return make_client()
+
+
+def test_an_empty_watchlist_reports_the_cap_and_nothing_used(tmp_path, monkeypatch):
+    body = _client(tmp_path, monkeypatch).get("/api/subscriptions").json()
+    assert body["service"] == "EODHD"
+    assert body["cap"] == 50
+    assert body["used"] == 0
+    assert body["pinned"] == []
+
+
+def test_adding_a_symbol_pins_it_and_counts_it(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+    assert client.post("/api/subscriptions", json={"symbol": "AAPL"}).status_code == 201
+    body = client.get("/api/subscriptions").json()
+    assert body["pinned"] == ["AAPL"]
+    assert body["used"] == 1
+
+
+def test_symbols_are_grouped_by_feed_under_display_names(tmp_path, monkeypatch):
+    """classify() returns us/crypto/forex; the widget shows Equity/Crypto/Forex."""
+    client = _client(tmp_path, monkeypatch)
+    for s in ("MSFT", "AAPL", "BTC-USD", "EURUSD"):
+        client.post("/api/subscriptions", json={"symbol": s})
+    groups = client.get("/api/subscriptions").json()["groups"]
+    assert groups["Equity"] == ["AAPL", "MSFT"], "alphabetical within a group"
+    assert groups["Crypto"] == ["BTC-USD"]
+    assert groups["Forex"] == ["EURUSD"]
+
+
+def test_every_group_is_present_even_when_empty(tmp_path, monkeypatch):
+    """The page renders three sections unconditionally; absent keys would break it."""
+    groups = _client(tmp_path, monkeypatch).get("/api/subscriptions").json()["groups"]
+    assert set(groups) == {"Equity", "Crypto", "Forex"}
+
+
+def test_adding_a_symbol_twice_is_a_conflict(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+    client.post("/api/subscriptions", json={"symbol": "AAPL"})
+    assert client.post("/api/subscriptions", json={"symbol": "AAPL"}).status_code == 409
+
+
+def test_a_blank_symbol_is_rejected(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+    assert client.post("/api/subscriptions", json={"symbol": "   "}).status_code == 422
+
+
+def test_the_cap_refuses_an_add_that_would_exceed_it(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch, cap=2)
+    client.post("/api/subscriptions", json={"symbol": "AAPL"})
+    client.post("/api/subscriptions", json={"symbol": "MSFT"})
+    r = client.post("/api/subscriptions", json={"symbol": "TSLA"})
+    assert r.status_code == 507
+    assert "cap" in r.json()["detail"].lower() or "50" in r.json()["detail"] or "2" in r.json()["detail"]
+    assert client.get("/api/subscriptions").json()["pinned"] == ["AAPL", "MSFT"]
+
+
+def test_a_leased_symbol_counts_against_the_cap(tmp_path, monkeypatch):
+    """A lease occupies an EODHD slot exactly as a pin does. Ignoring leases would
+    let the widget report free capacity the vendor does not have."""
+    client = _client(tmp_path, monkeypatch, cap=2)
+    client.post("/subscribe", json={"symbols": ["NVDA"], "ttl": 300})
+    client.post("/api/subscriptions", json={"symbol": "AAPL"})
+    body = client.get("/api/subscriptions").json()
+    assert body["leased"] == ["NVDA"]
+    assert body["used"] == 2, "one pinned + one leased"
+    assert client.post("/api/subscriptions", json={"symbol": "MSFT"}).status_code == 507
+
+
+def test_a_symbol_both_pinned_and_leased_counts_once(tmp_path, monkeypatch):
+    """THE union rule. EODHD sees a SET of symbols per connection, so the same
+    symbol pinned and leased is one subscription. Summing would refuse adds while
+    slots were still free."""
+    client = _client(tmp_path, monkeypatch, cap=2)
+    client.post("/api/subscriptions", json={"symbol": "AAPL"})
+    client.post("/subscribe", json={"symbols": ["AAPL"], "ttl": 300})
+    body = client.get("/api/subscriptions").json()
+    assert body["used"] == 1, "AAPL is pinned AND leased, but is one subscription"
+    assert client.post("/api/subscriptions", json={"symbol": "MSFT"}).status_code == 201
+
+
+def test_removing_a_symbol_unpins_it(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+    client.post("/api/subscriptions", json={"symbol": "AAPL"})
+    assert client.delete("/api/subscriptions/AAPL").status_code == 200
+    assert client.get("/api/subscriptions").json()["pinned"] == []
+
+
+def test_removing_something_not_pinned_is_a_404(tmp_path, monkeypatch):
+    assert _client(tmp_path, monkeypatch).delete("/api/subscriptions/AAPL").status_code == 404
+
+
+def test_a_leased_symbol_cannot_be_removed_through_this_api(tmp_path, monkeypatch):
+    """Leases lapse on their own TTL; this widget does not own them."""
+    client = _client(tmp_path, monkeypatch)
+    client.post("/subscribe", json={"symbols": ["NVDA"], "ttl": 300})
+    assert client.delete("/api/subscriptions/NVDA").status_code == 404
+
+
+def test_the_symbol_path_parameter_is_case_insensitive(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+    client.post("/api/subscriptions", json={"symbol": "AAPL"})
+    assert client.delete("/api/subscriptions/aapl").status_code == 200
