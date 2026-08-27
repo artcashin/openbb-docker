@@ -13,6 +13,7 @@ import csv
 import datetime
 import json
 import os
+import shutil
 import time
 
 from _common import base_url, fetch_widgets, load_credentials, make_session, testability
@@ -119,6 +120,12 @@ def main():
         results.append(run_one(session, url, widget_id, widget))
 
     out_path = os.path.join(OUTPUT_DIR, "results.csv")
+    if os.path.exists(out_path):
+        history_dir = os.path.join(OUTPUT_DIR, "history")
+        os.makedirs(history_dir, exist_ok=True)
+        stamp = datetime.datetime.fromtimestamp(os.path.getmtime(out_path)).strftime("%Y%m%dT%H%M%S")
+        shutil.copy2(out_path, os.path.join(history_dir, f"results-{stamp}.csv"))
+
     with open(out_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=list(results[0].keys()))
         writer.writeheader()
