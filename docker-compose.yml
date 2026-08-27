@@ -321,6 +321,11 @@ services:
       # - TA_MACRO_DIR=/srv/macros-custom
       - KDB_EMBEDDED=false
       - QLIC=/opt/kx-license
+      # The subscription widget needs live-grid's externally-reachable URL, because
+      # an iframe widget's endpoint is handed to the client verbatim and must be
+      # absolute. Unset -> the widget is omitted from /widgets.json rather than
+      # advertised broken. Set it to whatever Tailscale Serve publishes :6903 as.
+      # - LIVE_GRID_PUBLIC_URL=https://<your-host>.<your-tailnet>.ts.net:6903
     env_file:
       # EODHD_API_KEY comes from here (the public demo websocket key covers
       # the default watchlist for testing).
