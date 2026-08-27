@@ -1,9 +1,5 @@
 """The subscription API: grouping, and a cap that counts the vendor's view."""
 
-import asyncio
-
-import pytest
-
 from tests.test_main import make_client
 
 
@@ -168,9 +164,114 @@ def test_the_page_is_self_contained_with_no_external_requests(tmp_path, monkeypa
         assert bad not in body, f"page reaches outside for {bad!r}"
 
 
-def test_the_widget_is_declared_as_an_iframe_pointing_at_the_page(tmp_path, monkeypatch):
-    """A backend iframe widget's endpoint IS the URL the front end frames."""
+def test_the_widget_is_declared_as_an_iframe_pointing_at_an_absolute_url(tmp_path, monkeypatch):
+    """The desktop client passes an iframe widget's endpoint straight to
+    `new URL(raw)` with no base -- a relative path is refused, so the served
+    spec must carry the full public URL, not the bare route name in the file."""
+    monkeypatch.setenv("LIVE_GRID_PUBLIC_URL", "https://openbb.example.ts.net:6903")
     widgets = _client(tmp_path, monkeypatch).get("/widgets.json").json()
     w = widgets["subscriptions"]
     assert w["type"] == "iframe"
-    assert w["endpoint"] == "subscriptions"
+    assert w["endpoint"] == "https://openbb.example.ts.net:6903/subscriptions"
+
+
+def test_a_trailing_slash_on_the_public_url_does_not_double_up(tmp_path, monkeypatch):
+    monkeypatch.setenv("LIVE_GRID_PUBLIC_URL", "https://openbb.example.ts.net:6903/")
+    widgets = _client(tmp_path, monkeypatch).get("/widgets.json").json()
+    assert widgets["subscriptions"]["endpoint"] == "https://openbb.example.ts.net:6903/subscriptions"
+
+
+def test_the_widget_is_omitted_when_no_public_url_is_configured(tmp_path, monkeypatch):
+    """Advertising a widget that will always render an error is worse than not
+    advertising it -- live_grid and everything else must be untouched."""
+    monkeypatch.delenv("LIVE_GRID_PUBLIC_URL", raising=False)
+    widgets = _client(tmp_path, monkeypatch).get("/widgets.json").json()
+    assert "subscriptions" not in widgets
+    assert "live_grid" in widgets
+
+
+def test_a_websocket_registered_symbol_counts_toward_used(tmp_path, monkeypatch):
+    """The budget must reflect the vendor's real view: manager._conns holds
+    pins, leases AND /live_grid_ws registrations, and all three are subscribed
+    at EODHD. Reading only pinned|leased understates `used`."""
+    client = _client(tmp_path, monkeypatch)
+    client.app.state.manager.register("ws-test", ["NVDA"])
+    body = client.get("/api/subscriptions").json()
+    assert body["used"] == 1
+    assert body["pinned"] == []
+    assert body["leased"] == []
+
+
+def test_a_websocket_registered_symbol_counts_against_the_cap(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch, cap=1)
+    client.app.state.manager.register("ws-test", ["NVDA"])
+    r = client.post("/api/subscriptions", json={"symbol": "AAPL"})
+    assert r.status_code == 507
+
+
+def test_a_watchlist_over_the_cap_is_truncated_at_startup(tmp_path, monkeypatch):
+    """The file is hand-editable; the cap must still hold even for symbols
+    that were never added through the API."""
+    import json
+
+    p = tmp_path / "w.json"
+    p.write_text(json.dumps(["AAPL", "MSFT", "TSLA", "NVDA", "AMZN"]))
+    monkeypatch.setenv("LIVE_GRID_WATCHLIST", str(p))
+    monkeypatch.setenv("LIVE_GRID_MAX_SYMBOLS", "2")
+    client = make_client()
+    with client:  # entering the context runs lifespan
+        manager = client.app.state.manager
+        registered = {
+            conn_id[len("watchlist:"):]
+            for conn_id in manager._conns
+            if conn_id.startswith("watchlist:")
+        }
+        assert len(registered) == 2
+        assert registered == {"AAPL", "AMZN"}, "the first 2 sorted, not just the first 2 in the file"
+
+
+def test_add_with_no_origin_header_is_allowed(tmp_path, monkeypatch):
+    monkeypatch.setenv("LIVE_GRID_PUBLIC_URL", "https://openbb.example.ts.net:6903")
+    client = _client(tmp_path, monkeypatch)
+    assert client.post("/api/subscriptions", json={"symbol": "AAPL"}).status_code == 201
+
+
+def test_add_with_a_matching_origin_is_allowed(tmp_path, monkeypatch):
+    monkeypatch.setenv("LIVE_GRID_PUBLIC_URL", "https://openbb.example.ts.net:6903")
+    client = _client(tmp_path, monkeypatch)
+    r = client.post(
+        "/api/subscriptions",
+        json={"symbol": "AAPL"},
+        headers={"Origin": "https://openbb.example.ts.net:6903"},
+    )
+    assert r.status_code == 201
+
+
+def test_add_with_a_foreign_origin_is_rejected(tmp_path, monkeypatch):
+    monkeypatch.setenv("LIVE_GRID_PUBLIC_URL", "https://openbb.example.ts.net:6903")
+    client = _client(tmp_path, monkeypatch)
+    r = client.post(
+        "/api/subscriptions",
+        json={"symbol": "AAPL"},
+        headers={"Origin": "https://evil.example.com"},
+    )
+    assert r.status_code == 403
+
+
+def test_delete_with_a_foreign_origin_is_rejected(tmp_path, monkeypatch):
+    monkeypatch.setenv("LIVE_GRID_PUBLIC_URL", "https://openbb.example.ts.net:6903")
+    client = _client(tmp_path, monkeypatch)
+    client.post("/api/subscriptions", json={"symbol": "AAPL"})
+    r = client.delete(
+        "/api/subscriptions/AAPL", headers={"Origin": "https://evil.example.com"}
+    )
+    assert r.status_code == 403
+    assert client.get("/api/subscriptions").json()["pinned"] == ["AAPL"]
+
+
+def test_get_subscriptions_ignores_origin(tmp_path, monkeypatch):
+    """The Origin check is only on the two mutating routes."""
+    monkeypatch.setenv("LIVE_GRID_PUBLIC_URL", "https://openbb.example.ts.net:6903")
+    client = _client(tmp_path, monkeypatch)
+    r = client.get("/api/subscriptions", headers={"Origin": "https://evil.example.com"})
+    assert r.status_code == 200

@@ -13,12 +13,12 @@ from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.classify import classify
+from app.classify import FEEDS, classify
 from app.feeds import FeedManager
 from app.figure import build_figure
 from app.leases import DEFAULT_TTL, LeaseRegistry
@@ -133,7 +133,28 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
     from app.watchlist import DEFAULT_PATH as WATCHLIST_DEFAULT, Watchlist
 
     watchlist = Watchlist(os.getenv("LIVE_GRID_WATCHLIST", WATCHLIST_DEFAULT))
-    max_symbols = int(os.getenv("LIVE_GRID_MAX_SYMBOLS", "50"))
+    _raw_max_symbols = os.getenv("LIVE_GRID_MAX_SYMBOLS", "50")
+    try:
+        max_symbols = int(_raw_max_symbols)
+    except ValueError:
+        log.warning(
+            "LIVE_GRID_MAX_SYMBOLS=%r is not an integer; using the default of 50",
+            _raw_max_symbols,
+        )
+        max_symbols = 50
+
+    # The desktop client passes an iframe widget's `endpoint` straight to
+    # `new URL(raw)` with no base -- a relative path is refused outright, so
+    # the subscriptions widget needs an absolute URL rewritten in at request
+    # time (GET /widgets.json below). Without this set there is no way to
+    # advertise a working iframe endpoint, so the widget is omitted instead
+    # of shipping one that always errors.
+    public_url = (os.getenv("LIVE_GRID_PUBLIC_URL") or "").strip().rstrip("/") or None
+    if public_url is None:
+        log.warning(
+            "LIVE_GRID_PUBLIC_URL is not set; the subscriptions widget will be "
+            "omitted from /widgets.json (it cannot render without an absolute endpoint)"
+        )
 
     async def _sweep_leases() -> None:
         interval = float(os.getenv("LIVE_GRID_LEASE_SWEEP_S", "30"))
@@ -216,6 +237,11 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
                 param["options"] = [{"label": "None", "value": "none"}] + [
                     {"label": m.label, "value": name} for name, m in sorted(macros.items())
                 ]
+        if public_url is not None:
+            if "subscriptions" in spec:
+                spec["subscriptions"]["endpoint"] = f"{public_url}/subscriptions"
+        else:
+            spec.pop("subscriptions", None)
         return JSONResponse(spec)
 
     @app.get("/live_grid")
@@ -451,14 +477,26 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
     _GROUP_NAMES = {"us": "Equity", "crypto": "Crypto", "forex": "Forex"}
 
     def _apply_watchlist() -> None:
-        """Register every pinned symbol with the feed manager.
+        """Register every pinned symbol with the feed manager, up to the cap.
 
         One synthetic id per symbol -- `watchlist:<SYMBOL>` -- mirroring the lease
         registry, because `_sync_feeds` unions symbols across every `_conns` entry
         and does not care which of them came from a websocket. Unregistering the
         symbols that are no longer pinned is what makes a removal take effect.
+
+        The watchlist file is hand-editable (see its docstring), so its size is
+        not itself bounded by the cap -- truncate here rather than trust the
+        file, or an oversized file registers in full and the widget reports a
+        `used` count past `cap`.
         """
-        wanted = set(watchlist.symbols())
+        all_pinned = watchlist.symbols()
+        wanted = set(all_pinned[:max_symbols])
+        if len(all_pinned) > max_symbols:
+            log.warning(
+                "watchlist has %d symbols but the cap is %d; %d dropped: %s",
+                len(all_pinned), max_symbols, len(all_pinned) - max_symbols,
+                all_pinned[max_symbols:],
+            )
         current = {
             conn_id[len("watchlist:"):]
             for conn_id in list(manager._conns)
@@ -469,12 +507,24 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
         for sym in current - wanted:
             manager.unregister(f"watchlist:{sym}")
 
+    def _subscribed() -> set[str]:
+        """Every symbol actually subscribed at EODHD right now.
+
+        The feed manager's `_conns` is the vendor's real view: pins and leases
+        are already registered there under their own connection ids, but so is
+        anything registered by a `/live_grid_ws` client -- those never show up
+        in `pinned` or `leased` yet still cost a slot. Reading `_union` per
+        feed is a superset of (and replaces) unioning `pinned` and `leased`.
+        """
+        return set().union(*(manager._union(feed) for feed in FEEDS))
+
     def _subscription_payload() -> dict:
         """Pinned, leased, and the budget they share.
 
-        `used` is the size of the UNION. EODHD subscribes a SET of symbols per
-        connection, so a symbol that is both pinned and leased is one slot, not
-        two -- summing would refuse adds while capacity was still free.
+        `used` is the count of everything actually subscribed at the vendor
+        (see `_subscribed`), not merely the union of `pinned` and `leased` --
+        a websocket grid connection subscribes symbols too, without pinning or
+        leasing them.
         """
         pinned = watchlist.symbols()
         leased = leases.symbols()
@@ -484,25 +534,43 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
         return {
             "service": "EODHD",
             "cap": max_symbols,
-            "used": len(set(pinned) | set(leased)),
+            "used": len(_subscribed()),
             "pinned": pinned,
             "leased": leased,
             "groups": groups,
         }
+
+    def _reject_foreign_origin(request: Request) -> None:
+        """403 a mutating request whose browser-supplied Origin is not this
+        widget's own public URL.
+
+        CORS here is wide open (`allow_origins=["*"]`, needed for the
+        Workspace origin's read-only fetches), so with no check any page an
+        operator's browser has open could POST or DELETE against the durable
+        watchlist. A request with no Origin header (curl, server-side
+        callers) is unaffected -- only a browser sets one.
+        """
+        origin = request.headers.get("origin")
+        if origin is None:
+            return
+        if public_url is None or origin.rstrip("/") != public_url:
+            raise HTTPException(status_code=403, detail="origin not allowed")
 
     @app.get("/api/subscriptions")
     async def list_subscriptions():
         return _subscription_payload()
 
     @app.post("/api/subscriptions", status_code=201)
-    async def add_subscription(body: dict):
+    async def add_subscription(body: dict, request: Request):
+        _reject_foreign_origin(request)
         sym = str(body.get("symbol") or "").strip().upper()
         if not sym:
             raise HTTPException(status_code=422, detail="symbol must be a non-empty string")
         if sym in set(watchlist.symbols()):
             raise HTTPException(status_code=409, detail=f"{sym} is already subscribed")
-        # Union again: adding a symbol that is ALREADY leased costs no new slot.
-        projected = set(watchlist.symbols()) | set(leases.symbols()) | {sym}
+        # Union again: adding a symbol that is ALREADY subscribed (pinned,
+        # leased, or held by a grid websocket) costs no new slot.
+        projected = _subscribed() | {sym}
         if len(projected) > max_symbols:
             raise HTTPException(
                 status_code=507,
@@ -513,7 +581,8 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
         return _subscription_payload()
 
     @app.delete("/api/subscriptions/{symbol}")
-    async def remove_subscription(symbol: str):
+    async def remove_subscription(symbol: str, request: Request):
+        _reject_foreign_origin(request)
         sym = symbol.strip().upper()
         if not watchlist.remove(sym):
             raise HTTPException(status_code=404, detail=f"{sym} is not subscribed")
