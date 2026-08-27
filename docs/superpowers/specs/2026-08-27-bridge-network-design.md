@@ -216,3 +216,28 @@ after they attach. A narrower net than it appears.
 Authentication for live-grid, stores-explorer, the MCP services or kdb.
 Investigating why `tailscale up` stalled past 60s. The three other stacks on
 this NAS that share the same coupling.
+
+## Addendum: rss-ticker joins the migration
+
+Written while implementing this design, not part of the original decision
+above -- Layers 1-4 were drafted for the seven services this doc names, and
+rss-ticker was deliberately left out because it isn't one of them. Leaving it
+out for real would have kept it stranded by the exact sidecar-restart failure
+this whole design exists to fix, so it was pulled in as an eighth service.
+
+It needed its own prerequisite first, in rss-ticker's own repo (not this
+one): `tailscale_auth` hard-required a loopback `bind_host`, on the same "only
+Serve can reach a loopback port" reasoning D1 replaces for everything else
+here. Relaxed to also trust `0.0.0.0`, under the same bridge-isolation
+guarantee D1 already accepts as an operator responsibility the code cannot
+itself verify -- anything that isn't loopback or `0.0.0.0` is still rejected
+outright. See rss-ticker's `feat/ticker-server` branch, commit `107775c`.
+
+With rss-ticker included, Layer 1 is eight services, Layer 3 gains a sixth
+migrated Serve route (`:8088` -> `rss-ticker:8088`), and the "D1 accepted
+cost" framing above needs one caveat: rss-ticker is the one migrated service
+that still authenticates on the bridge (via `tailscale_auth`, not by being
+unauthenticated like the other seven's edge case).
+
+Status: drafted, UNVERIFIED, same as the rest of Layers 1-4 -- not rehearsed,
+not cut over.
