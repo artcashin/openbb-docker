@@ -45,6 +45,14 @@ class EodhdMap:
     offsets: dict[str, int] = field(default_factory=dict)
 
 
+# EODHD's Technical Indicators endpoint supports exactly this function set
+# (confirmed 2026-08-27 via retrieve_description_by_id(type=2, id=53), its own
+# endpoint reference): splitadjusted, avgvol, avgvolccy, sma, ema, wma,
+# volatility, stochastic, rsi, stddev, stochrsi, slope, dmi, adx, macd, atr,
+# cci, sar, beta, bbands, format_amibroker. An indicator with no function in
+# that list gets no `eodhd=` -- there is nothing to query, not an oversight.
+
+
 @dataclass(frozen=True)
 class Indicator:
     name: str
@@ -269,6 +277,7 @@ register(Indicator(
     build=_keltner_build,
     render={"kc_mid": _line("#9aa0a6"), "kc_up": _line("#61afef"),
             "kc_lo": _line("#61afef")},
+    # No eodhd map: no Keltner Channel function exists on their endpoint.
 ))
 
 # --- Price channels (Donchian) ---------------------------------------------
@@ -286,6 +295,7 @@ register(Indicator(
     ],
     render={"dc_up": _line("#98c379"), "dc_lo": _line("#98c379"),
             "dc_mid": _line("#9aa0a6")},
+    # No eodhd map: no Donchian/price-channel function exists on their endpoint.
 ))
 
 # --- VWAP -------------------------------------------------------------------
@@ -302,6 +312,7 @@ register(Indicator(
          / pl.col("volume").cum_sum()).alias("vwap"),
     ],
     render={"vwap": _line("#d19a66")},
+    # No eodhd map: no VWAP function exists on their endpoint.
 ))
 
 # --- Volume -----------------------------------------------------------------
@@ -312,6 +323,10 @@ register(Indicator(
     deps=lambda p: [],
     build=lambda p, b: [pl.col("volume").alias("volume_bar")],
     render={"volume_bar": {"type": "bar", "color": "#5c6370"}},
+    # No eodhd map: this is the bar's own raw volume field, not a derived
+    # indicator -- there is nothing to reconcile against a technical-
+    # indicator endpoint (their avgvol/avgvolccy are rolling averages, a
+    # different quantity).
 ))
 
 # --- MACD -------------------------------------------------------------------
@@ -488,6 +503,7 @@ register(Indicator(
         .alias("willr"),
     ],
     render={"willr": _line("#56b6c2")},
+    # No eodhd map: no Williams %R function exists on their endpoint.
 ))
 
 # --- Rate of change ---------------------------------------------------------
@@ -501,6 +517,7 @@ register(Indicator(
         (pl.col(price_col("adjusted")).pct_change(p["period"]) * 100).alias("roc"),
     ],
     render={"roc": _line("#98c379")},
+    # No eodhd map: no Rate of Change function exists on their endpoint.
 ))
 
 # --- On balance volume ------------------------------------------------------
@@ -515,6 +532,7 @@ register(Indicator(
         .cum_sum().alias("obv"),
     ],
     render={"obv": _line("#61afef")},
+    # No eodhd map: no On Balance Volume function exists on their endpoint.
 ))
 
 # --- Standard deviation -----------------------------------------------------
@@ -550,6 +568,8 @@ register(Indicator(
         .alias("pct_b"),
     ],
     render={"pct_b": _line("#e5c07b")},
+    # No eodhd map: no %B function exists on their endpoint -- their bbands
+    # returns the three bands only, not this derived ratio.
 ))
 
 register(Indicator(
@@ -563,6 +583,8 @@ register(Indicator(
          / pl.col(f"sma:adj_close:{p['period']}") * 100).alias("bandwidth"),
     ],
     render={"bandwidth": _line("#d19a66")},
+    # No eodhd map: same limitation as %B -- no BandWidth function, and their
+    # bbands returns the bands only.
 ))
 
 # --- Parabolic SAR: a recurrence, handled by iterative.py --------------------
