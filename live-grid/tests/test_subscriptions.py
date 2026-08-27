@@ -151,3 +151,26 @@ def test_pinning_does_not_disturb_a_lease_on_another_symbol(tmp_path, monkeypatc
     client.post("/api/subscriptions", json={"symbol": "AAPL"})
     union = client.app.state.manager._union("us")
     assert {"AAPL", "NVDA"} <= union
+
+
+def test_the_page_is_served_as_html(tmp_path, monkeypatch):
+    r = _client(tmp_path, monkeypatch).get("/subscriptions")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/html")
+    assert "<html" in r.text.lower()
+
+
+def test_the_page_is_self_contained_with_no_external_requests(tmp_path, monkeypatch):
+    """It renders inside an iframe in the desktop app, which may be offline. A CDN
+    script or webfont would leave the widget blank rather than degraded."""
+    body = _client(tmp_path, monkeypatch).get("/subscriptions").text
+    for bad in ("http://", "https://", "//cdn", "src=\"//"):
+        assert bad not in body, f"page reaches outside for {bad!r}"
+
+
+def test_the_widget_is_declared_as_an_iframe_pointing_at_the_page(tmp_path, monkeypatch):
+    """A backend iframe widget's endpoint IS the URL the front end frames."""
+    widgets = _client(tmp_path, monkeypatch).get("/widgets.json").json()
+    w = widgets["subscriptions"]
+    assert w["type"] == "iframe"
+    assert w["endpoint"] == "subscriptions"

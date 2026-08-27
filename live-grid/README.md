@@ -155,3 +155,25 @@ interval other than `1d` the whole request is computed locally and annotated
 rather than fanning one daily value across every bar of the day.
 
 Smoke check: `python scripts/smoke_ta.py http://127.0.0.1:6903`
+
+### Subscriptions widget
+
+`GET /subscriptions` serves a page, declared in `widgets.json` as an `iframe`
+widget, that manages the EODHD live subscription list. Its API:
+
+    GET    /api/subscriptions              current state
+    POST   /api/subscriptions              {"symbol": "AAPL"} -> 201
+    DELETE /api/subscriptions/{symbol}     -> 200
+
+Pinned symbols persist in `LIVE_GRID_WATCHLIST` (default `/data/watchlist.json`,
+which needs the `./live-grid-data:/data` mount) and are re-registered with the
+feed manager at startup, so a restart restores the subscriptions rather than just
+the list.
+
+`LIVE_GRID_MAX_SYMBOLS` (default 50) caps the account-wide EODHD budget. The
+count is the **union** of pinned and leased symbols: a symbol that is both is one
+subscription at the vendor, and quote leases occupy the same allowance. An add
+that would exceed the cap returns 507. Leased symbols appear in the widget but
+cannot be removed there — they lapse on their own TTL.
+
+Tailnet-only, like every route here. Never funnel it.

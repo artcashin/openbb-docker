@@ -387,6 +387,10 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
     async def demo():
         return HTMLResponse((_STATIC / "demo.html").read_text())
 
+    @app.get("/subscriptions", response_class=HTMLResponse)
+    async def subscriptions_page():
+        return HTMLResponse((_STATIC / "subscriptions.html").read_text())
+
     @app.get("/health")
     def health():
         body = {"status": "ok", "feeds": manager.status(), "leases": len(leases)}

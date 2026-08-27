@@ -1,4 +1,12 @@
 {
+  "subscriptions": {
+    "name": "Subscriptions",
+    "description": "Manage the EODHD live subscription list: add and remove symbols, grouped by feed, against the 50-symbol budget. Symbols leased by kdb quotes are shown but expire on their own.",
+    "category": "Live",
+    "type": "iframe",
+    "endpoint": "subscriptions",
+    "gridData": { "w": 20, "h": 14 }
+  },
   "live_grid": {
     "name": "Live quotes",
     "description": "Real-time EODHD prices: US equities, crypto and forex in one watchlist. Type symbols into the widget.",

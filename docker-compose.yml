@@ -337,6 +337,9 @@ services:
         required: true
     volumes:
       - ./kdb-license:/opt/kx-license:ro
+      # The subscription watchlist lives here. live-grid otherwise has no
+      # writable mount, so without this a restart would silently empty the list.
+      - ./live-grid-data:/data
 
   # rss-ticker (Ep. 8): the news wire — polls RSS feeds, streams new articles
   # over a websocket, serves a Bloomberg-style news window widget. Source lives
