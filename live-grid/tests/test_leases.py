@@ -185,3 +185,40 @@ def test_snapshot_route_uses_the_real_client_when_none_was_injected(monkeypatch)
     resp = client.get("/snapshot", params={"symbol": "AAPL"})
     assert resp.status_code == 200
     assert resp.json()["price"] == 100.0
+
+
+def test_subscribe_rejects_a_non_finite_ttl():
+    """`float("nan")` and `float("inf")` both parse, so the numeric check alone
+    is not enough. A NaN expiry never satisfies `exp <= now`, so the sweeper can
+    never reclaim that lease -- it pins an EODHD subscription for the life of
+    the process. An infinite one does the same."""
+    from tests.test_main import make_client
+
+    client = make_client()
+    # String forms only. A bare float("nan") cannot be sent at all -- json's
+    # encoder rejects it ("Out of range float values are not JSON compliant"),
+    # so no compliant client can reach the route that way. `{"ttl": "nan"}` is
+    # perfectly valid JSON and float() accepts it, which is the real vector.
+    for bad in ("nan", "inf", "-inf", "Infinity"):
+        r = client.post("/subscribe", json={"symbols": ["AAPL"], "ttl": bad})
+        assert r.status_code == 422, f"ttl={bad!r} was accepted"
+
+
+def test_subscribe_rejects_a_non_positive_ttl():
+    """An already-expired lease cannot be what the caller meant."""
+    from tests.test_main import make_client
+
+    client = make_client()
+    for bad in (0, -1, -300.5):
+        r = client.post("/subscribe", json={"symbols": ["AAPL"], "ttl": bad})
+        assert r.status_code == 422, f"ttl={bad!r} was accepted"
+
+
+def test_subscribe_still_accepts_a_normal_ttl():
+    """The guard must not have made the happy path stricter."""
+    from tests.test_main import make_client
+
+    client = make_client()
+    r = client.post("/subscribe", json={"symbols": ["AAPL"], "ttl": 60})
+    assert r.status_code == 200
+    datetime.fromisoformat(r.json()["leases"]["AAPL"])

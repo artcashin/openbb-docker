@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import os
 import uuid
 from contextlib import asynccontextmanager
@@ -410,6 +411,15 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
                 ttl = float(ttl)
             except (TypeError, ValueError):
                 raise HTTPException(status_code=422, detail="ttl must be a number") from None
+            # float() accepts "nan" and "inf". A NaN expiry never satisfies
+            # `exp <= now`, so the sweeper can never reclaim that lease and it
+            # pins an EODHD subscription for the life of the process; an
+            # infinite one does the same. A non-positive ttl is already expired,
+            # which is a request that cannot mean what it says.
+            if not math.isfinite(ttl) or ttl <= 0:
+                raise HTTPException(
+                    status_code=422, detail="ttl must be a finite positive number"
+                ) from None
         granted = leases.renew(
             symbols,
             now=asyncio.get_running_loop().time(),
