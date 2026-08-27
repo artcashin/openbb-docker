@@ -16,15 +16,20 @@ from later chapters is.
 
 Two containers, one tailnet node, zero exposed ports:
 
-- a small **Tailscale sidecar** that owns the network namespace and joins your
-  tailnet as a node named `openbb`;
+- a small **Tailscale sidecar** that joins your tailnet as a node named
+  `openbb`;
 - the **OpenBB Platform REST API** (all standard providers + the technical,
-  quantitative, and econometrics extensions) sharing that namespace, bound to
-  loopback only.
+  quantitative, and econometrics extensions), which the sidecar reaches over a
+  private `openbb-internal` bridge — it has no tailnet presence of its own.
 
 **Tailscale Serve is the only way in** — real HTTPS with a Let's Encrypt
 certificate at `https://openbb.<your-tailnet>.ts.net`, reachable from every
-device on your tailnet and invisible to everything else.
+device on your tailnet and invisible to everything off this host.
+
+The services sit on a private Docker bridge, so other processes **on this Docker
+host** can reach them directly — but they meet the same HTTP Basic auth as
+everyone else, on every path. Nothing on your LAN can reach them at all, and
+key-maint's admin surface is a unix socket that never touches the bridge.
 
 **New in v3.0.0 (Ep. 3, with BDOBB v3.0.0):** the **key status widget**
 backend — `key-maint/`, a transport-tiered service where *what you can see
