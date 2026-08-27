@@ -155,3 +155,38 @@ interval other than `1d` the whole request is computed locally and annotated
 rather than fanning one daily value across every bar of the day.
 
 Smoke check: `python scripts/smoke_ta.py http://127.0.0.1:6903`
+
+### Subscriptions widget
+
+`GET /subscriptions` serves a page, declared in `widgets.json` as an `iframe`
+widget, that manages the EODHD live subscription list. Its API:
+
+    GET    /api/subscriptions              current state
+    POST   /api/subscriptions              {"symbol": "AAPL"} -> 201
+    DELETE /api/subscriptions/{symbol}     -> 200
+
+Pinned symbols persist in `LIVE_GRID_WATCHLIST` (default `/data/watchlist.json`,
+which needs the `./live-grid-data:/data` mount) and are re-registered with the
+feed manager at startup, so a restart restores the subscriptions rather than just
+the list.
+
+`LIVE_GRID_MAX_SYMBOLS` (default 50) caps the account-wide EODHD budget. The
+count is everything actually subscribed at EODHD right now — pinned, leased,
+*and* whatever a `/live_grid_ws` grid connection has registered, all read off
+the feed manager's own view, so a symbol subscribed twice over is still one
+slot. An add that would exceed the cap returns 507. Leased symbols appear in
+the widget but cannot be removed there — they lapse on their own TTL. A
+watchlist file with more symbols than the cap only has the first `cap` of
+them (sorted) registered at startup; the rest are logged as dropped.
+
+The widget itself needs `LIVE_GRID_PUBLIC_URL` set (e.g.
+`https://openbb.<your-tailnet>.ts.net:6903`) — an `iframe` widget's endpoint
+must be an absolute URL, so without it the subscriptions widget is left out
+of `/widgets.json` entirely rather than shipping a broken one.
+
+Tailnet-only, like every route here. Never funnel it. `POST`/`DELETE
+/api/subscriptions` additionally reject a request whose browser `Origin`
+header does not match `LIVE_GRID_PUBLIC_URL` (a request with no `Origin`,
+e.g. curl, is unaffected) — CORS here is wide open for the Workspace origin's
+reads, and this keeps some other page an operator has open from silently
+mutating the durable watchlist.

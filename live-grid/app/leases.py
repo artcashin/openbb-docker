@@ -34,6 +34,15 @@ class LeaseRegistry:
         """Count of symbols currently leased, for /health."""
         return len(self._expiry)
 
+    def symbols(self) -> list[str]:
+        """The leased symbols, sorted.
+
+        The subscription budget needs these by name, not merely counted: a symbol
+        that is both pinned and leased is ONE subscription at the vendor, and only
+        the names can tell you that.
+        """
+        return sorted(self._expiry)
+
     def renew(self, symbols, now: float, ttl: float | None = None) -> dict[str, float]:
         """Create or extend a lease per symbol. Returns symbol -> expiry."""
         span = self._ttl if ttl is None else ttl
