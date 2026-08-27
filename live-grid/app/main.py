@@ -6,10 +6,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import os
 import uuid
 from contextlib import asynccontextmanager
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
@@ -19,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.feeds import FeedManager
 from app.figure import build_figure
+from app.leases import DEFAULT_TTL, LeaseRegistry
 from app.openbb_client import fetch_series
 from app.quotes import QuoteTable
 from app.ta.figure import delta as ta_delta
@@ -125,22 +127,41 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
     )
     manager_kwargs = {} if client_factory is None else {"client_factory": client_factory}
     manager = FeedManager(key or "", quotes, recorder=recorder, **manager_kwargs)
+    leases = LeaseRegistry(manager, ttl=float(os.getenv("LIVE_GRID_LEASE_TTL_S", DEFAULT_TTL)))
+
+    async def _sweep_leases() -> None:
+        interval = float(os.getenv("LIVE_GRID_LEASE_SWEEP_S", "30"))
+        while True:
+            await asyncio.sleep(interval)
+            try:
+                dropped = leases.sweep(asyncio.get_running_loop().time())
+                if dropped:
+                    log.info("leases lapsed: %s", dropped)
+            except Exception:  # noqa: BLE001 - the sweeper must outlive its errors
+                log.warning("lease sweep failed", exc_info=True)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         task = asyncio.create_task(manager.run())
+        sweep_task = asyncio.create_task(_sweep_leases())
         try:
             yield
         finally:
             task.cancel()
+            sweep_task.cancel()
             try:
                 await task
+            except asyncio.CancelledError:
+                pass
+            try:
+                await sweep_task
             except asyncio.CancelledError:
                 pass
 
     app = FastAPI(lifespan=lifespan)
     app.state.quotes = quotes
     app.state.manager = manager
+    app.state.leases = leases
 
     # The Workspace origin (pro.openbb.co) fetches cross-origin from the
     # browser; BDOBB's non-streaming calls come via plugin-http (no CORS).
@@ -358,7 +379,7 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
 
     @app.get("/health")
     def health():
-        body = {"status": "ok", "feeds": manager.status()}
+        body = {"status": "ok", "feeds": manager.status(), "leases": len(leases)}
         if recorder is not None:
             body["ticks"] = recorder.stats()
             body["ticks"]["endpoint"] = getattr(recorder.store.session, "endpoint", None)
@@ -368,6 +389,80 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
             "min_refetch_s": float(os.getenv("TA_EODHD_MIN_REFETCH_S", "60")),
         }
         return body
+
+    @app.post("/subscribe")
+    async def subscribe(body: dict):
+        """Lease a live feed for symbols, keyed by symbol and renewable.
+
+        Tailnet-only, like every live-grid route: it confers no power a caller
+        does not already have by opening /live_grid_ws. Never funnel it.
+        """
+        raw_symbols = body.get("symbols")
+        if not isinstance(raw_symbols, list):
+            # A bare string ("AAPL") is iterable too -- without this check it
+            # silently leases "A", "P", "L" instead of 422ing.
+            raise HTTPException(status_code=422, detail="symbols must be a list of strings")
+        symbols = [s for s in raw_symbols if str(s).strip()]
+        if not symbols:
+            raise HTTPException(status_code=422, detail="symbols must be a non-empty list")
+        ttl = body.get("ttl")
+        if ttl is not None:
+            try:
+                ttl = float(ttl)
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=422, detail="ttl must be a number") from None
+            # float() accepts "nan" and "inf". A NaN expiry never satisfies
+            # `exp <= now`, so the sweeper can never reclaim that lease and it
+            # pins an EODHD subscription for the life of the process; an
+            # infinite one does the same. A non-positive ttl is already expired,
+            # which is a request that cannot mean what it says.
+            if not math.isfinite(ttl) or ttl <= 0:
+                raise HTTPException(
+                    status_code=422, detail="ttl must be a finite positive number"
+                ) from None
+        granted = leases.renew(
+            symbols,
+            now=asyncio.get_running_loop().time(),
+            ttl=ttl,
+        )
+        base = datetime.now(timezone.utc)
+        loop_now = asyncio.get_running_loop().time()
+        return {
+            "leases": {
+                sym: (base + timedelta(seconds=exp - loop_now)).isoformat()
+                for sym, exp in granted.items()
+            }
+        }
+
+    @app.get("/snapshot")
+    async def snapshot(symbol: str):
+        """The delayed REST snapshot for one symbol.
+
+        Exists so the kdb quote provider has a fallback without taking on the
+        eodhd client, the AAPL -> AAPL.US mapping and the snapshot cache that
+        already live here. `delayed` is always true: this is EODHD's REST
+        endpoint, roughly 15-20 minutes behind, never the websocket.
+        """
+        sym = symbol.strip().upper()
+        # _seed_client(), not the closure variable directly: `seed_client` is
+        # a test seam that stays None in production until _seed_client()
+        # lazily builds it (same as /live_grid and the websocket baseline
+        # seed do), otherwise this route 404s forever on a cold process.
+        client = _seed_client()
+        rows = await asyncio.to_thread(quotes.seed, [sym], client)
+        row = rows[0] if rows else None
+        price = (row or {}).get("price")
+        if price is None:
+            raise HTTPException(status_code=404, detail=f"no snapshot for {sym}")
+        return {
+            "symbol": sym,
+            "price": float(price),
+            # seed() stashes the vendor's previous close in the table's own
+            # private cache, not on the row -- read it from there rather
+            # than deriving it (price - change), which would drift.
+            "prev_close": quotes._prev_close.get(sym),
+            "delayed": True,
+        }
 
     @app.websocket("/live_grid_ws")
     async def live_grid_ws(ws: WebSocket) -> None:

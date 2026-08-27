@@ -18,6 +18,10 @@ dependencies = [
     "openbb-core>=1.5.8,<2",
     "pykx>=3.2",
     "kdb-store",
+    # The lease client (openbb_kdb/leasing.py) imports httpx directly; it is
+    # otherwise only present transitively via openbb-core. Pinned to match
+    # key-maint and live-grid.
+    "httpx>=0.27",
 ]
 
 [project.entry-points."openbb_provider_extension"]
