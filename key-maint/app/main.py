@@ -21,7 +21,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s: %(message)
 
 
 def build_servers(
-    cred_file: str, auth_file: str, admin_socket: str
+    cred_file: str, auth_file: str, admin_socket: str, host: str = "127.0.0.1"
 ) -> list[uvicorn.Server]:
     admin_cfg = uvicorn.Config(
         create_app(role="admin", cred_file=cred_file, auth_file=auth_file),
@@ -30,7 +30,7 @@ def build_servers(
     )
     network_cfg = uvicorn.Config(
         create_app(role="network", cred_file=cred_file, auth_file=auth_file),
-        host="127.0.0.1",
+        host=host,
         port=NETWORK_PORT,
         log_level="info",
     )
@@ -55,12 +55,13 @@ async def _serve_all() -> None:
     admin_socket = os.environ.get(
         "KEYMAINT_ADMIN_SOCKET", "/config/admin/key-maint-admin.sock"
     )
+    host = os.environ.get("KEY_MAINT_HOST", "127.0.0.1")
 
     os.makedirs(os.path.dirname(admin_socket), exist_ok=True)
     if os.path.exists(admin_socket):
         os.unlink(admin_socket)
 
-    servers = build_servers(cred, auth, admin_socket)
+    servers = build_servers(cred, auth, admin_socket, host)
     await asyncio.gather(
         _chmod_admin_socket(admin_socket),
         *(s.serve() for s in servers),

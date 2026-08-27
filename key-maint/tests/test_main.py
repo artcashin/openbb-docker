@@ -16,3 +16,13 @@ class TestBuildServers:
         assert admin.config.uds == admin_socket
         assert network.config.uds is None
         assert (network.config.host, network.config.port) == ("127.0.0.1", 8447)
+
+    def test_network_host_is_overridable(self, tmp_path):
+        # KEY_MAINT_HOST (main.py's _serve_all) needs the network server's
+        # bind address to be a parameter, not a hardcoded "127.0.0.1" --
+        # the bridge-network migration sets this to "0.0.0.0" once it lands.
+        admin_socket = str(tmp_path / "admin.sock")
+        _, network = build_servers(
+            str(tmp_path / "c.env"), str(tmp_path / "a.env"), admin_socket, "0.0.0.0"
+        )
+        assert network.config.host == "0.0.0.0"
