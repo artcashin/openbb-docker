@@ -60,7 +60,7 @@ services:
   # OpenBB Platform REST API. Binds 127.0.0.1 so only Serve can reach it.
   openbb-api:
     build: .
-    image: openbb-local:1.0.0
+    image: openbb-local:3.0.1
     container_name: openbb-api
     restart: unless-stopped
     network_mode: service:tailscale
@@ -87,7 +87,7 @@ services:
   # no port, no header).
   key-maint:
     build: ./key-maint
-    image: openbb-key-maint:latest
+    image: openbb-key-maint:3.0.1
     container_name: openbb-key-maint
     restart: unless-stopped
     network_mode: service:tailscale

@@ -11,8 +11,9 @@ from later chapters is.
 | v1.0.0 | Ep. 1 — Your Own Bloomberg in a Closet | Tailscale sidecar + OpenBB Platform API, Serve-only ingress, provider keys |
 | v2.0.0 | Ep. 2 — The Borrowed Terminal | HTTP Basic auth on the API, Tailscale Funnel (port 443 only) |
 | v3.0.0 | Ep. 3 — (with BDOBB v3.0.0) | key-maint: the transport-tiered key status widget backend |
+| v3.0.1 | Ep. 3 — (with BDOBB v3.0.0) | locally-built images tagged per release, so `docker compose up -d` cannot reuse an earlier episode's image |
 
-## What you get (this release: v3.0.0)
+## What you get (this release: v3.0.1)
 
 Two containers, one tailnet node, zero exposed ports:
 
