@@ -258,7 +258,12 @@ services:
     depends_on:
       - tailscale
     volumes:
-      - ./credentials.env:/config/credentials.env:ro
+      # rw: the tier-3 PUT /keys/{env_var} endpoint rewrites this file (see
+      # app/credfile.py's set_value -- it writes in place rather than via
+      # tempfile+rename specifically because this is a single-file bind
+      # mount, and renaming onto a path that is itself a mountpoint fails
+      # with EBUSY).
+      - ./credentials.env:/config/credentials.env
       - ./api-auth.env:/config/api-auth.env:ro
       # Admin bind lives here. Create it 0700, owned by the host admin user:
       #   mkdir -p key-maint-admin && chmod 700 key-maint-admin

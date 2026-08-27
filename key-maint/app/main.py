@@ -5,6 +5,7 @@ funneled)."""
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 
 import uvicorn
@@ -12,6 +13,11 @@ import uvicorn
 from app.server import create_app
 
 NETWORK_PORT = 8447
+
+# uvicorn's own dictConfig only wires handlers for its own "uvicorn.*"
+# loggers (disable_existing_loggers=False leaves this alone), so app.audit
+# needs its own handler to reach `docker logs` at all.
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s: %(message)s")
 
 
 def build_servers(

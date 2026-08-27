@@ -6,6 +6,7 @@ disclosure). Funnel port note: serve proxies :10000 -> this app."""
 from __future__ import annotations
 
 import ipaddress
+import logging
 
 from fastapi import Depends, FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,6 +19,7 @@ from app.registry import PROVIDERS
 from app.rows import build_rows
 
 _CGNAT = ipaddress.ip_network("100.64.0.0/10")
+_audit = logging.getLogger("app.audit")
 
 WIDGETS = {
     "provider_api_keys": {
@@ -167,6 +169,17 @@ def create_app(role: str, cred_file: str, auth_file: str) -> FastAPI:
             return JSONResponse(
                 {"detail": f"write failed: {type(e).__name__}"}, status_code=500
             )
+
+        # Audit trail for who/when/what changed -- never the value itself.
+        # role is always "admin" here (the tier<3 gate above already refused
+        # anything else), logged anyway so the line still says so if that
+        # gate ever changes.
+        _audit.info(
+            "credential %s: role=%s env_var=%s",
+            "set" if value else "cleared",
+            role,
+            env_var,
+        )
 
         # The running openbb-api cannot see this: OpenBB fills Credentials
         # from os.environ, a container's environ is frozen at process start,

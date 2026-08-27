@@ -279,6 +279,21 @@ class TestWriteKey:
         assert r.status_code == 400
         assert "supersecret999" not in r.text
 
+    def test_successful_write_is_audit_logged_without_the_value(self, files, caplog):
+        c = client(files, "admin")
+        with caplog.at_level("INFO", logger="app.audit"):
+            r = c.put("/keys/FMP_API_KEY", headers=AUTH, json={"value": "supersecret999"})
+        assert r.status_code == 200
+        assert any("FMP_API_KEY" in rec.message for rec in caplog.records)
+        assert all("supersecret999" not in rec.message for rec in caplog.records)
+
+    def test_rejected_write_is_not_audit_logged(self, files, caplog):
+        c = client(files, "admin")
+        with caplog.at_level("INFO", logger="app.audit"):
+            r = c.put("/keys/NOT_A_PROVIDER", headers=AUTH, json={"value": "x"})
+        assert r.status_code == 404
+        assert caplog.records == []
+
     def test_value_starting_with_hash_round_trips_and_is_accepted(self, files):
         # Leading '#' with no preceding whitespace is part of the value per
         # parse_text's own rule, so it must NOT be rejected.
