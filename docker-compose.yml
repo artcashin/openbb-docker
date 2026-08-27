@@ -14,11 +14,14 @@
 # policy — see docs/funnel.md). Lock first, then door: auth is REQUIRED
 # before the funnel config exists, by construction.
 #
-# What the lock covers: OpenBB hangs Basic auth off the /api/v1 router, so it
-# guards the data and nothing else. /widgets.json, /apps.json and /openapi.json
-# answer unauthenticated, and funneling port 443 therefore publishes the widget
-# catalogue and its parameter schemas. Deliberate, and spelled out in
-# docs/funnel.md — if that is more than you want public, keep this tailnet-only.
+# What the lock covers: EVERYTHING. Upstream OpenBB hangs Basic auth off the
+# /api/v1 router only, which would leave /widgets.json, /apps.json, /agents.json
+# and FastAPI's own /docs and /openapi.json answering unauthenticated — so the
+# image patches rest_api.py to require Basic auth as app-level middleware
+# instead (see the Dockerfile). Measured on this image with OPENBB_API_AUTH=true
+# and no credentials: /widgets.json, /apps.json, /openapi.json, /docs,
+# /agents.json and /api/v1/* all return 401. Funneling port 443 therefore
+# publishes nothing without the password.
 #
 # Before first start:
 #   cp ts.env.example ts.env                     # Tailscale auth key, chmod 600

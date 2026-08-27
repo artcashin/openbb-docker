@@ -29,10 +29,10 @@ jobs:
           done
       - name: Auth is enforced on the command endpoints (401 without, not-401 with)
         run: |
-          # OpenBB's Basic auth hangs off the get_user_settings dependency, so it
-          # guards /api/v1/* only. /widgets.json, /apps.json and /openapi.json are
-          # metadata endpoints and answer 200 unauthenticated -- assert against a
-          # command endpoint, which is what actually carries data.
+          # The image patches rest_api.py so Basic auth is app-level middleware,
+          # not just the /api/v1 dependency -- so EVERY path is guarded. The
+          # metadata assertion below is the one that pins that down; without it
+          # nothing in CI would notice the patch silently failing to apply.
           probe() { docker exec api curl -s -o /dev/null -w '%{http_code}' "$@"; }
           ep=http://127.0.0.1:6900/api/v1/equity/price/quote
           test "$(probe "$ep")" = "401"
@@ -40,6 +40,16 @@ jobs:
           # 422: credentials accepted, request reached validation (symbol is
           # required). Keeps the check free of any outbound provider call.
           test "$(probe -u ci:ci-secret "$ep")" = "422"
+      - name: Metadata is locked too, not just /api/v1
+        run: |
+          # This is the assertion whose absence let the docs claim for several
+          # releases that metadata answered 200 unauthenticated. It did not.
+          probe() { docker exec api curl -s -o /dev/null -w '%{http_code}' "$@"; }
+          for ep in /widgets.json /apps.json /openapi.json /agents.json; do
+            code=$(probe "http://127.0.0.1:6900$ep")
+            echo "  $ep -> $code"
+            test "$code" = "401"
+          done
       - name: The widget manifest is served
         run: |
           count=$(docker exec api curl -fsS -u ci:ci-secret http://127.0.0.1:6900/widgets.json | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')

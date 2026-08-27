@@ -54,12 +54,12 @@ cp credentials.env.example credentials.env   # optional — keyless providers wo
 docker compose up -d --build
 
 # 3. Verify the front door (from any tailnet device)
-#    The lock is on the DATA routes. widgets.json is metadata and answers 200
-#    with or without credentials — OpenBB's Basic auth is a dependency of the
-#    /api/v1 router, and nothing else, so test it there.
+#    The lock covers every path, metadata included — the image patches OpenBB
+#    to enforce Basic auth as middleware, not just on the /api/v1 router.
 curl https://openbb.<your-tailnet>.ts.net/api/v1/equity/price/quote                        # 401
 curl -u openbb:<password> https://openbb.<your-tailnet>.ts.net/api/v1/equity/price/quote   # 422 — auth accepted, symbol required
-curl https://openbb.<your-tailnet>.ts.net/widgets.json                                     # 200 — metadata, by design
+curl https://openbb.<your-tailnet>.ts.net/widgets.json                                     # 401 — metadata is locked too
+curl -u openbb:<password> https://openbb.<your-tailnet>.ts.net/widgets.json                # 200
 
 # 4. Verify the walls (from a SECOND tailnet device)
 scripts/verify-isolation.sh openbb.<your-tailnet>.ts.net
