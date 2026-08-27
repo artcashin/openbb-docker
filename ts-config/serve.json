@@ -58,7 +58,7 @@
     "${TS_CERT_DOMAIN}:8088": {
       "Handlers": {
         "/": {
-          "Proxy": "http://127.0.0.1:8088"
+          "Proxy": "http://rss-ticker:8088"
         }
       }
     }

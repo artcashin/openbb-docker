@@ -424,7 +424,13 @@ services:
     image: rss-ticker:8.0.0
     container_name: openbb-rss-ticker
     restart: unless-stopped
-    network_mode: service:tailscale
+    # UNVERIFIED (bridge-network migration, Layer 1): was
+    # `network_mode: service:tailscale`. Its tailscale_auth guard needed a
+    # source change first (rss-ticker's own repo, feat/ticker-server) --
+    # bind_host: 0.0.0.0 (rss-ticker-config/config.yaml.example) refused to
+    # start before that landed.
+    networks:
+      - openbb-internal
     depends_on:
       - tailscale
     env_file:
@@ -546,14 +552,18 @@ volumes:
   key-maint-admin:
 
 # UNVERIFIED (bridge-network migration, D1): replaces the loopback boundary
-# `network_mode: service:tailscale` gave the seven services below. Docker
+# `network_mode: service:tailscale` gave the eight services below. Docker
 # networks are isolated by default, so nothing outside this project reaches
 # them even though they now bind 0.0.0.0 -- but D1's accepted cost applies:
 # any container LATER attached to openbb-internal gets unauthenticated access
 # to live-grid, stores-explorer, both MCP services, and kdb (none of which
-# authenticate). rss-ticker deliberately stays off this network -- it is NOT
-# part of this migration (see docs/superpowers/specs/2026-08-27-bridge-
-# network-design.md, which never lists it among the seven).
+# authenticate); rss-ticker is the exception -- it still authenticates via
+# tailscale_auth, extended to trust 0.0.0.0 under this same isolation
+# guarantee (see rss-ticker's own feat/ticker-server, not this repo). Only
+# the seven services docs/superpowers/specs/2026-08-27-bridge-network-
+# design.md names were in the original design; rss-ticker's inclusion (and
+# its tailscale_auth fix) was a scope decision made while implementing it,
+# not in that doc.
 networks:
   openbb-internal:
     driver: bridge

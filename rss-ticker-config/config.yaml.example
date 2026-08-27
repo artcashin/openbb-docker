@@ -1,11 +1,13 @@
 # rss-ticker config for the openbb-docker stack (Adventures in OpenBB, Ep. 8).
 #
-# The ticker joins the same Tailscale sidecar as everything else, so it runs
-# in tailscale_auth mode: Serve injects the caller's verified identity on
-# every request (including the websocket upgrade), and no per-user token
-# appears in any URL. That requires the loopback bind below — the app
-# refuses to start otherwise — and TS_USERSPACE=false on the sidecar
-# (already set in this stack's compose; see Ep. 1 and this repo's README).
+# It runs in tailscale_auth mode: Serve injects the caller's verified
+# identity on every request (including the websocket upgrade), and no
+# per-user token appears in any URL. That requires the bind below to be
+# 0.0.0.0 on the openbb-internal Docker bridge (UNVERIFIED, bridge-network
+# migration -- isolation now comes from bridge membership, not the bind
+# address; the app refuses to start on any bind it doesn't trust) and
+# TS_USERSPACE=false on the sidecar (already set in this stack's compose;
+# see Ep. 1 and this repo's README).
 #
 #   cp config.yaml.example config.yaml   # then edit the tailnet name & feeds
 
@@ -15,7 +17,7 @@ public_base_url: https://openbb.<your-tailnet>.ts.net:8088
 admin_key: ${TICKER_ADMIN_KEY}
 
 tailscale_auth: true
-bind_host: 127.0.0.1
+bind_host: 0.0.0.0
 
 retention_days: 7
 default_poll_interval_s: 300
