@@ -1,4 +1,6 @@
 import base64
+import os
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -79,6 +81,28 @@ class TestRunTests:
         )
         fmp = next(x for x in r.json()["rows"] if x["env_var"] == "FMP_API_KEY")
         assert fmp["test"]["result"] == "ok"
+
+
+class TestRestartRequired:
+    def test_false_when_file_unchanged_since_start(self, files):
+        r = keys(client(files, "admin"))
+        assert r.json()["restart_required"] is False
+
+    def test_true_once_file_is_written_after_start(self, files):
+        c = client(files, "admin")
+        cred, _ = files
+        # Comfortably after `c`'s startup timestamp regardless of the
+        # filesystem's mtime resolution (some truncate to whole seconds).
+        future = time.time() + 5
+        os.utime(cred, (future, future))
+        r = keys(c)
+        assert r.json()["restart_required"] is True
+
+    def test_false_when_cred_file_missing(self, files):
+        _, auth = files
+        c = TestClient(create_app(role="admin", cred_file="/nonexistent/x.env", auth_file=auth))
+        r = keys(c)
+        assert r.json()["restart_required"] is False
 
 
 class TestContract:

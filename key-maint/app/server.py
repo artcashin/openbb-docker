@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import ipaddress
 import logging
+import os
+import time
 
 from fastapi import Depends, FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -62,6 +64,17 @@ WIDGETS = {
 }
 
 
+def _restart_required(cred_file: str, started_at: float) -> bool:
+    """True once credentials.env has been written since this process's
+    environ was frozen at startup -- os.environ never sees that write, so
+    GET /keys reading the live file would otherwise show a value as "set"
+    with nothing indicating the running API still has the old one."""
+    try:
+        return os.path.getmtime(cred_file) > started_at
+    except OSError:
+        return False
+
+
 def _tier(role: str, request: Request) -> int:
     if role == "admin":
         return 3
@@ -77,6 +90,7 @@ def _tier(role: str, request: Request) -> int:
 def create_app(role: str, cred_file: str, auth_file: str) -> FastAPI:
     if role not in ("network", "admin"):
         raise ValueError(f"unknown role: {role}")
+    started_at = time.time()
     app = FastAPI(
         dependencies=[Depends(make_guard(auth_file))],
         docs_url=None,
@@ -102,7 +116,13 @@ def create_app(role: str, cred_file: str, auth_file: str) -> FastAPI:
         if run_tests and tier >= 2 and values is not None:
             tests = await run_probes(values)
         rows = build_rows(values, tier, tests, malformed=malformed)
-        return JSONResponse({"tier": tier, "rows": rows})
+        return JSONResponse(
+            {
+                "tier": tier,
+                "rows": rows,
+                "restart_required": _restart_required(cred_file, started_at),
+            }
+        )
 
     @app.get("/keys/{env_var}/test")
     async def test_key(env_var: str, request: Request) -> Response:
