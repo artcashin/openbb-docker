@@ -270,7 +270,8 @@ function showStatus() {
   status.innerHTML = `<b>live</b> — ${ticks} ticks · last ${lastPrice?.toFixed(2)}${avNow} · ${hint}`;
 }
 
-const ws = new WebSocket('ws://127.0.0.1:5999/');
+const WS_URL = qs.get('ws') || 'ws://127.0.0.1:5999/'; // ?ws=wss://openbb.<tailnet>.ts.net:5999/ for a served kdb
+const ws = new WebSocket(WS_URL);
 ws.onopen = () => {
   status.textContent = 'connected — requesting bars + avwap, subscribing';
   ws.send(JSON.stringify({ type: 'bars', sym: SYM, interval: INTERVAL_S }));
