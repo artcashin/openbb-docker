@@ -41,14 +41,26 @@ class TestFindLevels:
         b = find_levels(many, make_bars(closes), scale="t")[0]
         assert b.score > a.score
 
-    def test_output_is_capped(self):
+    def test_output_is_capped_and_ordered_by_score_descending(self):
         # 9 pivots, each 10 points apart -- ATR is ~1.0 here, tol is 0.75*ATR,
-        # so every pivot is its own cluster. 9 clusters > cap=8 means this
-        # actually exercises truncation, not just a no-op len() <= 8 check.
+        # so every pivot is its own single-member cluster: touches=1 and
+        # span=0 for all of them, so score is driven purely by recency, which
+        # grows monotonically with bar. That makes the 9 clusters strictly
+        # ordered lowest score (bar 0, price 100) to highest (bar 8, price
+        # 180) -- and it is the only case in this file with more than one
+        # output level, so it is the only case that can catch either half of
+        # "highest score first": a missing/inverted sort, or a cap that keeps
+        # the wrong end of the ranking. A `reverse=False` bug keeps the 8
+        # LOWEST-scoring clusters in ascending order (100..170) instead of
+        # the 8 HIGHEST in descending order (180..110) -- same length (8) and
+        # same set-vs-9 truncation, so a len()-only or single-element
+        # assertion cannot see it; the exact price sequence below can.
         closes = [100.0] * 100
         pivots = [pivot(i, 100.0 + i * 10, "high") for i in range(9)]
         levels = find_levels(pivots, make_bars(closes), scale="t", cap=8)
         assert len(levels) == 8
+        assert [lvl.price for lvl in levels] == [
+            180.0, 170.0, 160.0, 150.0, 140.0, 130.0, 120.0, 110.0]
 
     def test_ids_are_deterministic(self):
         closes = [100.0] * 40
