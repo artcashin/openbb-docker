@@ -88,8 +88,10 @@ clicks (swing start = 100%, swing end = 0%) draw labeled retracement levels
 fans 30/45/60° lines — up from a relative low, down from a relative high
 (judged against the surrounding bars' range); the angles are measured on
 screen at draw time and recorded as price-per-second slopes, so redraws
-reproduce the same fan after any rescale. Drawings never drive the price
-autoscale — a fan's far end would squash the candles.
+reproduce the same fan after any rescale. **─ level**: one click drops a
+horizontal support/resistance line at that price — recorded as the single
+price, rendered by the platform's own price-line primitive. Drawings never
+drive the price autoscale — a fan's far end would squash the candles.
 
 Everything is recorded in **chart coordinates** — anchors by their start
 time, drawings by (time, price) points and slope, never pixels — and

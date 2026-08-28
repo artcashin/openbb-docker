@@ -23,6 +23,7 @@
     <button id="tool-ray" title="two clicks draw an open ray, extended as bars arrive">↗ ray</button>
     <button id="tool-fib" title="two clicks (swing start, swing end) draw retracement levels">ƒ fib</button>
     <button id="tool-gann" title="one click on a swing point fans 30/45/60 degree lines, up from a low, down from a high">∠ gann</button>
+    <button id="tool-level" title="one click drops a horizontal support/resistance line at that price">─ level</button>
     <button id="tool-clear" title="forget saved anchors and drawings, reload">🗑 clear</button>
   </span>
   <span id="status">connecting…</span>
@@ -87,10 +88,23 @@ const STORE_KEY = 'kdbws:' + SYM;
 function loadSaved() {
   try { return JSON.parse(localStorage.getItem(STORE_KEY)) || {}; } catch { return {}; }
 }
+// horizontal support/resistance: recorded as ONE price, rendered by the
+// platform's own price-line primitive -- a level is a price, not geometry
+const levels = [];
+function addLevel(price) {
+  candles.createPriceLine({
+    price, color: '#9aa0a6', lineWidth: 1, axisLabelVisible: true,
+    lineStyle: LightweightCharts.LineStyle.Dashed, title: 'S/R',
+  });
+  levels.push(price);
+  persist();
+}
+
 function persist() {
   try {
     localStorage.setItem(STORE_KEY, JSON.stringify({
       anchors: [...anchors.keys()],
+      levels,
       drawings: drawings.map(d => (
         { kind: d.kind, a: d.a, b: d.b, slope: d.slope, slopes: d.slopes })),
     }));
@@ -103,6 +117,7 @@ const toolButtons = {
   ray: document.getElementById('tool-ray'),
   fib: document.getElementById('tool-fib'),
   gann: document.getElementById('tool-gann'),
+  level: document.getElementById('tool-level'),
 };
 for (const [name, btn] of Object.entries(toolButtons)) {
   btn.onclick = () => {
@@ -216,6 +231,7 @@ chart.subscribeClick((p) => {
   const point = { time: p.time, value: candles.coordinateToPrice(p.point.y) };
   if (point.value == null) return;
   if (tool === 'gann') { addGann(point); showStatus(); return; }
+  if (tool === 'level') { addLevel(point.value); showStatus(); return; }
   if (!pendingPoint) { pendingPoint = point; } else { addDrawing(tool, pendingPoint, point); pendingPoint = null; }
   showStatus();
 });
@@ -243,7 +259,9 @@ function showStatus() {
     ? 'click chart to anchor'
     : tool === 'gann'
       ? 'gann: click a relative high or low'
-      : `${tool}: click the ${pendingPoint ? 'second' : 'first'} point`;
+      : tool === 'level'
+        ? 'level: click a price'
+        : `${tool}: click the ${pendingPoint ? 'second' : 'first'} point`;
   status.innerHTML = `<b>live</b> — ${ticks} ticks · last ${lastPrice?.toFixed(2)}${avNow} · ${hint}`;
 }
 
@@ -261,6 +279,7 @@ ws.onopen = () => {
   for (const iso of saved.anchors || []) addAnchor(iso, false);
   // restore verbatim -- the recorded slope, not one re-derived from pixels
   for (const d of saved.drawings || []) materializeDrawing({ ...d });
+  for (const price of saved.levels || []) addLevel(price);
   // re-persist the COMPLETE state: the default anchor's persist above wrote
   // while drawings was still empty, so without this a drawing survives
   // exactly one refresh (restored on screen, absent from storage)
