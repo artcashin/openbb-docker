@@ -76,6 +76,17 @@ for (const k of ['barTime', 'open', 'high', 'low', 'close', 'vwap', 'volume', 't
 assert.ok(b0.high >= b0.low);
 console.log('ok: bars request (OHLCV+VWAP)', b0);
 
+// 8. Anchored VWAP: cumulative series from an anchor, plus running pv/vol
+// so a client can extend it live. All-AAPL pv = 6897, vol = 68.
+ws.send(JSON.stringify({ type: 'avwap', sym: 'AAPL', anchor: '2000-01-01T00:00:00' }));
+const av = await nextMessage();
+assert.equal(av.table, 'avwap');
+assert.equal(av.data.length, 5);
+assert.ok(Math.abs(av.data[4].avwap - 6897 / 68) < 1e-9, `bad final avwap ${av.data[4].avwap}`);
+assert.ok(Math.abs(av.pv - 6897) < 1e-9 && Math.abs(av.vol - 68) < 1e-9, `bad pv/vol ${av.pv}/${av.vol}`);
+assert.ok(Math.abs(av.data[0].avwap - 101.1) < 1e-9, 'first point must equal first tick price');
+console.log('ok: anchored VWAP series + running pv/vol', { last: av.data[4].avwap, pv: av.pv, vol: av.vol });
+
 ws.close();
 console.log('\nALL CHECKS PASSED');
 process.exit(0);

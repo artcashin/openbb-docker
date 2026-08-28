@@ -26,6 +26,17 @@ One websocket, on the same port q already serves IPC on:
     server -> {"table":"bars","sym":"AAPL","data":[{"barTime":...,"open":...,"high":...,
                "low":...,"close":...,"vwap":...,"volume":...,"tickCount":...},...]}
 
+    client -> {"type":"avwap","sym":"AAPL","anchor":"2026-08-28T14:30:00"}
+    server -> {"table":"avwap","sym":"AAPL","anchor":"...","pv":...,"vol":...,
+               "data":[{"time":...,"avwap":...},...]}
+
+Anchored VWAP is the cumulative `(sums price*size)%sums size` from the anchor
+forward — computed in q because the ticks are already here; recomputing it in
+a client-side dataframe would mean shipping every tick since the anchor on
+each refresh. `pv`/`vol` are the running totals, so a subscribed client
+extends the series per tick without re-requesting:
+`avwap = (pv += p*s) / (vol += s)`.
+
 A second `sub` replaces the first; closing the socket unsubscribes. Defining
 `.z.ws` is also a hardening step: q's default evaluates whatever a websocket
 client sends.
@@ -72,3 +83,5 @@ real-time chart widget needs.
 - `-500#table` on a table shorter than 500 rows cycles rows instead of
   clamping — snapshot takes must clamp to `count`.
 - Bars must `time xasc` before `first`/`last` — ticks land out of order.
+- `.j.j` serializes floats at display precision, default 7 significant
+  digits — enough to corrupt a vwap on the wire. `startup.q` sets `\P 17`.

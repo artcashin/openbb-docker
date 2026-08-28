@@ -9,7 +9,15 @@
 /   server -> {"table":"trades","data":[{"time":"2026-...","sym":"AAPL","price":1.0,"size":2.0},...]}
 /   client -> {"type":"bars","sym":"AAPL","interval":60}     (interval in seconds)
 /   server -> {"table":"bars","sym":"AAPL","data":[{"barTime":...,"open":...,"high":...,"low":...,"close":...,"vwap":...,"volume":...,"tickCount":...},...]}
+/   client -> {"type":"avwap","sym":"AAPL","anchor":"2026-08-28T14:30:00"}
+/   server -> {"table":"avwap","sym":"AAPL","anchor":"...","data":[{"time":...,"avwap":...},...],"pv":...,"vol":...}
+/             (pv/vol are the running sum(price*size) and sum(size), so a live
+/              client can extend the series per tick: avwap=(pv+p*s)%(vol+s))
 / A second sub replaces the first; closing the socket unsubscribes.
+
+/ .j.j serializes floats at display precision, which defaults to 7
+/ significant digits -- enough to corrupt a vwap on the wire. Full doubles:
+system"P 17";
 
 / schema matches kdb-store/_INIT_SCHEMA -- idempotent, same guard
 if[not `trades in key `.; trades:([] time:`timestamp$(); sym:`symbol$(); price:`float$(); size:`float$())];
@@ -37,11 +45,22 @@ if[not `trades in key `.; trades:([] time:`timestamp$(); sym:`symbol$(); price:`
     vwap:size wavg price, volume:sum size, tickCount:count i
     by barTime:iv xbar time from `time xasc select from trades where sym=s};
 
+/ anchored VWAP: the cumulative vwap series for one sym from an anchor
+/ time forward, straight off the tick cache; pv/vol let a client extend
+/ the series live without re-requesting
+.wsu.avwap:{[s;t0]
+  t:`time xasc select from trades where sym=s, time>=t0;
+  `data`pv`vol!(
+    0!select time, avwap:(sums price*size)%sums size from t;
+    sum t[`price]*t`size; sum t`size)};
+
 .z.ws:{
   msg:@[.j.k;x;{()!()}];
   if["sub"~msg`type; .wsu.sub[.z.w;`$msg`syms]];
   if["bars"~msg`type;
     (neg .z.w) .j.j `table`sym`data!(`bars;msg`sym;.wsu.bars[`$msg`sym;`long$1e9*msg`interval])];
+  if["avwap"~msg`type;
+    (neg .z.w) .j.j (`table`sym`anchor!(`avwap;msg`sym;msg`anchor)),.wsu.avwap[`$msg`sym;"P"$msg`anchor]];
  };
 
 .z.wc:{.wsu.subs::.wsu.subs _ x;};
