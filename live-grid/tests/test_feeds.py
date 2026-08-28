@@ -1,6 +1,7 @@
 """Tests for app.feeds.FeedManager (SDK client mocked via factory)."""
 
 import asyncio
+import contextlib
 import json
 from unittest.mock import MagicMock
 
@@ -95,6 +96,36 @@ class TestDrain:
         assert m.pop_dirty("c1") == set()
 
 
+async def _wait_until(condition, timeout: float = 5.0, poll_interval: float = 0.005) -> None:
+    """Poll `condition` until it's true; raise (never silently pass) if `timeout` expires.
+
+    `timeout` is a backstop against a genuine hang, not the success signal --
+    it exists so a broken condition fails loudly instead of hanging the suite.
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while not condition():
+        if loop.time() >= deadline:
+            raise asyncio.TimeoutError(f"condition not met within {timeout}s: {condition!r}")
+        await asyncio.sleep(poll_interval)
+
+
+async def _run_until(manager: FeedManager, condition, timeout: float = 5.0) -> None:
+    """Run manager.run() until `condition()` holds, then cancel it cleanly.
+
+    Bounds progress by an observable condition instead of wall clock: real
+    cycle duration is unbounded under thread-pool contention, so a fixed sleep
+    cannot reliably guarantee even one cycle completed.
+    """
+    task = asyncio.create_task(manager.run())
+    try:
+        await _wait_until(condition, timeout=timeout)
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+
 async def _run_briefly(manager: FeedManager, seconds: float = 0.05) -> None:
     """Start manager.run(), let it cycle for a bit, then cancel it cleanly."""
     task = asyncio.create_task(manager.run())
@@ -121,18 +152,22 @@ class TestRecorderIntegration:
         asyncio.run(_run_briefly(m, seconds=0.03))  # must not raise
 
     def test_prune_only_fires_once_per_interval(self, fake_ws_client_factory):
-        # loop.time() is a monotonic clock with an arbitrary (non-zero) origin,
-        # so with _last_prune initialised to 0.0 the very first drain cycle
-        # always clears "now - 0.0 >= PRUNE_INTERVAL" -- the first prune is
-        # effectively "on startup". What the interval must still guarantee is
-        # that it does NOT re-fire on every one of the several cycles that fit
-        # inside this test's short run (default PRUNE_INTERVAL is 60s).
+        # _last_prune starts at -inf, so the first drain cycle always clears
+        # the interval check and the first prune is effectively "on startup".
+        # (It used to start at 0.0, which only cleared on a host whose
+        # CLOCK_MONOTONIC had already passed PRUNE_INTERVAL -- so on a freshly
+        # booted CI runner the prune never fired and this test failed 0 == 1.)
+        # What the interval must still guarantee is that prune does NOT re-fire
+        # on every cycle of this test's short run (PRUNE_INTERVAL is 60s).
         recorder = MagicMock()
         m = FeedManager(
             "k", QuoteTable(), client_factory=fake_ws_client_factory,
             drain_interval=0.01, rebuild_delay=0.0, recorder=recorder,
         )
-        asyncio.run(_run_briefly(m, seconds=0.08))
+        # Wait for positive evidence that SEVERAL drain cycles elapsed (flush is
+        # called every cycle) before checking prune fired once -- asserting after
+        # a fixed sleep proves nothing about the interval on a loaded runner.
+        asyncio.run(_run_until(m, lambda: recorder.flush.call_count >= 2))
         assert recorder.flush.called
         assert recorder.prune.call_count == 1
 
