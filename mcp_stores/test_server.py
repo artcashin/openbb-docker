@@ -357,3 +357,43 @@ def test_kdb_table_schema_rejects_hostile_table_before_connecting(kdb_conn):
     with pytest.raises(ValueError, match="invalid table"):
         server.kdb_table_schema('trade"; system "ls')
     assert kdb_conn.calls == []
+
+
+# ---------- structure_detect ----------
+
+class TestStructureDetect:
+    def test_it_returns_every_scale(self, monkeypatch):
+        """/structure answers one scale per call; this tool must call it once
+        per scale and merge -- not call once and fabricate the rest. The mock
+        mirrors the real route: one scale name per response, keyed by the
+        `scale` param actually sent.
+        """
+        import server
+
+        calls = []
+
+        def fake_get(**kw):
+            calls.append(kw["scale"])
+            return {"symbol": kw["symbol"], "scales": [{"name": kw["scale"]}]}
+
+        monkeypatch.setattr(server, "_structure_get", fake_get)
+        out = server.structure_detect("SPY.US")
+
+        assert calls == ["swing", "intermediate", "primary"]
+        assert [s["name"] for s in out["scales"]] == [
+            "swing", "intermediate", "primary"]
+
+    def test_an_upstream_failure_raises_rather_than_returning_empty(self, monkeypatch):
+        """An agent cannot tell 'no structure' from 'no data' unless we say so."""
+        import server
+
+        def boom(**kw):
+            raise RuntimeError("live-grid unreachable")
+
+        monkeypatch.setattr(server, "_structure_get", boom)
+        with pytest.raises(RuntimeError):
+            server.structure_detect("SPY.US")
+
+    def test_it_is_registered_as_a_tool(self):
+        import server
+        assert server.structure_detect in server.REGISTERED_TOOLS
