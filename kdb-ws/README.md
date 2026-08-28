@@ -79,10 +79,12 @@ real-time chart widget needs.
 The toolbar previews the v10 tool model. **⚓ anchor** (default): click the
 chart to anchor a new AVWAP at that time — served trade-true by kdb, then
 extended live from its `pv`/`vol` totals; up to six, distinct colors.
-**╱ segment** and **⟋ ray**: two clicks draw a line — pure client geometry,
+**╱ segment** and **↗ ray**: two clicks draw a line — pure client geometry,
 nothing goes to the server. A segment is closed (ends at its points); a ray
 is open, defined by its first point plus the **recorded slope** (price per
-second) and ridden out to the latest bar as ticks arrive.
+second) and ridden out to the latest bar as ticks arrive. **ƒ fib**: two
+clicks (swing start = 100%, swing end = 0%) draw labeled retracement levels
+(23.6/38.2/50/61.8/78.6), extended to the live edge.
 
 Everything is recorded in **chart coordinates** — anchors by their start
 time, drawings by (time, price) points and slope, never pixels — and

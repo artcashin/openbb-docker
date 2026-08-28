@@ -20,7 +20,8 @@
   <span id="tools">
     <button id="tool-anchor" class="active" title="click the chart to anchor an AVWAP">⚓ anchor</button>
     <button id="tool-segment" title="two clicks draw a closed segment">╱ segment</button>
-    <button id="tool-ray" title="two clicks draw an open ray, extended as bars arrive">⟋ ray</button>
+    <button id="tool-ray" title="two clicks draw an open ray, extended as bars arrive">↗ ray</button>
+    <button id="tool-fib" title="two clicks (swing start, swing end) draw retracement levels">ƒ fib</button>
     <button id="tool-clear" title="forget saved anchors and drawings, reload">🗑 clear</button>
   </span>
   <span id="status">connecting…</span>
@@ -98,6 +99,7 @@ const toolButtons = {
   anchor: document.getElementById('tool-anchor'),
   segment: document.getElementById('tool-segment'),
   ray: document.getElementById('tool-ray'),
+  fib: document.getElementById('tool-fib'),
 };
 for (const [name, btn] of Object.entries(toolButtons)) {
   btn.onclick = () => {
@@ -112,25 +114,45 @@ document.getElementById('tool-clear').onclick = () => {
   location.reload();
 };
 
+// Fibonacci retracement: a is the swing START (100%), b the swing END (0%);
+// levels sit between the two recorded prices and extend to the latest bar.
+const FIB_LEVELS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
+
 function renderDrawing(d) {
+  const tFar = Math.max(d.b.time, bar ? bar.time : d.b.time);
+  if (d.kind === 'fib') {
+    const t0 = Math.min(d.a.time, d.b.time);
+    d.lines.forEach((line, i) => {
+      const price = d.b.value + (d.a.value - d.b.value) * FIB_LEVELS[i];
+      line.setData([{ time: t0, value: price }, { time: tFar, value: price }]);
+    });
+    return;
+  }
   // an open ray is DEFINED by its anchor point and recorded slope (price
   // per second) -- the far end is always a.value + slope * dt, ridden out
   // to the latest bar; the second click only ever fixed the slope
   let far = d.b;
   if (d.kind === 'ray') {
-    const t = Math.max(d.b.time, bar ? bar.time : d.b.time);
-    far = { time: t, value: d.a.value + d.slope * (t - d.a.time) };
+    far = { time: tFar, value: d.a.value + d.slope * (tFar - d.a.time) };
   }
   d.line.setData([d.a, far]);
 }
 
+const _drawSeries = (opts) => chart.addSeries(LightweightCharts.LineSeries, {
+  color: '#abb2bf', lineWidth: 1, priceLineVisible: false,
+  lastValueVisible: false, crosshairMarkerVisible: false, ...opts,
+});
+
 function materializeDrawing(d) {
   // back-compat: drawings saved before slopes were recorded derive one
   if (d.slope == null) d.slope = (d.b.value - d.a.value) / (d.b.time - d.a.time);
-  d.line = chart.addSeries(LightweightCharts.LineSeries, {
-    color: '#abb2bf', lineWidth: 1, priceLineVisible: false,
-    lastValueVisible: false, crosshairMarkerVisible: false,
-  });
+  if (d.kind === 'fib') {
+    d.lines = FIB_LEVELS.map((lvl) => _drawSeries({
+      color: '#c8a24a', title: (lvl * 100).toFixed(1).replace('.0', '') + '%',
+    }));
+  } else {
+    d.line = _drawSeries({});
+  }
   drawings.push(d);
   renderDrawing(d);
 }
@@ -194,6 +216,10 @@ ws.onopen = () => {
   for (const iso of saved.anchors || []) addAnchor(iso, false);
   // restore verbatim -- the recorded slope, not one re-derived from pixels
   for (const d of saved.drawings || []) materializeDrawing({ ...d });
+  // re-persist the COMPLETE state: the default anchor's persist above wrote
+  // while drawings was still empty, so without this a drawing survives
+  // exactly one refresh (restored on screen, absent from storage)
+  persist();
 };
 ws.onmessage = (ev) => {
   const m = JSON.parse(ev.data);
@@ -229,7 +255,7 @@ ws.onmessage = (ev) => {
           a.lastSec = sec;
         }
       }
-      for (const d of drawings) if (d.kind === 'ray') renderDrawing(d);
+      for (const d of drawings) if (d.kind === 'ray' || d.kind === 'fib') renderDrawing(d);
     }
     showStatus();
   }
