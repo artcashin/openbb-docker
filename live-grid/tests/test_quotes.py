@@ -86,6 +86,16 @@ class TestApplyTick:
         assert row["last_size"] == 25.0
         assert row["updated_at"] == "22:13:20"  # 1700000000000 ms = 2023-11-14T22:13:20Z
 
+    def test_us_trade_size_arrives_as_v_not_q(self):
+        """EODHD's US-equity trade messages carry the share count as `v`
+        (crypto uses `q`); reading only `q` recorded every US tick at size 0
+        and left tick-derived equity bars volumeless."""
+        recorded = []
+        q = QuoteTable(on_tick=lambda s, p, sz, t: recorded.append((s, p, sz)))
+        q.apply_tick("us", {"s": "AAPL", "p": 90.0, "v": 40, "t": 1700000000000})
+        assert q.rows["AAPL"]["last_size"] == 40.0
+        assert recorded == [("AAPL", 90.0, 40.0)]
+
     def test_forex_tick_uses_mid(self):
         q = QuoteTable()
         sym = q.apply_tick("forex", {"s": "EURUSD", "a": 1.10, "b": 1.08, "t": 1700000000000})

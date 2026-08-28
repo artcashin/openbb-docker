@@ -113,7 +113,12 @@ class QuoteTable:
             price = _f(msg.get("p"))
             if price is None:
                 return None
+            # crypto trades carry the size as `q`; US-equity trades carry it
+            # as `v` -- reading only `q` recorded every US tick with size 0,
+            # which left tick-derived equity bars volumeless (vwap/avwap NaN).
             size = _f(msg.get("q"))
+            if size is None:
+                size = _f(msg.get("v"))
             if size is not None:
                 row["last_size"] = size
         row["price"] = price
