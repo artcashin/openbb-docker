@@ -3,12 +3,12 @@
 <head>
 <meta charset="utf-8">
 <title>kdb tick cache — live chart test</title>
-<script src="https://cdn.plot.ly/plotly-3.0.1.min.js"></script>
+<script src="https://unpkg.com/lightweight-charts@5.0.8/dist/lightweight-charts.standalone.production.js"></script>
 <style>
   body { font-family: -apple-system, sans-serif; margin: 12px; background: #111; color: #ddd; }
   #status { font-size: 13px; margin-bottom: 8px; }
   #status b { color: #6c6; }
-  #chart { width: 100%; height: 70vh; }
+  #chart { width: 100%; height: 75vh; }
 </style>
 </head>
 <body>
@@ -21,50 +21,50 @@ const qs = new URLSearchParams(location.search);
 const SYM = qs.get('sym') || 'AAPL', INTERVAL_S = Number(qs.get('interval')) || 10;
 const ANCHOR = qs.get('anchor') || new Date().toISOString().slice(0, 10) + 'T00:00:00';
 const status = document.getElementById('status');
-let bars = [];            // {t, open, high, low, close, volume}
-let ticks = 0, lastPrice = null, dirty = false;
+
+const chart = LightweightCharts.createChart(document.getElementById('chart'), {
+  autoSize: true,
+  layout: { background: { color: '#111' }, textColor: '#ddd' },
+  grid: { vertLines: { color: '#222' }, horzLines: { color: '#222' } },
+  timeScale: { timeVisible: true, secondsVisible: true },
+});
+const candles = chart.addSeries(LightweightCharts.CandlestickSeries, {
+  upColor: '#26a69a', downColor: '#ef5350', borderVisible: false,
+  wickUpColor: '#26a69a', wickDownColor: '#ef5350',
+});
+const avLine = chart.addSeries(LightweightCharts.LineSeries, {
+  color: '#f0ad4e', lineWidth: 2, priceLineVisible: false,
+});
+
+// lightweight-charts time = unix seconds, ascending and unique per series
+const toSec = (iso) => Math.floor(Date.parse(iso.slice(0, 23) + 'Z') / 1000);
+const bucketSec = (iso) => Math.floor(toSec(iso) / INTERVAL_S) * INTERVAL_S;
+
+let bar = null;           // the in-progress bar
+let ticks = 0, lastPrice = null;
 // anchored VWAP overlay: seeded by the avwap response, extended per live
 // tick from its running pv/vol totals. Ticks that arrive before the
 // response are already inside its sums -- ready gates against double-count.
-const av = { ready: false, pv: 0, vol: 0, pts: [] };  // pts: {t, v}
+const av = { ready: false, pv: 0, vol: 0, lastSec: 0 };
 
-function bucket(isoTime) {
-  const ms = Date.parse(isoTime.slice(0, 23) + 'Z');
-  return Math.floor(ms / (INTERVAL_S * 1000)) * INTERVAL_S * 1000;
-}
 function applyTick(r) {
-  const t = bucket(r.time), p = r.price, v = r.size || 0;
-  const last = bars[bars.length - 1];
-  if (last && last.t === t) {
-    last.high = Math.max(last.high, p); last.low = Math.min(last.low, p);
-    last.close = p; last.volume += v;
-  } else if (!last || t > last.t) {
-    bars.push({ t, open: p, high: p, low: p, close: p, volume: v });
+  const t = bucketSec(r.time), p = r.price, v = r.size || 0;
+  if (bar && bar.time === t) {
+    bar.high = Math.max(bar.high, p); bar.low = Math.min(bar.low, p);
+    bar.close = p;
+  } else if (!bar || t > bar.time) {
+    bar = { time: t, open: p, high: p, low: p, close: p };
+  } else {
+    return; // out-of-order tick from a bucket already closed -- demo skips it
   }
-  ticks++; lastPrice = p; dirty = true;
+  candles.update(bar);
+  ticks++; lastPrice = p;
 }
-function draw() {
-  if (!dirty) return; dirty = false;
-  const x = bars.map(b => new Date(b.t));
-  const traces = [{
-    type: 'candlestick', name: SYM, x,
-    open: bars.map(b => b.open), high: bars.map(b => b.high),
-    low: bars.map(b => b.low), close: bars.map(b => b.close),
-  }];
-  if (av.pts.length) traces.push({
-    type: 'scatter', mode: 'lines', name: 'AVWAP',
-    x: av.pts.map(p => new Date(p.t)), y: av.pts.map(p => p.v),
-    line: { color: '#f0ad4e', width: 1.5 },
-  });
-  Plotly.react('chart', traces, {
-    title: { text: `${SYM} — ${INTERVAL_S}s bars from kdb tick cache` },
-    paper_bgcolor: '#111', plot_bgcolor: '#111', font: { color: '#ddd' },
-    xaxis: { rangeslider: { visible: false } }, margin: { t: 40, r: 20, b: 30, l: 50 },
-  }, { responsive: true });
+
+function showStatus() {
   const avNow = av.vol > 0 ? ` · avwap(${ANCHOR.slice(11, 16)}Z) ${(av.pv / av.vol).toFixed(2)}` : '';
-  status.innerHTML = `<b>live</b> — ${ticks} ticks · ${bars.length} bars · last ${lastPrice?.toFixed(2)}${avNow}`;
+  status.innerHTML = `<b>live</b> — ${ticks} ticks · last ${lastPrice?.toFixed(2)}${avNow}`;
 }
-setInterval(draw, 300); // coalesce redraws, same idea as live-grid's flush cadence
 
 const ws = new WebSocket('ws://127.0.0.1:5999/');
 ws.onopen = () => {
@@ -76,25 +76,37 @@ ws.onopen = () => {
 ws.onmessage = (ev) => {
   const m = JSON.parse(ev.data);
   if (m.table === 'bars') {
-    bars = m.data.map(b => ({ t: bucket(b.barTime), open: b.open, high: b.high, low: b.low, close: b.close, volume: b.volume }));
-    dirty = true;
+    const data = m.data.map(b => ({ time: bucketSec(b.barTime), open: b.open, high: b.high, low: b.low, close: b.close }));
+    candles.setData(data);
+    bar = data[data.length - 1] || null;
+    chart.timeScale().fitContent();
   } else if (m.table === 'avwap') {
-    const stride = Math.ceil(m.data.length / 5000); // keep plotly snappy on a day of ticks
-    av.pts = m.data.filter((_, i) => i % stride === 0 || i === m.data.length - 1)
-      .map(p => ({ t: Date.parse(p.time.slice(0, 23) + 'Z'), v: p.avwap }));
-    av.pv = m.pv; av.vol = m.vol; av.ready = true; dirty = true;
+    // collapse to one point per BAR bucket (last value wins): setData needs
+    // unique ascending times, and sub-bar points would shrink the time
+    // scale's unit to seconds, drawing the candles skinny
+    const bySec = new Map(m.data.map(p => [bucketSec(p.time), p.avwap]));
+    avLine.setData([...bySec].map(([time, value]) => ({ time, value })));
+    av.pv = m.pv; av.vol = m.vol; av.ready = true;
+    av.lastSec = Math.max(0, ...bySec.keys());
+    // per-second line points re-derive the time scale's bar unit, which
+    // collapses the view to seconds -- re-fit after the second seed lands
+    chart.timeScale().fitContent();
+    showStatus();
   } else if (m.table === 'trades') {
     m.data.forEach(applyTick);
     if (av.ready && m.data.length) {
       for (const r of m.data) { av.pv += r.price * (r.size || 0); av.vol += r.size || 0; }
-      const last = m.data[m.data.length - 1];
-      if (av.vol > 0) av.pts.push({ t: Date.parse(last.time.slice(0, 23) + 'Z'), v: av.pv / av.vol });
-      if (av.pts.length > 6000) av.pts = av.pts.filter((_, i) => i % 2 === 0); // re-decimate
+      const sec = bucketSec(m.data[m.data.length - 1].time);
+      if (av.vol > 0 && sec >= av.lastSec) {
+        avLine.update({ time: sec, value: av.pv / av.vol }); // same-bucket update replaces
+        av.lastSec = sec;
+      }
     }
+    showStatus();
   }
 };
 ws.onclose = () => { status.textContent = 'disconnected'; };
-ws.onerror = () => { status.textContent = 'websocket error — is the kdb-ws-test container up?'; };
+ws.onerror = () => { status.textContent = 'websocket error — is the openbb-kdb container up?'; };
 </script>
 </body>
 </html>
