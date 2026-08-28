@@ -24,7 +24,16 @@ def build_servers(
     )
     network_cfg = uvicorn.Config(
         create_app(role="network", cred_file=cred_file, auth_file=auth_file),
-        host="127.0.0.1",
+        # key-maint is the only service whose bind lives in Python rather than
+        # in compose, so it needs this knob to join the openbb-internal bridge:
+        # compose sets it to 0.0.0.0. The DEFAULT stays loopback deliberately --
+        # a compose file or image that forgets it fails closed (unreachable)
+        # rather than binding whatever interfaces happen to exist.
+        #
+        # Only this server is affected. The admin server above binds a unix
+        # socket, so it never reaches the bridge at all: its 0700 host directory
+        # remains the authorization, with no port and no header.
+        host=os.environ.get("KEYMAINT_NETWORK_HOST", "127.0.0.1"),
         port=NETWORK_PORT,
         log_level="info",
     )

@@ -15,17 +15,25 @@ from later chapters is.
 
 ## What you get (this release: v6.0.0)
 
-Two containers, one tailnet node, zero exposed ports:
+Four containers, one tailnet node, zero exposed ports:
 
-- a small **Tailscale sidecar** that owns the network namespace and joins your
-  tailnet as a node named `openbb`;
+- a small **Tailscale sidecar** that joins your tailnet as a node named
+  `openbb` — the only one of the four with a tailnet address;
 - the **OpenBB Platform REST API** (all standard providers + the technical,
-  quantitative, and econometrics extensions) sharing that namespace, bound to
-  loopback only.
+  quantitative, and econometrics extensions), the **OpenBB MCP server**, and
+  **key-maint**, all on a private `openbb-internal` bridge the sidecar reaches
+  them over.
 
 **Tailscale Serve is the only way in** — real HTTPS with a Let's Encrypt
 certificate at `https://openbb.<your-tailnet>.ts.net`, reachable from every
-device on your tailnet and invisible to everything else.
+device on your tailnet and invisible to everything off this host.
+
+The services sit on a private Docker bridge, so other processes **on this
+Docker host** can reach them directly. The API and key-maint answer that with
+the same Basic auth as everyone else. The **MCP server has no auth by design**
+— auth breaks its in-process tool calls — so on this host it is callable, and
+its tools carry your provider keys. Nothing on your LAN reaches any of them,
+Serve still gates the tailnet path, and the MCP port is never funneled.
 
 **New in v6.0.0 (Ep. 6, pairs with BDOBB v6.0.0):** the **OpenBB MCP
 server** — the analyst's hands. Same image, wrapping the same Platform
@@ -70,12 +78,12 @@ cp credentials.env.example credentials.env   # optional — keyless providers wo
 docker compose up -d --build
 
 # 3. Verify the front door (from any tailnet device)
-#    The lock is on the DATA routes. widgets.json is metadata and answers 200
-#    with or without credentials — OpenBB's Basic auth is a dependency of the
-#    /api/v1 router, and nothing else, so test it there.
+#    The lock covers every path, metadata included — the image patches OpenBB
+#    to enforce Basic auth as middleware, not just on the /api/v1 router.
 curl https://openbb.<your-tailnet>.ts.net/api/v1/equity/price/quote                        # 401
 curl -u openbb:<password> https://openbb.<your-tailnet>.ts.net/api/v1/equity/price/quote   # 422 — auth accepted, symbol required
-curl https://openbb.<your-tailnet>.ts.net/widgets.json                                     # 200 — metadata, by design
+curl https://openbb.<your-tailnet>.ts.net/widgets.json                                     # 401 — metadata is locked too
+curl -u openbb:<password> https://openbb.<your-tailnet>.ts.net/widgets.json                # 200
 
 # 4. Verify the walls (from a SECOND tailnet device)
 scripts/verify-isolation.sh openbb.<your-tailnet>.ts.net
