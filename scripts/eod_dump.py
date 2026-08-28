@@ -38,8 +38,9 @@ LIBRARY = os.getenv("EOD_LIBRARY", "ticks_live")
 FLUSH_UTC_MINUTES = 5  # daily at 00:05 UTC, flushing the day that just ended
 
 
-def read_day(day: date):
-    """The day's ticks out of the RDB, as a pandas frame."""
+def _read_day_ipc(day: date):
+    """The day's ticks over q IPC (pykx) -- for a flush running ON the
+    docker host, where the bridge (or the loopback publish) reaches q."""
     import pykx as kx
 
     host = os.getenv("KDB_HOST", "kdb")
@@ -54,6 +55,39 @@ def read_day(day: date):
             kx.toq(end, kx.TimestampAtom),
         ).pd()
     return frame
+
+
+def _read_day_http(day: date):
+    """The day's ticks over the read-only .z.ph endpoints, per symbol -- for
+    a flush running OFF the docker host (the NAS), reached through tailscale
+    Serve, which proxies only HTTP and so never exposes raw q IPC."""
+    import json
+    from urllib.request import urlopen
+
+    import pandas as pd
+
+    base = os.environ["KDB_HTTP_URL"].rstrip("/")
+    syms = json.load(urlopen(f"{base}/syms", timeout=30))
+    frames = []
+    for sym in syms:
+        rows = json.load(urlopen(f"{base}/day?date={day}&sym={sym}", timeout=120))
+        if not rows:
+            continue
+        df = pd.DataFrame(rows)
+        df["sym"] = sym
+        frames.append(df)
+    if not frames:
+        return pd.DataFrame(columns=["time", "sym", "price", "size"])
+    out = pd.concat(frames, ignore_index=True)
+    out["time"] = pd.to_datetime(out["time"])
+    return out
+
+
+def read_day(day: date):
+    """The day's ticks out of the RDB, as a pandas frame."""
+    if os.getenv("KDB_HTTP_URL"):
+        return _read_day_http(day)
+    return _read_day_ipc(day)
 
 
 def dump_day(day: date, dry_run: bool = False) -> int:
@@ -114,10 +148,19 @@ def main() -> None:
     if args.loop:
         while True:
             day = _sleep_until_next_flush()
-            try:
-                dump_day(day)
-            except Exception:  # noqa: BLE001 - one bad day must not kill the cycle
-                log.exception("EOD flush failed for %s; retrying tomorrow", day)
+            # the RDB holds a rolling day, so a failed flush (the docker host
+            # asleep at 00:05) still has its data for hours -- retry hourly
+            # rather than surrendering the day to the prune
+            for attempt in range(20):
+                try:
+                    dump_day(day)
+                    break
+                except Exception:  # noqa: BLE001 - one bad day must not kill the cycle
+                    log.exception(
+                        "EOD flush failed for %s (attempt %d); retrying in 1h",
+                        day, attempt + 1,
+                    )
+                    time.sleep(3600)
         return
 
     day = (

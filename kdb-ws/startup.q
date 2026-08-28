@@ -97,6 +97,25 @@ if[not `trades in key `.; trades:([] time:`timestamp$(); sym:`symbol$(); price:`
   {[d;h;syms] p:select from d where sym in syms; if[count p; .wsu.send[h;p]]}[d]'[key .wsu.subs; value .wsu.subs];
  };
 
+/ HTTP (.z.ph): read-only endpoints for the NAS-side EOD flush, proxied to
+/ the tailnet by tailscale Serve -- which forwards ONLY http, so the raw q
+/ IPC surface stays unreachable off this host. Defining .z.ph also kills
+/ q's default handler, a browser console that EVALUATES code.
+/   GET /syms                              -> ["AAPL",...]
+/   GET /day?date=2026-08-28&sym=AAPL      -> that UTC day's ticks, JSON
+.z.ph:{
+  full:first x;
+  base:first parts:"?" vs full;
+  q:$[1<count parts; (!/) "S=&" 0: last parts; (`$())!()];
+  $[base~"syms";
+      .h.hy[`json] .j.j string distinct trades`sym;
+    base~"day";
+      [st:`timestamp$"D"$q`date; en:`timestamp$1+"D"$q`date;
+       .h.hy[`json] .j.j select time, price, size from trades
+         where sym=`$q`sym, time within (st;en-1)];
+    .h.hn["404 Not Found";`txt;"not here"]]
+ };
+
 / kdb-store's write_ticks calls upd when it exists, plain insert otherwise
 upd:{[t;d]
   t insert d;

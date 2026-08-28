@@ -179,6 +179,13 @@ services:
   # Reuses the openbb-local image (pykx + arcticdb + the same ARCTICDB_S3_*
   # env as every other consumer). Requires minio.env -- without the HDB half
   # there is nowhere to flush, so this service refuses to start.
+  #
+  # THE PRODUCTION FLUSH RUNS ON THE NAS, NOT HERE: a container on the NAS
+  # (network-sharing openbb-minio, so it sits on the tailnet next to the
+  # store) reads the day over the read-only HTTP endpoints Serve publishes
+  # at :5999 (KDB_HTTP_URL) and writes to MinIO over loopback-adjacent
+  # tailnet. This compose service is the on-host alternative -- same
+  # script, IPC source -- for a stack with no NAS.
   eod-dump:
     image: openbb-local:1.0.0
     platform: linux/amd64

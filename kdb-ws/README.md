@@ -41,6 +41,13 @@ One websocket, on the same port q already serves IPC on:
               (aj: the last trade AS OF each requested time -- the as-of
                join, kdb's canonical primitive; null before the first trade)
 
+Two read-only HTTP endpoints (q's .z.ph -- defining it also kills q's default
+browser console, which evaluates code) feed the NAS-side EOD flush through
+tailscale Serve, which proxies only HTTP and so never exposes raw q IPC:
+
+    GET /syms                          -> ["AAPL",...]
+    GET /day?date=2026-08-28&sym=AAPL  -> that UTC day's ticks, JSON
+
 Anchored VWAP is the cumulative `(sums price*size)%sums size` from the anchor
 forward — computed in q because the ticks are already here; recomputing it in
 a client-side dataframe would mean shipping every tick since the anchor on
