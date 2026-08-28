@@ -1,5 +1,8 @@
 """Server-layer tests: widgets.json contract, REST seeding, health, key gate.
 The SDK is never imported — the seed client is injected."""
+import threading
+import time
+
 from fastapi.testclient import TestClient
 
 from app.main import create_app
@@ -48,7 +51,12 @@ def make_client(monkeypatch=None, **kw):
 
 class _NullWs:
     running = False
-    data_list: list = []
+
+    def __init__(self):
+        # Per instance, deliberately. As a class attribute this list is shared
+        # by every client every test builds, so one test's tick is drained by
+        # another test's manager.
+        self.data_list: list = []
 
     def start(self):
         self.running = True
@@ -125,40 +133,75 @@ def test_health_includes_ticks_key_when_chart_is_enabled_by_default(monkeypatch)
     assert body["ticks"]["endpoint"] is None
 
 
+def _receive_json(ws, timeout=10.0):
+    """`ws.receive_json()` with a deadline.
+
+    starlette's TestClient websocket offers no timeout, so a message that never
+    arrives blocks forever. That is not a hypothetical: this test wedged CI for
+    ten minutes and was killed by the job's hang guard, and because the wait was
+    unbounded the failure carried no message -- only a faulthandler dump.
+    A bounded wait turns the same fault into a one-line assertion.
+
+    The reader runs on a daemon thread so a stuck receive cannot keep the
+    interpreter alive after the test fails.
+    """
+    box: dict = {}
+
+    def grab():
+        try:
+            box["msg"] = ws.receive_json()
+        except BaseException as exc:  # noqa: BLE001
+            box["err"] = exc
+
+    t = threading.Thread(target=grab, daemon=True)
+    t.start()
+    t.join(timeout)
+    if t.is_alive():
+        raise AssertionError(f"no websocket message within {timeout}s")
+    if "err" in box:
+        raise box["err"]
+    return box["msg"]
+
+
 def test_websocket_registers_params_and_streams_dirty_rows(monkeypatch):
-    client = make_client(monkeypatch)
-    with client.websocket_connect("/live_grid_ws") as ws:
+    # `with` on the TestClient, not only on the websocket. manager.run() -- the
+    # drain loop that marks rows dirty -- is started by the app's lifespan, and
+    # starlette runs lifespan only when the client is a context manager. Without
+    # it the loop never runs, no feed client is built, and no tick can reach the
+    # producer. That is why the previous version of this test poked
+    # manager._dirty by hand, and poking it is what made the test wedge CI.
+    with make_client(monkeypatch) as client, \
+            client.websocket_connect("/live_grid_ws") as ws:
         ws.send_json({"params": {"symbol": "AAPL"}})
-        # Reach into the app: mark a tick so the producer has something to flush.
-        app = client.app
-        manager = app.state.manager
-        quotes = app.state.quotes
-        import time
-        # Wait on _dirty, not _conns. register() writes both, but as two
-        # separate statements, and this poll runs on a different thread from
-        # the app. Waiting on _conns could return in the gap between them, and
-        # the dirty marks below would then be written into a dict that did not
-        # have the key yet -- they would vanish, 151.0 would never flush, and
-        # receive_json() would block until CI's hang guard killed the job ten
-        # minutes later. register() now establishes _dirty first so this can no
-        # longer happen, but synchronising on the thing this test actually
-        # writes to is what makes the test correct on its own terms.
-        for _ in range(50):
-            if manager._conns and manager._dirty:
+        manager = client.app.state.manager
+        # Deliver the tick the way the SDK does -- append to the feed client's
+        # buffer -- rather than marking manager._dirty from this thread.
+        #
+        # pop_dirty() snapshots the dirty set and then clears it, as two
+        # statements. Both run on the event loop, so production never interleaves
+        # them. A mark added from THIS thread, though, can land between the
+        # snapshot and the clear: absent from the snapshot, then erased. The row
+        # never flushed, receive_json() blocked forever, and CI's hang guard
+        # killed the job ten minutes later with no message.
+        #
+        # Appending to data_list is the supported cross-thread operation -- the
+        # SDK thread appends at the tail, the drain loop deletes from the head --
+        # and _drain_all() then marks _dirty on the event loop, where it belongs.
+        deadline = time.monotonic() + 15.0
+        while time.monotonic() < deadline:
+            if manager._conns and manager._clients.get("us") is not None:
                 break
             time.sleep(0.02)
         assert any("AAPL" in by_feed["us"] for by_feed in manager._conns.values())
-        assert manager._dirty, "connection registered but no dirty set to mark"
-        quotes.rows["AAPL"] = {"symbol": "AAPL", "price": 151.0}
-        for dirty in manager._dirty.values():
-            dirty.add("AAPL")
-        # The registration's baseline seed may already have flushed AAPL at
-        # its snapshot price (100.0) before the overwrite above landed; the
-        # 151.0 update is guaranteed to follow it (AAPL is dirty again), so
-        # consume messages until it arrives instead of racing the first flush.
+        feed_client = manager._clients.get("us")
+        assert feed_client is not None, "us feed client was never created"
+        feed_client.data_list.append({"s": "AAPL", "p": 151.0})
+        # The registration's baseline seed may flush AAPL at its snapshot price
+        # (100.0) first; the tick above follows it, so consume until it arrives.
+        row = None
         for _ in range(10):
-            row = ws.receive_json()
+            row = _receive_json(ws)
             assert row["symbol"] == "AAPL"
             if row["price"] == 151.0:
                 break
-        assert row["price"] == 151.0
+        assert row is not None and row["price"] == 151.0
