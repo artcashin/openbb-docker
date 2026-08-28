@@ -446,6 +446,12 @@ services:
         required: true
     volumes:
       - ./kdb-license:/opt/kx-license:ro
+      # The durable watchlist (app/watchlist.py) writes /data/watchlist.json
+      # and its docstring already assumes "a mount that is not the
+      # container's root" -- without this volume, pins silently die with the
+      # container and only TTL leases (in-process, also non-durable) keep
+      # feeds alive. live-grid-data/ is git-ignored, like kdb-data/.
+      - ./live-grid-data:/data
       # The subscription watchlist lives here. live-grid otherwise has no
       # writable mount, so without this a restart would silently empty the list.
       - ./live-grid-data:/data
