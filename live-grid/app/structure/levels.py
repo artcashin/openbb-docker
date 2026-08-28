@@ -41,5 +41,9 @@ def find_levels(pivots, df: pl.DataFrame, scale: str,
             price=round(price, 4), touches=len(members),
             first=dates[0], last=dates[-1], sides=sides,
             score=round(len(members) + span + recency, 4),
+            # The most recent pivot is routinely unconfirmed (see pivots.py);
+            # if any member of this cluster is it, the level rests in part on
+            # a swing that hasn't happened yet.
+            provisional=any(not m.confirmed for m in members),
         ))
     return sorted(out, key=lambda lvl: lvl.score, reverse=True)[:cap]

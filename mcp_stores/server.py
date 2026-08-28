@@ -350,6 +350,13 @@ def structure_detect(symbol: str, interval: str = "1d",
     `confirmed: false`: it is the developing swing and may still extend. Never
     describe a formation as complete when it rests on an unconfirmed pivot.
 
+    Trendlines and levels carry `provisional` for the same reason, one step
+    removed: a line or level can be built in part from that same unconfirmed
+    pivot -- with as few as 3 touches, it can even be the anchor that defines
+    it -- so `provisional: true` means the geometry itself is still settling,
+    even though `touches` and `violations` read like a finished line. Never
+    call a provisional trendline or level a confirmed one.
+
     Results come at three scales -- swing, intermediate, primary -- detected
     independently. Structure appearing at more than one scale is stronger.
     `swing_atr` is the size of the move into a pivot in units of average true

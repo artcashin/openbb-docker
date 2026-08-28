@@ -8,7 +8,7 @@ from __future__ import annotations
 import polars as pl
 
 from app.structure.atr import adjusted_atr
-from app.structure.types import Trendline
+from app.structure.types import Trendline, format_dates
 from app.ta.exprs import adj
 
 MIN_TOUCHES = 3     # the two anchors plus one confirmation
@@ -21,7 +21,7 @@ def find_trendlines(pivots, df: pl.DataFrame, scale: str,
         return []
     atrs = adjusted_atr(df, atr_period)
     closes = df.select(adj("close").alias("c"))["c"].to_list()
-    dates = df["date"].cast(pl.Utf8).to_list()
+    dates = format_dates(df)
     out: list[Trendline] = []
 
     for kind, want in (("support", "low"), ("resistance", "high")):
@@ -72,6 +72,10 @@ def find_trendlines(pivots, df: pl.DataFrame, scale: str,
                     violations=violations, span_bars=span,
                     last_touch=dates[last_touch_bar],
                     score=round(len(touching) + span / 100.0 + recency, 4),
+                    # The most recent pivot is routinely unconfirmed (see
+                    # pivots.py); if this line's touches include it, the line
+                    # rests in part on a swing that hasn't happened yet.
+                    provisional=any(not p.confirmed for p in touching),
                 ))
 
     # Dedup: several anchor pairs describe one line. Keep the best per id.

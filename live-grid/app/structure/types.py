@@ -9,6 +9,9 @@ inside it.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+from datetime import time
+
+import polars as pl
 
 
 def price_tag(price: float) -> str:
@@ -18,6 +21,28 @@ def price_tag(price: float) -> str:
     the same detection and must not produce two ids.
     """
     return f"{price:.4f}"
+
+
+def format_dates(df: pl.DataFrame) -> list[str]:
+    """The frame's `date` column as pivots/trendlines/ids expect it.
+
+    Unit fixtures build `date` as Utf8 already -- e.g. "2026-01-01" -- so this
+    is a no-op for them. The real `/structure` route builds its frame with
+    `app.ta.payload.bars_to_frame`, whose `date` is `pl.Datetime` and
+    deliberately carries a full intraday timestamp for 1h/5m/1m bars (see
+    that function's docstring) -- a blanket `[:10]` truncation would destroy
+    those. So: date-only ("2026-05-14") when the time-of-day is exactly
+    midnight, the full timestamp otherwise.
+    """
+    col = df["date"]
+    if col.dtype == pl.Utf8:
+        return col.to_list()
+    return df.select(
+        pl.when(pl.col("date").dt.time() == time(0, 0))
+          .then(pl.col("date").dt.strftime("%Y-%m-%d"))
+          .otherwise(pl.col("date").dt.strftime("%Y-%m-%d %H:%M:%S"))
+          .alias("_date")
+    )["_date"].to_list()
 
 
 @dataclass(frozen=True)
@@ -46,6 +71,7 @@ class Trendline:
     span_bars: int
     last_touch: str
     score: float
+    provisional: bool    # True if any pivot this line was built from is unconfirmed
 
 
 @dataclass(frozen=True)
@@ -57,6 +83,7 @@ class Level:
     last: str
     sides: list[str]     # ["support"], ["resistance"], or both
     score: float
+    provisional: bool    # True if any pivot this level was built from is unconfirmed
 
 
 @dataclass(frozen=True)
@@ -88,5 +115,6 @@ class StructureResult:
                 "slope_per_bar": t["slope_per_bar"], "touches": t["touches"],
                 "violations": t["violations"], "span_bars": t["span_bars"],
                 "last_touch": t["last_touch"], "score": t["score"],
+                "provisional": t["provisional"],
             } for t in scale["trendlines"]]
         return out

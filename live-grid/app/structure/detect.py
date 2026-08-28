@@ -6,7 +6,7 @@ import polars as pl
 from app.structure.levels import find_levels
 from app.structure.pivots import find_pivots
 from app.structure.trendlines import find_trendlines
-from app.structure.types import ScaleResult, StructureResult
+from app.structure.types import ScaleResult, StructureResult, format_dates
 
 DEFAULT_SCALES: dict[str, float] = {
     "swing": 1.0, "intermediate": 3.0, "primary": 8.0,
@@ -27,7 +27,7 @@ def detect(df: pl.DataFrame, symbol: str, interval: str,
            touch_tol: float = 0.5, break_tol: float = 0.5,
            cluster_tol: float = 0.75, cap: int = 8) -> StructureResult:
     scales = scales or DEFAULT_SCALES
-    dates = df["date"].cast(pl.Utf8).to_list() if df.height else []
+    dates = format_dates(df) if df.height else []
     results: list[ScaleResult] = []
 
     for name, k in scales.items():

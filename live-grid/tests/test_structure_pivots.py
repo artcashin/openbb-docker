@@ -1,8 +1,12 @@
+from datetime import date, datetime, timedelta
+
 import polars as pl
 import pytest
 
 from app.structure.atr import adjusted_atr
 from app.structure.pivots import find_pivots
+from app.structure.types import price_tag
+from app.ta.payload import bars_to_frame
 
 
 def make_bars(closes: list[float], atr_hint: float = 1.0) -> pl.DataFrame:
@@ -57,13 +61,28 @@ class TestFindPivots:
         assert a == b
 
     def test_atr_normalisation_makes_k_portable(self):
-        """Same shape at a different price and volatility gives the same BARS.
-        If this fails, k is not portable and the default scales are meaningless."""
+        """Same shape, same volatility, different price LEVEL gives the same
+        BARS. If this fails, k is not portable and the default scales are
+        meaningless.
+
+        Scaling price AND atr_hint by the same factor (the previous version of
+        this test) is invariant under both `k * atr` and a percent-of-price
+        rule -- multiplying both price and threshold by 10 changes nothing
+        about which bars cross the threshold, so that version could not fail
+        even against the exact alternative the spec rejects by name ("a 2%
+        retracement is noise in one symbol and a reversal in another").
+        Shifting price by a constant instead holds the absolute swing
+        magnitudes AND atr_hint fixed while moving the price level from ~100
+        to ~1000: the real (ATR-based) rule gives an identical threshold at
+        both levels, so identical bars; a percent-of-price rule scales its
+        threshold with price and gives a materially bigger threshold at the
+        high level, so it must diverge. See the fix report for the mutate/
+        restore proof."""
         closes = triangle([100.0, 120.0, 105.0, 130.0])
-        small = find_pivots(make_bars(closes, atr_hint=1.0), k=3.0, scale="t")
-        scaled = [c * 10 for c in closes]
-        big = find_pivots(make_bars(scaled, atr_hint=10.0), k=3.0, scale="t")
-        assert [p.bar for p in small] == [p.bar for p in big]
+        low_price = find_pivots(make_bars(closes, atr_hint=1.0), k=3.0, scale="t")
+        shifted = [c + 900.0 for c in closes]
+        high_price = find_pivots(make_bars(shifted, atr_hint=1.0), k=3.0, scale="t")
+        assert [p.bar for p in low_price] == [p.bar for p in high_price]
 
     def test_the_last_extreme_is_provisional(self):
         """A series ending mid-swing has an unconfirmed final pivot."""
@@ -141,3 +160,53 @@ class TestFindPivots:
         # would diverge sharply right where the split lands.
         assert adjusted_atr(split, 14) == pytest.approx(
             adjusted_atr(clean, 14), rel=1e-9)
+
+    def _realistic_bar(self, stamp: str, close: float) -> dict:
+        """A bar dict shaped like what build_series/eodhd actually return --
+        `bars_to_frame` needs it, not the raw closes list this file mostly
+        works with."""
+        return {"date": stamp, "open": close, "high": close + 0.5,
+                "low": close - 0.5, "close": close, "volume": 1000.0}
+
+    def test_route_frame_dates_have_no_time_component_for_daily_bars(self):
+        """Finding 1 (final review). Every other test in this file hands
+        find_pivots a hand-built Utf8 `date` column, so `.cast(pl.Utf8)`
+        (former pivots.py) is a no-op and this defect never surfaces. The
+        real `/structure` route builds its frame with
+        `app.ta.payload.bars_to_frame`, whose `date` is `pl.Datetime` --
+        casting that straight to Utf8 renders daily bars as
+        "2024-01-11 00:00:00.000000" instead of "2024-01-11", breaking both
+        the `date` field and the id contract (`p:<scale>:<kind>:<date>:<price>`)
+        that the chart and the MCP tool key off."""
+        closes = triangle([100.0, 120.0, 105.0, 130.0])
+        start = date(2024, 1, 1)
+        bars = [self._realistic_bar((start + timedelta(days=i)).isoformat(), c)
+                for i, c in enumerate(closes)]
+        frame = bars_to_frame(bars)
+        assert frame.schema["date"] == pl.Datetime  # exercising the real dtype
+        pivots = find_pivots(frame, k=3.0, scale="t")
+        confirmed = [p for p in pivots if p.confirmed]
+        assert confirmed, "expected at least one confirmed pivot"
+        for p in confirmed:
+            assert p.date == "2024-01-11" or " " not in p.date  # date-only
+            assert ":" not in p.date
+            assert p.id == f"p:t:{p.kind}:{p.date}:{price_tag(p.price)}"
+
+    def test_route_frame_dates_keep_intraday_timestamps(self):
+        """The other half of Finding 1: bars_to_frame deliberately preserves
+        full intraday timestamps for 1h/5m/1m bars (see its docstring), so
+        the fix must not become a blanket `[:10]` truncation -- that would
+        destroy exactly the timestamps this test checks for."""
+        closes = triangle([100.0, 120.0, 105.0, 130.0])
+        start = datetime(2024, 1, 2, 9, 30)
+        bars = [self._realistic_bar((start + timedelta(hours=i)).isoformat(), c)
+                for i, c in enumerate(closes)]
+        frame = bars_to_frame(bars)
+        pivots = find_pivots(frame, k=3.0, scale="t")
+        confirmed = [p for p in pivots if p.confirmed]
+        assert confirmed, "expected at least one confirmed pivot"
+        expected = [(start + timedelta(hours=b)).strftime("%Y-%m-%d %H:%M:%S")
+                    for b in (10, 20)]
+        assert [p.date for p in confirmed] == expected
+        for p in confirmed:
+            assert p.id == f"p:t:{p.kind}:{p.date}:{price_tag(p.price)}"

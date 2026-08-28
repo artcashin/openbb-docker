@@ -62,6 +62,22 @@ class TestFindLevels:
         assert [lvl.price for lvl in levels] == [
             180.0, 170.0, 160.0, 150.0, 140.0, 130.0, 120.0, 110.0]
 
+    def test_a_level_with_an_unconfirmed_member_is_provisional(self):
+        """Finding 3 (final review): the same `provisional` contract applies
+        to levels -- a cluster resting in part on the still-developing pivot
+        must not be reported as settled either."""
+        closes = [100.0] * 40
+        pivots = [pivot(5, 120.0, "high"), pivot(15, 120.1, "high"),
+                  pivot(25, 119.9, "high", confirmed=False)]
+        level = find_levels(pivots, make_bars(closes), scale="t")[0]
+        assert level.provisional is True
+
+    def test_a_level_of_all_confirmed_members_is_not_provisional(self):
+        closes = [100.0] * 40
+        pivots = [pivot(5, 120.0, "high"), pivot(15, 120.1, "high")]
+        level = find_levels(pivots, make_bars(closes), scale="t")[0]
+        assert level.provisional is False
+
     def test_ids_are_deterministic(self):
         closes = [100.0] * 40
         pivots = [pivot(5, 120.0, "high"), pivot(15, 120.1, "high")]

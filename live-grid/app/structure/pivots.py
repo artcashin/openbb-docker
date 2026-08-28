@@ -14,7 +14,7 @@ from __future__ import annotations
 import polars as pl
 
 from app.structure.atr import adjusted_atr
-from app.structure.types import Pivot, price_tag
+from app.structure.types import Pivot, format_dates, price_tag
 from app.ta.exprs import adj
 
 
@@ -31,7 +31,7 @@ def _series(df: pl.DataFrame, atr_period: int):
     ])
     atrs = adjusted_atr(df, atr_period)
     return (frame["_h"].to_list(), frame["_l"].to_list(), frame["_c"].to_list(),
-            atrs, frame["date"].cast(pl.Utf8).to_list())
+            atrs, format_dates(df))
 
 
 def find_pivots(df: pl.DataFrame, k: float, scale: str,
