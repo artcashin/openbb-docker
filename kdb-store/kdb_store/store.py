@@ -261,7 +261,10 @@ class KdbStore:
         def write(conn):
             prototype = conn("0#trades").pd()
             conn["incoming_ticks"] = _conform_dtypes(frame, prototype)
-            conn("`trades insert incoming_ticks")
+            # A q loaded with kdb-ws/startup.q defines `upd`, which inserts AND
+            # publishes the batch to websocket subscribers; a plain q has no
+            # upd, so fall back to the bare insert.
+            conn("$[`upd in key `.; upd[`trades;incoming_ticks]; `trades insert incoming_ticks]")
             conn("delete incoming_ticks from `.")
             return len(frame)
 
