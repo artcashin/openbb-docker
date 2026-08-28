@@ -26,6 +26,17 @@ name: ci
 on:
   push:
   pull_request:
+  # Nothing here rebuilds on its own otherwise, and that is how the CFTC patch
+  # went silent for months: `openbb` floats most of what it pulls, so a tag that
+  # built clean in June can fail -- or worse, build clean and die at startup --
+  # in August, with no signal until a reader hits it. Saturday 06:00 UTC.
+  #
+  # GitHub disables scheduled workflows after 60 days without repository
+  # activity. If these stop arriving, that is why: re-enable from the Actions
+  # tab.
+  schedule:
+    - cron: "0 6 * * 6"
+  workflow_dispatch:
 jobs:
   # Limitation: this gate is strictly weaker here than on a workstation.
   # scrub-check.sh's machine-specific half reads
