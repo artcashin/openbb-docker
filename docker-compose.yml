@@ -143,11 +143,14 @@ services:
   # and any container attached to openbb-internal can execute code inside it.
   # The loopback publish extends that to processes on this host: q IPC shares
   # the port with the websocket stream, so 127.0.0.1:5999 is arbitrary code
-  # execution for anything local. It is never reachable from your LAN or your
-  # tailnet, and Serve publishes no route to it -- keep it that way: never
-  # widen the bind past 127.0.0.1 and never serve/funnel it. If you run
-  # untrusted workloads on this host, remove the ports block or do not run
-  # this service.
+  # execution for anything local. Raw IPC is never reachable from your LAN
+  # or your tailnet: never widen the bind past 127.0.0.1. Serve DOES publish
+  # :5999 on the tailnet (ts-config/serve.json) for the NAS-side EOD flush --
+  # that is safe by construction, not an exception: Serve reverse-proxies
+  # HTTP only, so what crosses the tailnet is .z.ph's read-only GET routes
+  # and the JSON websocket, never the IPC protocol. NEVER funnel it. If you
+  # run untrusted workloads on this host, remove the ports block or do not
+  # run this service.
   #
   # Needs ./kdb-data/startup.q, which this repo does not ship (kdb-data/ is
   # git-ignored). Without it the container exits and the cache passes through
