@@ -15,12 +15,18 @@
 <div id="status">connecting…</div>
 <div id="chart"></div>
 <script>
-// ?sym=BTC-USD&interval=30 to override; 10s bars so movement is visible fast
+// ?sym=BTC-USD&interval=30&anchor=2026-08-28T14:30:00 to override;
+// 10s bars so movement is visible fast; anchor defaults to UTC midnight
 const qs = new URLSearchParams(location.search);
 const SYM = qs.get('sym') || 'AAPL', INTERVAL_S = Number(qs.get('interval')) || 10;
+const ANCHOR = qs.get('anchor') || new Date().toISOString().slice(0, 10) + 'T00:00:00';
 const status = document.getElementById('status');
 let bars = [];            // {t, open, high, low, close, volume}
 let ticks = 0, lastPrice = null, dirty = false;
+// anchored VWAP overlay: seeded by the avwap response, extended per live
+// tick from its running pv/vol totals. Ticks that arrive before the
+// response are already inside its sums -- ready gates against double-count.
+const av = { ready: false, pv: 0, vol: 0, pts: [] };  // pts: {t, v}
 
 function bucket(isoTime) {
   const ms = Date.parse(isoTime.slice(0, 23) + 'Z');
@@ -40,32 +46,51 @@ function applyTick(r) {
 function draw() {
   if (!dirty) return; dirty = false;
   const x = bars.map(b => new Date(b.t));
-  Plotly.react('chart', [{
-    type: 'candlestick', x,
+  const traces = [{
+    type: 'candlestick', name: SYM, x,
     open: bars.map(b => b.open), high: bars.map(b => b.high),
     low: bars.map(b => b.low), close: bars.map(b => b.close),
-  }], {
+  }];
+  if (av.pts.length) traces.push({
+    type: 'scatter', mode: 'lines', name: 'AVWAP',
+    x: av.pts.map(p => new Date(p.t)), y: av.pts.map(p => p.v),
+    line: { color: '#f0ad4e', width: 1.5 },
+  });
+  Plotly.react('chart', traces, {
     title: { text: `${SYM} — ${INTERVAL_S}s bars from kdb tick cache` },
     paper_bgcolor: '#111', plot_bgcolor: '#111', font: { color: '#ddd' },
     xaxis: { rangeslider: { visible: false } }, margin: { t: 40, r: 20, b: 30, l: 50 },
   }, { responsive: true });
-  status.innerHTML = `<b>live</b> — ${ticks} ticks · ${bars.length} bars · last ${lastPrice?.toFixed(2)}`;
+  const avNow = av.vol > 0 ? ` · avwap(${ANCHOR.slice(11, 16)}Z) ${(av.pv / av.vol).toFixed(2)}` : '';
+  status.innerHTML = `<b>live</b> — ${ticks} ticks · ${bars.length} bars · last ${lastPrice?.toFixed(2)}${avNow}`;
 }
 setInterval(draw, 300); // coalesce redraws, same idea as live-grid's flush cadence
 
 const ws = new WebSocket('ws://127.0.0.1:5999/');
 ws.onopen = () => {
-  status.textContent = 'connected — requesting bars + subscribing';
+  status.textContent = 'connected — requesting bars + avwap, subscribing';
   ws.send(JSON.stringify({ type: 'bars', sym: SYM, interval: INTERVAL_S }));
   ws.send(JSON.stringify({ type: 'sub', syms: [SYM] }));
+  ws.send(JSON.stringify({ type: 'avwap', sym: SYM, anchor: ANCHOR }));
 };
 ws.onmessage = (ev) => {
   const m = JSON.parse(ev.data);
   if (m.table === 'bars') {
     bars = m.data.map(b => ({ t: bucket(b.barTime), open: b.open, high: b.high, low: b.low, close: b.close, volume: b.volume }));
     dirty = true;
+  } else if (m.table === 'avwap') {
+    const stride = Math.ceil(m.data.length / 5000); // keep plotly snappy on a day of ticks
+    av.pts = m.data.filter((_, i) => i % stride === 0 || i === m.data.length - 1)
+      .map(p => ({ t: Date.parse(p.time.slice(0, 23) + 'Z'), v: p.avwap }));
+    av.pv = m.pv; av.vol = m.vol; av.ready = true; dirty = true;
   } else if (m.table === 'trades') {
     m.data.forEach(applyTick);
+    if (av.ready && m.data.length) {
+      for (const r of m.data) { av.pv += r.price * (r.size || 0); av.vol += r.size || 0; }
+      const last = m.data[m.data.length - 1];
+      if (av.vol > 0) av.pts.push({ t: Date.parse(last.time.slice(0, 23) + 'Z'), v: av.pv / av.vol });
+      if (av.pts.length > 6000) av.pts = av.pts.filter((_, i) => i % 2 === 0); // re-decimate
+    }
   }
 };
 ws.onclose = () => { status.textContent = 'disconnected'; };
