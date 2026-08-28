@@ -17,17 +17,25 @@ from later chapters is.
 
 ## What you get (this release: v9.0.0)
 
-Two containers, one tailnet node, zero exposed ports:
+Six containers, one tailnet node, zero exposed ports:
 
-- a small **Tailscale sidecar** that owns the network namespace and joins your
-  tailnet as a node named `openbb`;
+- a small **Tailscale sidecar** that joins your tailnet as a node named
+  `openbb` — the only one with a tailnet address;
 - the **OpenBB Platform REST API** (all standard providers + the technical,
-  quantitative, and econometrics extensions) sharing that namespace, bound to
-  loopback only.
+  quantitative, and econometrics extensions), the **OpenBB MCP server**,
+  **key-maint**, **live-grid** and **rss-ticker**, all on a private
+  `openbb-internal` bridge that the sidecar reaches them over.
 
 **Tailscale Serve is the only way in** — real HTTPS with a Let's Encrypt
 certificate at `https://openbb.<your-tailnet>.ts.net`, reachable from every
-device on your tailnet and invisible to everything else.
+device on your tailnet and invisible to everything off this host.
+
+The services sit on a private Docker bridge, so other processes **on this
+Docker host** can reach them directly. The API and key-maint answer with Basic
+auth, rss-ticker with its manifest key and per-user tokens. **live-grid and the
+MCP server have no auth** — so on this host they are callable, and they carry
+your EODHD and provider keys respectively. Nothing on your LAN reaches any of
+them, and Serve still gates the tailnet path.
 
 **New in v9.0.0 (Ep. 9):** the tape. The **openbb-eodhd provider
 extension** (`provider="eodhd"`: equity/ETF/crypto/forex historical, EOD +
@@ -44,12 +52,16 @@ coalesced flushes/second. Serve publishes it on :6903, tailnet-only. See
 the sidecar: it polls your RSS feeds (conditional GETs, jitter, backoff),
 dedupes into SQLite, streams new articles over a websocket, and serves a
 Bloomberg-style **news window / news rail** widget. Running behind this
-stack's Serve it uses **`tailscale_auth`** — the caller's verified Tailscale
-identity replaces every per-user token, so no credential appears in any URL.
-Serve publishes it on :8088, tailnet-only, never funneled. Compose builds it
-straight from its repo; configure `rss-ticker-config/config.yaml` (from the
-example) and `rss-ticker.env` (admin key), then add the backend in Workspace
-or BDOBB with a **blank API key** — your Serve identity is the credential.
+stack it uses **`manifest_key` + per-user tokens**. It cannot use
+`tailscale_auth` here: that mode trusts the `Tailscale-User-Login` header Serve
+injects, which is only sound when Serve is the *only* way to reach the port —
+so rss-ticker refuses to start under it unless `bind_host` is loopback, and on
+the shared `openbb-internal` bridge any attached container could connect
+directly and forge the header. Serve publishes it on :8088, tailnet-only, never
+funneled. Compose builds it straight from its repo; configure
+`rss-ticker-config/config.yaml` (from the example) and `rss-ticker.env` (admin
+key, manifest key, one token per user), then add the backend in Workspace or
+BDOBB with the **manifest key** as the API key.
 
 **New in v6.0.0 (Ep. 6, pairs with BDOBB v6.0.0):** the **OpenBB MCP
 server** — the analyst's hands. Same image, wrapping the same Platform
@@ -94,12 +106,12 @@ cp credentials.env.example credentials.env   # optional — keyless providers wo
 docker compose up -d --build
 
 # 3. Verify the front door (from any tailnet device)
-#    The lock is on the DATA routes. widgets.json is metadata and answers 200
-#    with or without credentials — OpenBB's Basic auth is a dependency of the
-#    /api/v1 router, and nothing else, so test it there.
+#    The lock covers every path, metadata included — the image patches OpenBB
+#    to enforce Basic auth as middleware, not just on the /api/v1 router.
 curl https://openbb.<your-tailnet>.ts.net/api/v1/equity/price/quote                        # 401
 curl -u openbb:<password> https://openbb.<your-tailnet>.ts.net/api/v1/equity/price/quote   # 422 — auth accepted, symbol required
-curl https://openbb.<your-tailnet>.ts.net/widgets.json                                     # 200 — metadata, by design
+curl https://openbb.<your-tailnet>.ts.net/widgets.json                                     # 401 — metadata is locked too
+curl -u openbb:<password> https://openbb.<your-tailnet>.ts.net/widgets.json                # 200
 
 # 4. Verify the walls (from a SECOND tailnet device)
 scripts/verify-isolation.sh openbb.<your-tailnet>.ts.net

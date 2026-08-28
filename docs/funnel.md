@@ -28,7 +28,10 @@ curl -s -o /dev/null -w '%{http_code}\n' -u openbb:<password> https://openbb.<yo
 #           costs no provider quota)
 
 curl -s -o /dev/null -w '%{http_code}\n' https://openbb.<your-tailnet>.ts.net/widgets.json
-# -> 200   metadata, unauthenticated by design
+# -> 401   metadata is locked too — the image enforces Basic auth as middleware,
+#          so funneling port 443 publishes nothing without the password
+curl -s -o /dev/null -w '%{http_code}\n' -u openbb:<password> https://openbb.<your-tailnet>.ts.net/widgets.json
+# -> 200
 ```
 
 ## 2. Permit Funnel in the tailnet policy
