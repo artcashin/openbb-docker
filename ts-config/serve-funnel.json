@@ -17,6 +17,9 @@
     },
     "8088": {
       "HTTPS": true
+    },
+    "5999": {
+      "HTTPS": true
     }
   },
   "Web": {
@@ -59,6 +62,13 @@
       "Handlers": {
         "/": {
           "Proxy": "http://rss-ticker:8088"
+        }
+      }
+    },
+    "${TS_CERT_DOMAIN}:5999": {
+      "Handlers": {
+        "/": {
+          "Proxy": "http://kdb:5000"
         }
       }
     }
