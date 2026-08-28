@@ -407,6 +407,14 @@ services:
       - LIVE_GRID_CHART=true
       - LIVE_TICK_WINDOW_SECONDS=86400
       - KDB_BIND_HOST=kdb
+      # Bridge migration (Layer 4, same class of gap as KDB_BIND_HOST): the
+      # default is http://127.0.0.1:6900, which reached openbb-api only under
+      # the old shared namespace. On the bridge it must be named -- without
+      # this every historical fetch fails and /chart, /series and /ta_chart
+      # render "bars unavailable". Takes effect once openbb-api itself is
+      # recreated onto openbb-internal (a pre-migration container binds
+      # loopback in the tailscale namespace and is unreachable by this name).
+      - OPENBB_URL=http://openbb-api:6900
       # TA chart (see docs/superpowers/specs/2026-08-25-ta-chart-widget-design.md).
       # TA_EODHD_MIN_REFETCH_S is a cost guard, not a performance knob: EODHD
       # bills 5 API calls per indicator per request, so an unthrottled live

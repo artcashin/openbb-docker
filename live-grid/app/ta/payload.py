@@ -47,7 +47,15 @@ def parse_indicators(raw: str) -> list[Req]:
         chunk = chunk.strip()
         if not chunk:
             continue
-        name, *pairs = chunk.split(":")
+        name, *fragments = chunk.split(":")
+        # a value may itself contain colons (avwap:anchor=2026-08-28T14:30:00);
+        # a fragment without "=" belongs to the previous pair's value
+        pairs: list[str] = []
+        for part in fragments:
+            if "=" in part or not pairs:
+                pairs.append(part)
+            else:
+                pairs[-1] += ":" + part
         params = {}
         for pair in pairs:
             if "=" not in pair:

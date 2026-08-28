@@ -84,8 +84,8 @@ def test_rsi_carries_thirty_seventy_guides():
     assert get("rsi").guides == [30.0, 70.0]
 
 
-def test_tier_one_is_twenty_two_indicators_with_twelve_eodhd_maps():
-    assert len(REGISTRY) == 22, sorted(REGISTRY)
+def test_tier_one_is_twenty_three_indicators_with_twelve_eodhd_maps():
+    assert len(REGISTRY) == 23, sorted(REGISTRY)  # 22 tier-1 + avwap
     mapped = [n for n, i in REGISTRY.items() if i.eodhd is not None]
     assert len(mapped) == 12, sorted(mapped)  # cci is local-only (see registry)
 
@@ -95,3 +95,30 @@ def test_resolve_rejects_a_style_that_is_not_a_mapping():
     is a TypeError, not the 502-with-a-reason every other bad param gets."""
     with pytest.raises(ValueError, match="style must be a mapping"):
         resolve("sma", style="x")
+
+
+def test_avwap_without_anchor_equals_vwap():
+    """No anchor means the window start -- the plain vwap, by construction."""
+    out = compute(fixture_frame(), [resolve("vwap"), resolve("avwap")])
+    diff = (out[col("vwap")] - out[col("avwap")]).abs().max()
+    assert diff < 1e-9
+
+
+def test_avwap_is_null_before_the_anchor_and_cumulative_after():
+    frame = fixture_frame()
+    anchor = str(frame["date"][150])
+    out = compute(frame, [resolve("avwap", anchor=anchor)])
+    series = out[col("avwap", anchor=anchor)]
+    assert series[:150].null_count() == 150
+    row = frame.row(150, named=True)
+    typical = (row["high"] + row["low"] + row["close"]) / 3
+    assert abs(series[150] - typical) < 1e-9
+    tail = frame[150:]
+    manual = (((tail["high"] + tail["low"] + tail["close"]) / 3)
+              * tail["volume"]).sum() / tail["volume"].sum()
+    assert abs(series[-1] - manual) < 1e-9
+
+
+def test_avwap_rejects_a_malformed_anchor():
+    with pytest.raises(ValueError):
+        compute(fixture_frame(), [resolve("avwap", anchor="not-a-time")])

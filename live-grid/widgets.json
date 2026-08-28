@@ -118,7 +118,7 @@
       },
       {
         "paramName": "indicators", "value": "", "label": "Extra indicators", "type": "text",
-        "description": "Comma separated, e.g. rsi:period=14,sma:period=200"
+        "description": "Comma separated, e.g. rsi:period=14,avwap:anchor=2026-08-28T14:30"
       },
       {
         "paramName": "source", "value": "local", "label": "Source", "type": "text",

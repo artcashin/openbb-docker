@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any
 
 import polars as pl
@@ -313,6 +314,45 @@ register(Indicator(
     ],
     render={"vwap": _line("#d19a66")},
     # No eodhd map: no VWAP function exists on their endpoint.
+))
+
+# --- Anchored VWAP ----------------------------------------------------------
+
+
+def _avwap_anchor(raw: Any) -> datetime:
+    """ISO 8601 -> naive datetime in the bars' own timezone (UTC for ticks)."""
+    dt = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
+
+
+def _avwap_build(p: dict, b: dict[str, Base]) -> list[pl.Expr]:
+    tp_v = (pl.col("high") + pl.col("low") + pl.col("close")) / 3 * pl.col("volume")
+    if not p.get("anchor"):
+        return [(tp_v.cum_sum() / pl.col("volume").cum_sum()).alias("avwap")]
+    # cast, not compare in place: fixture/daily frames carry pl.Date, tick
+    # frames pl.Datetime, and Date >= datetime raises
+    after = pl.col("date").cast(pl.Datetime) >= pl.lit(_avwap_anchor(p["anchor"]))
+    num = pl.when(after).then(tp_v).otherwise(0.0).cum_sum()
+    den = pl.when(after).then(pl.col("volume")).otherwise(0.0).cum_sum()
+    return [pl.when(after).then(num / den).otherwise(None).alias("avwap")]
+
+
+register(Indicator(
+    name="avwap", label="Anchored VWAP", params={"anchor": None}, pane="price",
+    price_basis="raw",
+    convention=(
+        "Cumulative typical-price-weighted mean from the anchor timestamp "
+        "forward; typical price = (H+L+C)/3 on raw OHLC. Bars before the "
+        "anchor are null. Anchor is ISO 8601, read as naive in the bars' own "
+        "timezone (UTC for tick-derived bars). No anchor = the window start, "
+        "which equals vwap."
+    ),
+    deps=lambda p: [],
+    build=_avwap_build,
+    render={"avwap": _line("#e5c07b")},
+    # No eodhd map: no anchored-VWAP function exists on their endpoint.
 ))
 
 # --- Volume -----------------------------------------------------------------

@@ -103,3 +103,10 @@ def test_intraday_bars_keep_their_time_of_day():
              "low": 0.5, "close": 1.5, "adjusted_close": 1.5, "volume": 10}
             for m in (30, 35, 40, 45, 50, 55)]
     assert bars_to_frame(bars)["date"].n_unique() == 6
+
+
+def test_parse_indicators_keeps_colons_inside_a_param_value():
+    """avwap anchors are ISO timestamps -- the value's own colons must survive."""
+    req = parse_indicators("avwap:anchor=2026-08-28T14:30:00")[0]
+    assert req.name == "avwap"
+    assert req.params["anchor"] == "2026-08-28T14:30:00"
