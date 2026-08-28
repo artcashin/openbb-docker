@@ -79,8 +79,16 @@ real-time chart widget needs.
 The toolbar previews the v10 tool model. **⚓ anchor** (default): click the
 chart to anchor a new AVWAP at that time — served trade-true by kdb, then
 extended live from its `pv`/`vol` totals; up to six, distinct colors.
-**╱ trendline**: two clicks draw a line — pure client geometry, nothing goes
-to the server. Reload clears both.
+**╱ segment** and **⟋ ray**: two clicks draw a line — pure client geometry,
+nothing goes to the server. A segment is closed (ends at its points); a ray
+is open, defined by its first point plus the **recorded slope** (price per
+second) and ridden out to the latest bar as ticks arrive.
+
+Everything is recorded in **chart coordinates** — anchors by their start
+time, drawings by (time, price) points and slope, never pixels — and
+persisted per symbol in `localStorage`, so a refresh replaces each series
+exactly: anchors re-request their trade-true series from kdb, drawings
+redraw from their recorded geometry. **🗑 clear** forgets it all.
 
 ## q traps this file already paid for
 
