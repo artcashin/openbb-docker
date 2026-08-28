@@ -15,7 +15,9 @@
 <div id="status">connecting…</div>
 <div id="chart"></div>
 <script>
-const SYM = 'AAPL', INTERVAL_S = 10; // 10s bars so movement is visible fast
+// ?sym=BTC-USD&interval=30 to override; 10s bars so movement is visible fast
+const qs = new URLSearchParams(location.search);
+const SYM = qs.get('sym') || 'AAPL', INTERVAL_S = Number(qs.get('interval')) || 10;
 const status = document.getElementById('status');
 let bars = [];            // {t, open, high, low, close, volume}
 let ticks = 0, lastPrice = null, dirty = false;
