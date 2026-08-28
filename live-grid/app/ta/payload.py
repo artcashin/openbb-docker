@@ -75,7 +75,7 @@ def bars_to_frame(bars: list[dict]) -> pl.DataFrame:
     """
     schema = {"date": pl.Datetime, "open": pl.Float64, "high": pl.Float64,
               "low": pl.Float64, "close": pl.Float64, "adj_close": pl.Float64,
-              "volume": pl.Float64}
+              "volume": pl.Float64, "vwap": pl.Float64}
     if not bars:
         return pl.DataFrame(schema=schema)
     rows = []
@@ -97,10 +97,15 @@ def bars_to_frame(bars: list[dict]) -> pl.DataFrame:
             "low": bar.get("low"), "close": close,
             "adj_close": close if adjusted is None else adjusted,
             "volume": bar.get("volume") or 0.0,
+            # Only tick-derived bars carry a true trade-weighted vwap; vendor
+            # history has no per-trade data, so the column is null there.
+            "vwap": bar.get("vwap"),
         })
-    return pl.DataFrame(rows).with_columns([
+    # history rows lead with vwap=None; without the override polars infers a
+    # Null column and the first tick bar's float then fails to append
+    return pl.DataFrame(rows, schema_overrides={"vwap": pl.Float64}).with_columns([
         pl.col("date").str.to_datetime(strict=False),
-        pl.col(["open", "high", "low", "close", "adj_close", "volume"])
+        pl.col(["open", "high", "low", "close", "adj_close", "volume", "vwap"])
           .cast(pl.Float64, strict=False),
     ])
 

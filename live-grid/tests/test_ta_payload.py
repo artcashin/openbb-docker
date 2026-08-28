@@ -110,3 +110,14 @@ def test_parse_indicators_keeps_colons_inside_a_param_value():
     req = parse_indicators("avwap:anchor=2026-08-28T14:30:00")[0]
     assert req.name == "avwap"
     assert req.params["anchor"] == "2026-08-28T14:30:00"
+
+
+def test_bars_to_frame_carries_trade_vwap_past_leading_history_nulls():
+    """History bars have no vwap; the first tick bar's float must still fit
+    (schema inference over leading Nones otherwise types the column Null)."""
+    bars = [
+        {"date": "2026-08-28T00:00:00", "open": 1, "high": 2, "low": 0.5, "close": 1.5, "volume": 10},
+        {"date": "2026-08-28T18:00:00", "open": 1, "high": 2, "low": 0.5, "close": 1.5, "volume": 10, "vwap": 1.25},
+    ]
+    frame = bars_to_frame(bars)
+    assert frame["vwap"].to_list() == [None, 1.25]

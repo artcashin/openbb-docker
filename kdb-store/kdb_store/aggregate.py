@@ -28,18 +28,25 @@ def bucket_ns(interval: str) -> int:
 
 def aggregate_ticks(store, symbol: str, interval: str, start, end) -> list[dict]:
     """OHLCV rows built from the ticks held for `symbol` within [start, end]."""
+    import math
+
     frame = store.aggregate_frame(symbol, interval, start, end)
     if frame is None or getattr(frame, "empty", True):
         return []
     ordered = frame.sort_values("t")
-    return [
-        {
+    rows = []
+    for row in ordered.itertuples():
+        # vwap is the bar's true trade-weighted price (size wavg price in q).
+        # A bucket whose ticks all carry size 0 gives q's null (NaN here) --
+        # keep it None: "no trade data", never a fabricated value.
+        vwap = float(getattr(row, "vwap", float("nan")))
+        rows.append({
             "date": row.t,
             "open": float(row.open),
             "high": float(row.high),
             "low": float(row.low),
             "close": float(row.close),
             "volume": float(row.volume),
-        }
-        for row in ordered.itertuples()
-    ]
+            "vwap": None if math.isnan(vwap) else vwap,
+        })
+    return rows

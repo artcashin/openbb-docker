@@ -97,26 +97,46 @@ def test_resolve_rejects_a_style_that_is_not_a_mapping():
         resolve("sma", style="x")
 
 
-def test_avwap_without_anchor_equals_vwap():
-    """No anchor means the window start -- the plain vwap, by construction."""
-    out = compute(fixture_frame(), [resolve("vwap"), resolve("avwap")])
-    diff = (out[col("vwap")] - out[col("avwap")]).abs().max()
-    assert diff < 1e-9
+def _trade_frame():
+    """Six bars carrying real per-bar trade vwap; bar 2 had no sized trades."""
+    from datetime import datetime as dt
+
+    n = 6
+    return pl.DataFrame({
+        "date": [dt(2026, 8, 28, 18, i) for i in range(n)],
+        "open": [1.0] * n, "high": [2.0] * n, "low": [0.5] * n,
+        "close": [1.5] * n, "adj_close": [1.5] * n,
+        "volume": [10.0, 20.0, 0.0, 10.0, 10.0, 50.0],
+        "vwap": [100.0, 101.0, None, 102.0, 103.0, 104.0],
+    })
 
 
-def test_avwap_is_null_before_the_anchor_and_cumulative_after():
-    frame = fixture_frame()
-    anchor = str(frame["date"][150])
-    out = compute(frame, [resolve("avwap", anchor=anchor)])
-    series = out[col("avwap", anchor=anchor)]
-    assert series[:150].null_count() == 150
-    row = frame.row(150, named=True)
-    typical = (row["high"] + row["low"] + row["close"]) / 3
-    assert abs(series[150] - typical) < 1e-9
-    tail = frame[150:]
-    manual = (((tail["high"] + tail["low"] + tail["close"]) / 3)
-              * tail["volume"]).sum() / tail["volume"].sum()
-    assert abs(series[-1] - manual) < 1e-9
+def test_avwap_is_the_trade_sum_not_a_typical_price_approximation():
+    """cumsum(vwap*volume)/cumsum(volume) == sum(price*size)/sum(size) over
+    the actual trades; OHLC never enters the calculation."""
+    out = compute(_trade_frame(), [resolve("avwap")])
+    series = out[col("avwap")].to_list()
+    assert abs(series[0] - 100.0) < 1e-9
+    assert abs(series[1] - (1000 + 2020) / 30) < 1e-9
+    assert series[2] is None  # no sized trades in that bucket
+    assert abs(series[-1] - (1000 + 2020 + 1020 + 1030 + 5200) / 100) < 1e-9
+
+
+def test_avwap_starts_at_the_anchor():
+    anchor = "2026-08-28T18:03:00"
+    out = compute(_trade_frame(), [resolve("avwap", anchor=anchor)])
+    series = out[col("avwap", anchor=anchor)].to_list()
+    assert series[:3] == [None, None, None]
+    assert abs(series[3] - 102.0) < 1e-9
+    assert abs(series[5] - (1020 + 1030 + 5200) / 70) < 1e-9
+
+
+def test_avwap_is_null_on_bars_without_trade_data():
+    """Vendor history has no per-trade information -- avwap must be null
+    there, never approximated from OHLC."""
+    frame = _trade_frame().with_columns(pl.lit(None, dtype=pl.Float64).alias("vwap"))
+    out = compute(frame, [resolve("avwap")])
+    assert out[col("avwap")].null_count() == frame.height
 
 
 def test_avwap_rejects_a_malformed_anchor():

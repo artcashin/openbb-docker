@@ -10,11 +10,18 @@ FIXTURE = Path(__file__).parent / "fixtures" / "ohlcv.csv"
 
 
 def fixture_frame() -> pl.DataFrame:
-    """The committed 300-bar fixture, typed the way the engine expects."""
+    """The committed 300-bar fixture, typed the way the engine expects.
+
+    The csv predates the per-bar trade `vwap` column bars_to_frame now always
+    carries, so a synthetic one is derived here -- it stands in for the value
+    q records from real trades, it is not the indicator's formula.
+    """
     return pl.read_csv(FIXTURE).with_columns([
         pl.col("date").str.to_date(),
         pl.col(["open", "high", "low", "close", "adj_close", "volume"]).cast(pl.Float64),
-    ])
+    ]).with_columns(
+        ((pl.col("high") + pl.col("low") + pl.col("close")) / 3).alias("vwap")
+    )
 
 
 def cols(req) -> list[str]:

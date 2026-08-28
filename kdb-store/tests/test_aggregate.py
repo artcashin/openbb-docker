@@ -38,7 +38,7 @@ def test_aggregate_maps_q_columns_to_bar_rows():
     frame = pd.DataFrame({
         "t": [pd.Timestamp("2025-06-10T14:00:00")],
         "open": [100.0], "high": [103.0], "low": [100.0],
-        "close": [101.0], "volume": [16.0],
+        "close": [101.0], "volume": [16.0], "vwap": [101.5],
     })
     rows = aggregate_ticks(
         FakeStore(frame), "AAPL", "1m", D("2025-06-10T14:00"), D("2025-06-10T15:00")
@@ -46,7 +46,22 @@ def test_aggregate_maps_q_columns_to_bar_rows():
     assert rows == [{
         "date": pd.Timestamp("2025-06-10T14:00:00"),
         "open": 100.0, "high": 103.0, "low": 100.0, "close": 101.0, "volume": 16.0,
+        "vwap": 101.5,
     }]
+
+
+def test_aggregate_nulls_vwap_when_the_bucket_had_no_sized_ticks():
+    """size wavg price over all-zero sizes is q null (NaN) -- 'no trade
+    data', never a fabricated number."""
+    frame = pd.DataFrame({
+        "t": [pd.Timestamp("2025-06-10T14:00:00")],
+        "open": [100.0], "high": [103.0], "low": [100.0],
+        "close": [101.0], "volume": [0.0], "vwap": [float("nan")],
+    })
+    rows = aggregate_ticks(
+        FakeStore(frame), "AAPL", "1m", D("2025-06-10T14:00"), D("2025-06-10T15:00")
+    )
+    assert rows[0]["vwap"] is None
 
 
 def test_aggregate_returns_empty_list_for_no_ticks():

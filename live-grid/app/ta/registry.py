@@ -328,26 +328,34 @@ def _avwap_anchor(raw: Any) -> datetime:
 
 
 def _avwap_build(p: dict, b: dict[str, Base]) -> list[pl.Expr]:
-    tp_v = (pl.col("high") + pl.col("low") + pl.col("close")) / 3 * pl.col("volume")
-    if not p.get("anchor"):
-        return [(tp_v.cum_sum() / pl.col("volume").cum_sum()).alias("avwap")]
-    # cast, not compare in place: fixture/daily frames carry pl.Date, tick
-    # frames pl.Datetime, and Date >= datetime raises
-    after = pl.col("date").cast(pl.Datetime) >= pl.lit(_avwap_anchor(p["anchor"]))
-    num = pl.when(after).then(tp_v).otherwise(0.0).cum_sum()
-    den = pl.when(after).then(pl.col("volume")).otherwise(0.0).cum_sum()
-    return [pl.when(after).then(num / den).otherwise(None).alias("avwap")]
+    # Trade-true only: each tick-derived bar carries its real trade-weighted
+    # vwap (size wavg price in q), so cumsum(vwap*volume)/cumsum(volume) IS
+    # sum(price*size)/sum(size) over the actual trades. Bars with no trade
+    # data (vendor history, all-zero-size buckets) contribute nothing and
+    # render null -- never the (H+L+C)/3 approximation.
+    valid = pl.col("vwap").is_not_null() & pl.col("vwap").is_not_nan() & (pl.col("volume") > 0)
+    if p.get("anchor"):
+        # cast, not compare in place: fixture/daily frames carry pl.Date, tick
+        # frames pl.Datetime, and Date >= datetime raises
+        valid = valid & (
+            pl.col("date").cast(pl.Datetime) >= pl.lit(_avwap_anchor(p["anchor"]))
+        )
+    num = pl.when(valid).then(pl.col("vwap") * pl.col("volume")).otherwise(0.0).cum_sum()
+    den = pl.when(valid).then(pl.col("volume")).otherwise(0.0).cum_sum()
+    return [pl.when(valid & (den > 0)).then(num / den).otherwise(None).alias("avwap")]
 
 
 register(Indicator(
     name="avwap", label="Anchored VWAP", params={"anchor": None}, pane="price",
     price_basis="raw",
     convention=(
-        "Cumulative typical-price-weighted mean from the anchor timestamp "
-        "forward; typical price = (H+L+C)/3 on raw OHLC. Bars before the "
-        "anchor are null. Anchor is ISO 8601, read as naive in the bars' own "
-        "timezone (UTC for tick-derived bars). No anchor = the window start, "
-        "which equals vwap."
+        "Cumulative TRADE-weighted mean from the anchor timestamp forward: "
+        "sum(price*size)/sum(size) over actual trades, via each tick-derived "
+        "bar's own vwap column (size wavg price in q). Bars without trade "
+        "data -- vendor history, bars before the anchor -- are null; this "
+        "never falls back to a typical-price approximation. Anchor is ISO "
+        "8601, read as naive in the bars' own timezone (UTC for tick-derived "
+        "bars). No anchor = cumulative from the first bar with trade data."
     ),
     deps=lambda p: [],
     build=_avwap_build,
