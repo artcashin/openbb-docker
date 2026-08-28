@@ -76,6 +76,12 @@ Candlesticks build live from the stream: `bars` request for history, `sub`
 for the tail, last bar updated in place per tick — the exact shape bdobb-v2's
 real-time chart widget needs.
 
+The toolbar previews the v10 tool model. **⚓ anchor** (default): click the
+chart to anchor a new AVWAP at that time — served trade-true by kdb, then
+extended live from its `pv`/`vol` totals; up to six, distinct colors.
+**╱ trendline**: two clicks draw a line — pure client geometry, nothing goes
+to the server. Reload clears both.
+
 ## q traps this file already paid for
 
 - A lone `/` on its own line in a q script opens a block comment that

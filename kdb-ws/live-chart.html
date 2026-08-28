@@ -9,10 +9,20 @@
   #status { font-size: 13px; margin-bottom: 8px; }
   #status b { color: #6c6; }
   #chart { width: 100%; height: 75vh; }
+  #tools { display: inline-flex; gap: 4px; margin-right: 10px; vertical-align: middle; }
+  #tools button { background: #1c1c1c; color: #aaa; border: 1px solid #333; border-radius: 4px;
+                  padding: 2px 8px; font-size: 13px; cursor: pointer; }
+  #tools button.active { background: #2c313a; color: #fff; border-color: #61afef; }
 </style>
 </head>
 <body>
-<div id="status">connecting…</div>
+<div>
+  <span id="tools">
+    <button id="tool-anchor" class="active" title="click the chart to anchor an AVWAP">⚓ anchor</button>
+    <button id="tool-trend" title="two clicks draw a trendline">╱ trendline</button>
+  </span>
+  <span id="status">connecting…</span>
+</div>
 <div id="chart"></div>
 <script>
 // ?sym=BTC-USD&interval=30&anchor=2026-08-28T14:30:00 to override;
@@ -59,8 +69,40 @@ function addAnchor(iso, fit) {
   ws.send(JSON.stringify({ type: 'avwap', sym: SYM, anchor: iso }));
 }
 
+// Trendlines: pure client-side geometry -- two clicks, a two-point line
+// series drawn as a straight segment. Nothing goes to the server.
+let tool = 'anchor';
+let pendingPoint = null; // first trendline click, awaiting the second
+const toolButtons = { anchor: document.getElementById('tool-anchor'), trend: document.getElementById('tool-trend') };
+for (const [name, btn] of Object.entries(toolButtons)) {
+  btn.onclick = () => {
+    tool = name; pendingPoint = null;
+    for (const b of Object.values(toolButtons)) b.classList.remove('active');
+    btn.classList.add('active');
+    showStatus();
+  };
+}
+
+function drawTrendline(a, b) {
+  if (a.time === b.time) return; // zero-width: ignore
+  const line = chart.addSeries(LightweightCharts.LineSeries, {
+    color: '#abb2bf', lineWidth: 1, priceLineVisible: false,
+    lastValueVisible: false, crosshairMarkerVisible: false,
+  });
+  line.setData(a.time < b.time ? [a, b] : [b, a]);
+}
+
 chart.subscribeClick((p) => {
-  if (p.time) addAnchor(new Date(p.time * 1000).toISOString().slice(0, 19), false);
+  if (!p.time) return;
+  if (tool === 'anchor') {
+    addAnchor(new Date(p.time * 1000).toISOString().slice(0, 19), false);
+    return;
+  }
+  if (!p.point) return;
+  const point = { time: p.time, value: candles.coordinateToPrice(p.point.y) };
+  if (point.value == null) return;
+  if (!pendingPoint) { pendingPoint = point; } else { drawTrendline(pendingPoint, point); pendingPoint = null; }
+  showStatus();
 });
 
 function applyTick(r) {
@@ -82,7 +124,10 @@ function showStatus() {
     .filter(([, a]) => a.vol > 0)
     .map(([iso, a]) => `avwap(${iso.slice(11, 16)}Z) ${(a.pv / a.vol).toFixed(2)}`);
   const avNow = parts.length ? ' · ' + parts.join(' · ') : '';
-  status.innerHTML = `<b>live</b> — ${ticks} ticks · last ${lastPrice?.toFixed(2)}${avNow} · click chart to anchor`;
+  const hint = tool === 'trend'
+    ? (pendingPoint ? 'trendline: click the second point' : 'trendline: click the first point')
+    : 'click chart to anchor';
+  status.innerHTML = `<b>live</b> — ${ticks} ticks · last ${lastPrice?.toFixed(2)}${avNow} · ${hint}`;
 }
 
 const ws = new WebSocket('ws://127.0.0.1:5999/');
