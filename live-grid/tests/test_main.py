@@ -120,14 +120,32 @@ def test_websocket_registers_params_and_streams_dirty_rows(monkeypatch):
         manager = app.state.manager
         quotes = app.state.quotes
         import time
+        # Wait on _dirty, not _conns. register() writes both, but as two
+        # separate statements, and this poll runs on a different thread from
+        # the app. Waiting on _conns could return in the gap between them, and
+        # the dirty marks below would then be written into a dict that did not
+        # have the key yet -- they would vanish, 151.0 would never flush, and
+        # receive_json() would block until CI's hang guard killed the job ten
+        # minutes later. register() now establishes _dirty first so this can no
+        # longer happen, but synchronising on the thing this test actually
+        # writes to is what makes the test correct on its own terms.
         for _ in range(50):
-            if manager._conns:
+            if manager._conns and manager._dirty:
                 break
             time.sleep(0.02)
         assert any("AAPL" in by_feed["us"] for by_feed in manager._conns.values())
+        assert manager._dirty, "connection registered but no dirty set to mark"
         quotes.rows["AAPL"] = {"symbol": "AAPL", "price": 151.0}
         for dirty in manager._dirty.values():
             dirty.add("AAPL")
-        row = ws.receive_json()
-        assert row["symbol"] == "AAPL"
+        # The registration's baseline seed may already have flushed AAPL at
+        # its snapshot price (100.0) before the overwrite above landed; the
+        # 151.0 update is guaranteed to follow it (AAPL is dirty again), so
+        # consume messages until it arrives instead of racing the first flush.
+        for _ in range(10):
+            row = ws.receive_json()
+            assert row["symbol"] == "AAPL"
+            if row["price"] == 151.0:
+                break
         assert row["price"] == 151.0
+
