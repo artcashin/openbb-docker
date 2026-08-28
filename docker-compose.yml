@@ -50,7 +50,7 @@ services:
     cap_add:
       - NET_ADMIN
       - NET_RAW
-    # UNVERIFIED (bridge-network migration, D3): the sidecar keeps its own
+    # Bridge migration (D3): the sidecar keeps its own
     # netns for WireGuard (unaffected above) and gains a bridge interface so
     # it can resolve the container names Serve now proxies to. tailscaled
     # manipulating routing/iptables while dual-homed is the one genuinely
@@ -68,7 +68,7 @@ services:
     platform: linux/amd64
     container_name: openbb-api
     restart: unless-stopped
-    # UNVERIFIED (bridge-network migration, Layer 1): was
+    # Bridge migration (Layer 1): was
     # `network_mode: service:tailscale`. `kdb` is a bridge alias, not a
     # separate container -- this IS the process that spawns q (below).
     networks:
@@ -81,7 +81,7 @@ services:
     # Platform app: same API, plus the CORS layer that answers Chrome's
     # Private Network Access preflight so pro.openbb.co can reach a backend
     # the browser classifies as local (see Ep. 2's gotchas, and api_app.py).
-    # UNVERIFIED (Layer 2): --host was 127.0.0.1 -- isolation now comes from
+    # Bridge migration (Layer 2): --host was 127.0.0.1 -- isolation now comes from
     # openbb-internal not being reachable from outside Docker, not from the
     # bind (see D1's accepted cost in the design doc).
     command: ["openbb-api", "--app", "/opt/api_app.py", "--name", "main", "--factory",
@@ -104,7 +104,7 @@ services:
     #   1. Drop a q binary into ./kdb (mounted below at /opt/kx:ro,
     #      KDB_LOCAL_QHOME=/opt/kx) and this container spawns it as a CHILD,
     #      bound to KDB_BIND_HOST:5000 (kdb-store/kdb_store/session.py).
-    #      UNVERIFIED (bridge-network migration, Layer 2): KDB_BIND_HOST is
+    #      Bridge migration (Layer 2): KDB_BIND_HOST is
     #      0.0.0.0 below -- isolation now comes from openbb-internal not
     #      being reachable from outside Docker (D1's accepted cost), not
     #      from a loopback-only bind the way it did before this migration.
@@ -122,7 +122,7 @@ services:
       - KDB_UPSTREAM=eodhd
       - KDB_LOCAL_QHOME=/opt/kx
       - QLIC=/opt/kx-license
-      # UNVERIFIED (Layer 2): new -- kdb-store/kdb_store/session.py's spawn
+      # Bridge migration (Layer 2): new -- kdb-store/kdb_store/session.py's spawn
       # bind was hardcoded 127.0.0.1 until the migration's second
       # prerequisite made it configurable (see the KDB_BIND_HOST commit).
       - KDB_BIND_HOST=0.0.0.0
@@ -151,7 +151,7 @@ services:
     platform: linux/amd64
     container_name: openbb-mcp
     restart: unless-stopped
-    # UNVERIFIED (bridge-network migration, Layer 1): was
+    # Bridge migration (Layer 1): was
     # `network_mode: service:tailscale`.
     networks:
       - openbb-internal
@@ -163,7 +163,7 @@ services:
     # EVERY chat request. Discovery mode exposes ~10 tools (~1.4k tokens)
     # and lets the agent activate categories on demand. LOAD-BEARING —
     # lose it and chat breaks completely (see Ep. 6's gotchas).
-    # UNVERIFIED (Layer 2): --host was 127.0.0.1.
+    # Bridge migration (Layer 2): --host was 127.0.0.1.
     command: ["openbb-mcp", "--host", "0.0.0.0", "--port", "6901",
               "--default-categories", "equity"]
     environment:
@@ -213,14 +213,14 @@ services:
     platform: linux/amd64
     container_name: openbb-stores-mcp
     restart: unless-stopped
-    # UNVERIFIED (bridge-network migration, Layer 1): was
+    # Bridge migration (Layer 1): was
     # `network_mode: service:tailscale`.
     networks:
       - openbb-internal
     depends_on:
       - tailscale
     command: ["python", "/opt/mcp_stores/server.py"]
-    # UNVERIFIED (Layer 2 + 4): STORES_HOST was 127.0.0.1, KX_HOST was
+    # Bridge migration (Layer 2 + 4): STORES_HOST was 127.0.0.1, KX_HOST was
     # 127.0.0.1 (reached the openbb-api-embedded q over the shared
     # namespace) -- now the openbb-internal bridge alias.
     environment:
@@ -262,19 +262,19 @@ services:
     platform: linux/amd64
     container_name: openbb-stores-explorer
     restart: unless-stopped
-    # UNVERIFIED (bridge-network migration, Layer 1): was
+    # Bridge migration (Layer 1): was
     # `network_mode: service:tailscale`.
     networks:
       - openbb-internal
     depends_on:
       - tailscale
-    # UNVERIFIED (Layer 2): the image's Dockerfile CMD binds 127.0.0.1 by
+    # Bridge migration (Layer 2): the image's Dockerfile CMD binds 127.0.0.1 by
     # design (a compose that forgets this override fails closed rather than
     # exposing it) -- overridden here rather than rebuilt, per the design
     # doc's Layer 2.
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "6904"]
     environment:
-      # UNVERIFIED (Layer 4): was 127.0.0.1 -- now the openbb-internal
+      # Bridge migration (Layer 4): was 127.0.0.1 -- now the openbb-internal
       # bridge alias for the openbb-api-embedded q.
       - KX_HOST=kdb
       - KX_PORT=5000
@@ -295,13 +295,13 @@ services:
     image: openbb-key-maint:latest
     container_name: openbb-key-maint
     restart: unless-stopped
-    # UNVERIFIED (bridge-network migration, Layer 1): was
+    # Bridge migration (Layer 1): was
     # `network_mode: service:tailscale`.
     networks:
       - openbb-internal
     depends_on:
       - tailscale
-    # UNVERIFIED (Layer 2): key-maint's network server was hardcoded to
+    # Bridge migration (Layer 2): key-maint's network server was hardcoded to
     # 127.0.0.1 (D5's prerequisite) -- see the KEY_MAINT_HOST commit. Its
     # admin unix-socket server (below) is untouched by this migration.
     environment:
@@ -345,19 +345,19 @@ services:
     image: openbb-live-grid:latest
     container_name: openbb-live-grid
     restart: unless-stopped
-    # UNVERIFIED (bridge-network migration, Layer 1): was
+    # Bridge migration (Layer 1): was
     # `network_mode: service:tailscale`.
     networks:
       - openbb-internal
     depends_on:
       - tailscale
-    # UNVERIFIED (Layer 2): the image's Dockerfile CMD binds 127.0.0.1 by
+    # Bridge migration (Layer 2): the image's Dockerfile CMD binds 127.0.0.1 by
     # design -- overridden here rather than rebuilt, per the design doc's
     # Layer 2 (same reasoning as stores-explorer, above).
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "6903"]
     # Ep. 10: live-grid records the tick stream into the SAME q openbb-api
     # spawns and aggregates it into bars for the unified chart.
-    # UNVERIFIED (Layer 4, not in the original design doc's table -- found
+    # Bridge migration (Layer 4, not in the original design doc's table -- found
     # while implementing it): KDB_BIND_HOST=kdb is new here. Before this
     # migration, live-grid found openbb-api's spawn via
     # kdb-store/kdb_store/session.py's link 2, hardcoded to 127.0.0.1 and
@@ -424,7 +424,7 @@ services:
     image: rss-ticker:8.0.0
     container_name: openbb-rss-ticker
     restart: unless-stopped
-    # UNVERIFIED (bridge-network migration, Layer 1): was
+    # Bridge migration (Layer 1): was
     # `network_mode: service:tailscale`. Its tailscale_auth guard needed a
     # source change first (rss-ticker's own repo, feat/ticker-server) --
     # bind_host: 0.0.0.0 (rss-ticker-config/config.yaml.example) refused to
@@ -551,7 +551,7 @@ volumes:
   # admin socket stays a host bind mount.
   key-maint-admin:
 
-# UNVERIFIED (bridge-network migration, D1): replaces the loopback boundary
+# Bridge migration (D1): replaces the loopback boundary
 # `network_mode: service:tailscale` gave the eight services below. Docker
 # networks are isolated by default, so nothing outside this project reaches
 # them even though they now bind 0.0.0.0 -- but D1's accepted cost applies:
