@@ -68,13 +68,9 @@ services:
     platform: linux/amd64
     container_name: openbb-api
     restart: unless-stopped
-    # Bridge migration (Layer 1): was
-    # `network_mode: service:tailscale`. `kdb` is a bridge alias, not a
-    # separate container -- this IS the process that spawns q (below).
+    # Bridge migration (Layer 1): was `network_mode: service:tailscale`.
     networks:
-      openbb-internal:
-        aliases:
-          - kdb
+      - openbb-internal
     depends_on:
       - tailscale
     # `--app/--factory` serves api_app.py's factory instead of the stock
@@ -102,12 +98,8 @@ services:
     # the licence does not permit redistributing q. Bring your own:
     #
     #   1. Drop a q binary into ./kdb (mounted below at /opt/kx:ro,
-    #      KDB_LOCAL_QHOME=/opt/kx) and this container spawns it as a CHILD,
-    #      bound to KDB_BIND_HOST:5000 (kdb-store/kdb_store/session.py).
-    #      Bridge migration (Layer 2): KDB_BIND_HOST is
-    #      0.0.0.0 below -- isolation now comes from openbb-internal not
-    #      being reachable from outside Docker (D1's accepted cost), not
-    #      from a loopback-only bind the way it did before this migration.
+    #      KDB_LOCAL_QHOME=/opt/kx) and set KDB_EMBEDDED=true to spawn it as
+    #      a CHILD of this container instead of using the kdb service.
     #   2. Or run your own kdb container and set KDB_HOST in credentials.env
     #      -- see credentials.env.example for the platform-specific value
     #      and the bind/publish rules for that setup.
@@ -117,15 +109,18 @@ services:
     # cache passes through to the upstream provider and the stack runs
     # uncached.
     environment:
-      - KDB_EMBEDDED=true
+      # q runs as the `kdb` service on openbb-internal (see its block), not as a
+      # child of this container: a child would bind this container's own
+      # loopback and be invisible to live-grid, stores-mcp and stores-explorer,
+      # which all need the same store. Set KDB_EMBEDDED=true with a q binary in
+      # ./kdb to spawn a private child instead -- the read-through cache works,
+      # but nothing else can see it.
+      - KDB_EMBEDDED=false
+      - KDB_HOST=kdb
+      - KDB_PORT=5000
       - KDB_MEMORY_MB=8192
       - KDB_UPSTREAM=eodhd
-      - KDB_LOCAL_QHOME=/opt/kx
       - QLIC=/opt/kx-license
-      # Bridge migration (Layer 2): new -- kdb-store/kdb_store/session.py's spawn
-      # bind was hardcoded 127.0.0.1 until the migration's second
-      # prerequisite made it configurable (see the KDB_BIND_HOST commit).
-      - KDB_BIND_HOST=0.0.0.0
     volumes:
       - openbb-data:/root/.openbb_platform
       - ./kdb:/opt/kx:ro
@@ -136,6 +131,36 @@ services:
     # and the kernel OOM killer takes the whole container down -- API and
     # all -- instead of q hitting -w and dying alone.
     mem_limit: 12g
+
+  # kdb+ (Ep. 10): the read-through cache's q, as its own service on
+  # openbb-internal so openbb-api, live-grid, stores-mcp and stores-explorer can
+  # all reach the same store by name. KX_PORT with no host binds every interface
+  # IN THIS CONTAINER, which on a private bridge means the bridge -- no ports
+  # are published, so nothing off this Docker host reaches it.
+  #
+  # READ THIS BEFORE RUNNING IT. q executes arbitrary q code and has no
+  # authentication whatsoever. On the bridge, any process on this Docker host
+  # and any container attached to openbb-internal can execute code inside it.
+  # The sibling containers could already do that under the shared namespace --
+  # host processes are what is new. It is never reachable from your LAN or your
+  # tailnet, and Serve publishes no route to it. If you run untrusted workloads
+  # on this host, do not run this service.
+  #
+  # Needs ./kdb-data/startup.q, which this repo does not ship (kdb-data/ is
+  # git-ignored). Without it the container exits and the cache passes through
+  # to the upstream provider.
+  kdb:
+    image: ghcr.io/artcashin/kdb-x:amd64
+    container_name: openbb-kdb
+    restart: unless-stopped
+    networks:
+      - openbb-internal
+    environment:
+      - KX_PORT=5000
+    volumes:
+      - ./kdb-data:/data
+      - ./kdb-license:/opt/kx-license:ro
+    command: ["/data/startup.q"]
 
   # OpenBB MCP server (Ep. 6): wraps the same Platform app as openbb-api,
   # in-process, and serves MCP over streamable-http for the AI analyst.
