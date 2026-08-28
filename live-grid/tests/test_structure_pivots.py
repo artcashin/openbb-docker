@@ -1,6 +1,7 @@
 import polars as pl
 import pytest
 
+from app.structure.atr import adjusted_atr
 from app.structure.pivots import find_pivots
 
 
@@ -112,7 +113,13 @@ class TestFindPivots:
         Built the way a vendor actually reports one: raw OHLC halves at the
         split bar while adj_close stays continuous. The measured cost of getting
         this wrong elsewhere in this codebase was 14 MFI points, so it is worth
-        a test rather than a comment."""
+        a test rather than a comment.
+
+        The bar-equality check below is necessary but not sufficient: this
+        fixture's post-split swing (~25 points) clears even a threshold
+        mis-scaled by the split, so it alone cannot catch the ATR itself
+        being computed from raw (rather than adjusted) OHLC. The ATR
+        continuity check that follows targets that directly."""
         closes = triangle([100.0, 120.0, 105.0, 130.0])
         clean = make_bars(closes)
         split_at = 15
@@ -125,3 +132,12 @@ class TestFindPivots:
         # split and the adjusted series is identical to the unsplit one.
         assert [p.bar for p in find_pivots(split, k=3.0, scale="t")] == \
                [p.bar for p in find_pivots(clean, k=3.0, scale="t")]
+
+        # The threshold pivots use is k * ATR, so the ATR itself must be
+        # computed from the adjusted series too. If it were derived from
+        # RAW OHLC instead (app.ta.exprs.true_range()), raw true range would
+        # roughly halve at split_at while the adjusted series does not, and
+        # these two ATR series -- which reconstruct the same adjusted OHLC --
+        # would diverge sharply right where the split lands.
+        assert adjusted_atr(split, 14) == pytest.approx(
+            adjusted_atr(clean, 14), rel=1e-9)

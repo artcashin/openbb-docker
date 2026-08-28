@@ -13,19 +13,25 @@ from __future__ import annotations
 
 import polars as pl
 
+from app.structure.atr import adjusted_atr
 from app.structure.types import Pivot, price_tag
-from app.ta.exprs import adj, true_range
+from app.ta.exprs import adj
 
 
 def _series(df: pl.DataFrame, atr_period: int):
-    """Adjusted high/low/close plus Wilder ATR, as plain Python lists."""
+    """Adjusted high/low/close plus Wilder ATR, as plain Python lists.
+
+    The threshold below is `k * ATR`, tested against moves in the adjusted
+    high/low/close -- so the ATR has to be measured in that same adjusted
+    price space (see app/structure/atr.py) or the threshold is scaled wrong,
+    worst right at a split.
+    """
     frame = df.with_columns([
         adj("high").alias("_h"), adj("low").alias("_l"), adj("close").alias("_c"),
-        true_range().ewm_mean(alpha=1 / atr_period, adjust=False,
-                              ignore_nulls=True).alias("_atr"),
     ])
+    atrs = adjusted_atr(df, atr_period)
     return (frame["_h"].to_list(), frame["_l"].to_list(), frame["_c"].to_list(),
-            frame["_atr"].to_list(), frame["date"].cast(pl.Utf8).to_list())
+            atrs, frame["date"].cast(pl.Utf8).to_list())
 
 
 def find_pivots(df: pl.DataFrame, k: float, scale: str,
