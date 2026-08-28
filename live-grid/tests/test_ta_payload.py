@@ -53,7 +53,7 @@ def test_bars_to_frame_falls_back_when_adjusted_close_is_an_explicit_null():
     """A present-but-null adjusted_close must fall back exactly like an absent one.
 
     `.get(k, default)` does not fire on a null value. Providers return null
-    adjusted_close for indices, forex and crypto, and 13 of the 22 indicators
+    adjusted_close for indices, forex and crypto, and 16 of the 26 indicators
     read that column.
     """
     nulled = [{**b, "adjusted_close": None} for b in BARS]

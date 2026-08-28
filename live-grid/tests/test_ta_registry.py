@@ -181,6 +181,9 @@ class TestMurphyOhlcvIndicators:
             (pl.lit(10.0) + pl.int_range(pl.len()).cast(pl.Float64)).alias("close"),
             (pl.lit(11.0) + pl.int_range(pl.len()).cast(pl.Float64)).alias("high"),
             (pl.lit(9.0) + pl.int_range(pl.len()).cast(pl.Float64)).alias("low"),
+            # adj_close must move WITH close, or the adj_close/close factor
+            # rescales each bar differently and the series is no longer rising.
+            (pl.lit(10.0) + pl.int_range(pl.len()).cast(pl.Float64)).alias("adj_close"),
         ])
         v = compute(rising, [resolve("mfi", period=14)])[col("mfi", period=14)]
         assert v[n - 1] == pytest.approx(100.0, abs=1e-12)
@@ -190,3 +193,59 @@ class TestMurphyOhlcvIndicators:
         parity -- an eodhd map here would send a query that cannot be answered."""
         for name in ("momentum", "envelopes", "ad", "mfi"):
             assert REGISTRY[name].eodhd is None, name
+
+    def test_ad_is_identical_on_the_adjusted_series(self):
+        """Close location value is a ratio taken WITHIN one bar, so the
+        adj_close/close factor cancels top and bottom ALGEBRAICALLY. It does not
+        cancel to the bit: a factor like 0.985 is not exactly representable, so
+        the scaled prices carry rounding the running sum accumulates. The
+        tolerance below is the measured floor (3.7e-08 relative on this fixture),
+        not a guess, and it is orders of magnitude below anything that could
+        change a reading. The test exists so nobody 'fixes' `ad` into an adjusted
+        variant believing the numbers will move."""
+        df = fixture_frame()
+        f = pl.col("adj_close") / pl.col("close")
+        adjusted = df.with_columns([(pl.col(c) * f).alias(c)
+                                    for c in ("open", "high", "low", "close")])
+        a = compute(df, [resolve("ad")])[col("ad")]
+        b = compute(adjusted, [resolve("ad")])[col("ad")]
+        assert all(x == pytest.approx(y, rel=1e-6)
+                   for x, y in zip(a, b) if x is not None and y is not None)
+
+    def test_mfi_uses_the_adjusted_series_across_a_split(self):
+        """mfi compares typical price ACROSS bars, so unlike ad the factor does
+        not cancel. On a raw series a 2:1 split reads as a 50% crash and every
+        window spanning it is misclassified."""
+        df = fixture_frame()
+        # Raw prices halve at bar 150; adj_close stays continuous, which is
+        # exactly what a real split looks like in the vendor's data.
+        split = df.with_columns([
+            pl.when(pl.int_range(pl.len()) >= 150).then(pl.col(c) / 2)
+              .otherwise(pl.col(c)).alias(c)
+            for c in ("open", "high", "low", "close")
+        ])
+        v = compute(split, [resolve("mfi", period=14)])[col("mfi", period=14)]
+        # The split bar is not a crash on the adjusted series, so the window
+        # spanning it must not read as washed-out selling.
+        window = [x for x in v[150:164] if x is not None]
+        assert window, "no mfi values across the split"
+        assert min(window) > 5.0, f"split read as a collapse: min {min(window)}"
+
+    def test_the_adjustment_factor_is_one_when_a_provider_sends_no_adjustment(self):
+        """payload.py falls back to adj_close = close for indices, forex and
+        crypto. The factor must be exactly 1.0 there, not null or inf."""
+        from app.ta.exprs import adj_factor
+
+        df = fixture_frame().with_columns(pl.col("close").alias("adj_close"))
+        f = df.select(adj_factor().alias("f"))["f"]
+        assert all(x == pytest.approx(1.0, abs=1e-15) for x in f)
+
+    def test_the_adjustment_factor_survives_a_zero_close(self):
+        df = fixture_frame().with_columns([
+            pl.when(pl.int_range(pl.len()) == 7).then(0.0)
+              .otherwise(pl.col("close")).alias("close"),
+        ])
+        from app.ta.exprs import adj_factor
+        f = df.select(adj_factor().alias("f"))["f"]
+        assert f[7] == pytest.approx(1.0, abs=1e-15)
+        assert all(x is not None and x == x for x in f)

@@ -33,6 +33,38 @@ def price_col(basis: str) -> str:
         ) from None
 
 
+def adj_factor() -> pl.Expr:
+    """The per-bar split/dividend adjustment factor, adj_close / close.
+
+    Vendors that ship raw OHLC beside a single adj_close intend exactly this:
+    the adjustment is one scalar per bar applied to the whole bar, so the factor
+    is recoverable and open/high/low can be adjusted with it. Without that, any
+    indicator reading high or low is stuck on the raw series and reads a split
+    as a real price move.
+    """
+    # Guarded: payload.py falls back to adj_close = close when a provider
+    # returns no adjustment (indices, forex, crypto), which already yields 1.0.
+    # The guard is for a zero or null close, where the division would put inf or
+    # null into every downstream bar instead of "no adjustment".
+    close = pl.col("close")
+    return (
+        pl.when((close == 0) | close.is_null() | pl.col("adj_close").is_null())
+        .then(1.0)
+        .otherwise(pl.col("adj_close") / close)
+    )
+
+
+def adj(name: str) -> pl.Expr:
+    """`name` scaled onto the adjusted series. `adj("high")` etc.
+
+    Ratios taken WITHIN one bar -- close location value, for instance -- are
+    scale-invariant and need none of this: the factor cancels top and bottom.
+    Use it where price LEVELS are compared across bars, which is where a raw
+    series puts a discontinuity at every split.
+    """
+    return pl.col(name) * adj_factor()
+
+
 def true_range() -> pl.Expr:
     """Wilder's true range, always on raw OHLC."""
     prev_close = pl.col("close").shift(1)

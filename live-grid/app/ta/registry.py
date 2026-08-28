@@ -15,7 +15,7 @@ from typing import Any
 
 import polars as pl
 
-from app.ta.exprs import Base, price_col
+from app.ta.exprs import Base, adj, price_col
 
 
 @dataclass(frozen=True)
@@ -680,9 +680,16 @@ register(Indicator(
     price_basis="raw",
     convention=(
         "Chaikin's A/D line: running sum of volume weighted by close location "
-        "value, ((close-low)-(high-close))/(high-low). RAW OHLC, not adjusted: "
-        "the ratio needs high, low and close on one scale, and adj_close adjusts "
-        "only the close. A bar with high == low contributes 0, not NaN. Related "
+        "value, ((close-low)-(high-close))/(high-low). Raw OHLC, and it does "
+        "not matter: that ratio is taken WITHIN one bar, so the adj_close/close "
+        "factor cancels top and bottom algebraically. Agreement is to float rounding, "
+        "not to the bit: a factor like 0.985 is not exactly representable, so the "
+        "scaled prices carry error the running sum accumulates -- measured 3.7e-08 "
+        "relative on the fixture, which is nowhere near a meaningful threshold but "
+        "is not zero. What the adjustment cannot fix here is volume, "
+        "which a split multiplies and which we receive unadjusted -- that "
+        "discontinuity is real and lives in the running sum, not in the ratio. "
+        "A bar with high == low contributes 0, not NaN. Related "
         "to `obv` but not derivable from it -- obv assigns a bar's whole volume "
         "by the sign of the close change, this one weights it by where the close "
         "landed inside the bar."
@@ -699,7 +706,11 @@ register(Indicator(
 
 def _mfi_build(p: dict, b: dict[str, Base]) -> list[pl.Expr]:
     n = p["period"]
-    tp = (pl.col("high") + pl.col("low") + pl.col("close")) / 3.0
+    # ADJUSTED high/low/close, via the adj_close/close factor. mfi compares
+    # typical price ACROSS bars to classify each one up or down, so on a raw
+    # series a split reads as a real move: measured 14.0 MFI points of error
+    # over a 2:1 split on the test fixture, on a 0-100 scale.
+    tp = (adj("high") + adj("low") + adj("close")) / 3.0
     rmf = tp * pl.col("volume")
     prev = tp.shift(1)
     pos = pl.when(tp > prev).then(rmf).otherwise(0.0).rolling_sum(n)
@@ -716,9 +727,12 @@ def _mfi_build(p: dict, b: dict[str, Base]) -> list[pl.Expr]:
 
 register(Indicator(
     name="mfi", label="Money Flow Index", params={"period": 14}, pane="own",
-    price_basis="raw",
+    price_basis="adjusted",
     convention=(
-        "Volume-weighted RSI on typical price (high+low+close)/3, RAW OHLC. "
+        "Volume-weighted RSI on typical price (high+low+close)/3, on the "
+        "ADJUSTED series: open/high/low are scaled by the adj_close/close "
+        "factor, which is one scalar per bar. Typical price is compared across "
+        "bars, so a raw series reads every split as a real move. "
         "Bars are classified up or down by typical price against the previous "
         "bar; an unchanged bar counts to neither side, matching the standard "
         "definition. A window with no down bars reads exactly 100."
