@@ -58,7 +58,7 @@ services:
   # OpenBB Platform REST API. Binds 127.0.0.1 so only Serve can reach it.
   openbb-api:
     build: .
-    image: openbb-local:11.1.1
+    image: openbb-local:11.0.0
     # ArcticDB publishes no aarch64 Linux wheels, so the image is amd64.
     # On Apple Silicon this runs under emulation -- correct, but slower.
     platform: linux/amd64
@@ -155,7 +155,7 @@ services:
   # Endpoint path is /mcp (a request to /mcp/ 307-redirects there).
   openbb-mcp:
     build: .
-    image: openbb-local:11.1.1
+    image: openbb-local:11.0.0
     # ArcticDB publishes no aarch64 Linux wheels, so the image is amd64.
     # On Apple Silicon this runs under emulation -- correct, but slower.
     platform: linux/amd64
@@ -204,7 +204,7 @@ services:
   # publish it tailnet-only, never funneled.
   stores-mcp:
     build: .
-    image: openbb-local:11.1.1
+    image: openbb-local:11.0.0
     platform: linux/amd64
     container_name: openbb-stores-mcp
     restart: unless-stopped
@@ -245,7 +245,7 @@ services:
     build:
       context: .
       dockerfile: stores-explorer/Dockerfile
-    image: openbb-stores-explorer:11.1.1
+    image: openbb-stores-explorer:11.0.0
     # ArcticDB publishes no aarch64 Linux wheels, so the image is amd64.
     # On Apple Silicon this runs under emulation -- correct, but slower.
     platform: linux/amd64
@@ -275,7 +275,7 @@ services:
   # not the first).
   key-maint:
     build: ./key-maint
-    image: openbb-key-maint:11.1.1
+    image: openbb-key-maint:11.0.0
     container_name: openbb-key-maint
     restart: unless-stopped
     environment:
@@ -308,7 +308,7 @@ services:
     build:
       context: .
       dockerfile: live-grid/Dockerfile
-    image: openbb-live-grid:11.1.1
+    image: openbb-live-grid:11.0.0
     container_name: openbb-live-grid
     restart: unless-stopped
     # Bind is baked into the Dockerfile CMD as 127.0.0.1:6903. Override HERE,
@@ -364,7 +364,7 @@ services:
   #   cp rss-ticker.env.example rss-ticker.env       # TICKER_ADMIN_KEY
   rss-ticker:
     build: https://github.com/artcashin/rss-ticker.git
-    image: rss-ticker:11.1.1
+    image: rss-ticker:11.0.0
     container_name: openbb-rss-ticker
     restart: unless-stopped
     networks: [openbb-internal]
@@ -391,7 +391,7 @@ services:
   #   cp minio.env.example minio.env && chmod 600 minio.env
   minio:
     build: ./minio
-    image: openbb-minio:11.1.1
+    image: openbb-minio:11.0.0
     platform: linux/amd64
     container_name: openbb-minio
     hostname: minio
