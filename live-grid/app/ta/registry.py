@@ -604,3 +604,128 @@ register(Indicator(
     eodhd=EodhdMap("sar", {"acceleration": "acceleration", "maximum": "maximum"},
                    {"sar": "sar"}, "raw", "EODHD sar is raw OHLC."),
 ))
+
+
+# --- Momentum ---------------------------------------------------------------
+
+
+register(Indicator(
+    name="momentum", label="Momentum", params={"period": 10}, pane="own",
+    price_basis="adjusted",
+    convention=(
+        "Price DIFFERENCE over the period: close - close[period]. Deliberately "
+        "not `roc`, which is the ratio form. They share turning points and a "
+        "zero line, but momentum is in price units and roc is in percent, so a "
+        "guide level or a threshold written for one is meaningless on the other."
+    ),
+    deps=lambda p: [],
+    build=lambda p, b: [
+        (pl.col(price_col("adjusted"))
+         - pl.col(price_col("adjusted")).shift(p["period"])).alias("momentum"),
+    ],
+    render={"momentum": _line("#c678dd")},
+    guides=[0.0],
+    # No eodhd map: their endpoint has no momentum function.
+))
+
+
+# --- Moving-average envelopes ----------------------------------------------
+
+
+def _envelopes_build(p: dict, b: dict[str, Base]) -> list[pl.Expr]:
+    n, pct = p["period"], p["pct"]
+    mid = pl.col(f"sma:adj_close:{n}")
+    f = pct / 100.0
+    return [
+        mid.alias("env_mid"),
+        (mid * (1.0 + f)).alias("env_up"),
+        (mid * (1.0 - f)).alias("env_lo"),
+    ]
+
+
+register(Indicator(
+    name="envelopes", label="MA Envelopes", params={"period": 20, "pct": 2.5},
+    pane="price", price_basis="adjusted",
+    convention=(
+        "Fixed-PERCENTAGE bands around SMA(period) of adjusted close: "
+        "mid * (1 +/- pct/100). The width never responds to volatility, which "
+        "is the whole point of the construction and the difference from bbands "
+        "(standard-deviation scaled) and keltner (ATR scaled). `pct` is percent, "
+        "so 2.5 means 2.5%, not 250%."
+    ),
+    deps=lambda p: [Base("sma", price_col("adjusted"), p["period"])],
+    build=_envelopes_build,
+    render={"env_mid": _line("#9aa0a6"), "env_up": _line("#e5c07b"),
+            "env_lo": _line("#e5c07b")},
+    # No eodhd map: their endpoint has no envelope function.
+))
+
+
+# --- Accumulation / Distribution line ---------------------------------------
+
+
+def _ad_build(p: dict, b: dict[str, Base]) -> list[pl.Expr]:
+    hi, lo, cl, vol = pl.col("high"), pl.col("low"), pl.col("close"), pl.col("volume")
+    span = hi - lo
+    # Close location value. A doji bar where high == low has no location within
+    # its own range: the ratio is 0/0. Contributing 0 is the standard reading --
+    # no information, so no accumulation -- and it keeps the running sum finite
+    # instead of poisoning every later bar with a NaN.
+    clv = pl.when(span == 0).then(0.0).otherwise(((cl - lo) - (hi - cl)) / span)
+    return [(clv * vol).cum_sum().alias("ad")]
+
+
+register(Indicator(
+    name="ad", label="Accumulation/Distribution", params={}, pane="own",
+    price_basis="raw",
+    convention=(
+        "Chaikin's A/D line: running sum of volume weighted by close location "
+        "value, ((close-low)-(high-close))/(high-low). RAW OHLC, not adjusted: "
+        "the ratio needs high, low and close on one scale, and adj_close adjusts "
+        "only the close. A bar with high == low contributes 0, not NaN. Related "
+        "to `obv` but not derivable from it -- obv assigns a bar's whole volume "
+        "by the sign of the close change, this one weights it by where the close "
+        "landed inside the bar."
+    ),
+    deps=lambda p: [],
+    build=_ad_build,
+    render={"ad": _line("#56b6c2")},
+    # No eodhd map: their endpoint has no accumulation/distribution function.
+))
+
+
+# --- Money Flow Index -------------------------------------------------------
+
+
+def _mfi_build(p: dict, b: dict[str, Base]) -> list[pl.Expr]:
+    n = p["period"]
+    tp = (pl.col("high") + pl.col("low") + pl.col("close")) / 3.0
+    rmf = tp * pl.col("volume")
+    prev = tp.shift(1)
+    pos = pl.when(tp > prev).then(rmf).otherwise(0.0).rolling_sum(n)
+    neg = pl.when(tp < prev).then(rmf).otherwise(0.0).rolling_sum(n)
+    # An all-up window has no negative flow: the ratio diverges and the limit of
+    # 100 - 100/(1+r) is exactly 100. Returning it directly avoids inf/NaN
+    # leaking into the pane, and 100 is the correct reading, not a sentinel.
+    return [
+        pl.when(neg == 0).then(100.0)
+        .otherwise(100.0 - 100.0 / (1.0 + pos / neg))
+        .alias("mfi"),
+    ]
+
+
+register(Indicator(
+    name="mfi", label="Money Flow Index", params={"period": 14}, pane="own",
+    price_basis="raw",
+    convention=(
+        "Volume-weighted RSI on typical price (high+low+close)/3, RAW OHLC. "
+        "Bars are classified up or down by typical price against the previous "
+        "bar; an unchanged bar counts to neither side, matching the standard "
+        "definition. A window with no down bars reads exactly 100."
+    ),
+    deps=lambda p: [],
+    build=_mfi_build,
+    render={"mfi": _line("#98c379")},
+    guides=[20.0, 80.0],
+    # No eodhd map: their endpoint has no money flow function.
+))

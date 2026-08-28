@@ -84,8 +84,13 @@ def test_rsi_carries_thirty_seventy_guides():
     assert get("rsi").guides == [30.0, 70.0]
 
 
-def test_tier_one_is_twenty_two_indicators_with_twelve_eodhd_maps():
-    assert len(REGISTRY) == 22, sorted(REGISTRY)
+def test_the_registry_is_twenty_six_indicators_with_twelve_eodhd_maps():
+    """22 tier-one indicators plus the four Murphy names computable from OHLCV
+    alone (momentum, envelopes, ad, mfi). The EODHD count does NOT move with
+    them: none of the four exists on EODHD's function list, so none can claim
+    parity. A map appearing here later means someone mapped an indicator their
+    endpoint cannot answer."""
+    assert len(REGISTRY) == 26, sorted(REGISTRY)
     mapped = [n for n, i in REGISTRY.items() if i.eodhd is not None]
     assert len(mapped) == 12, sorted(mapped)  # cci is local-only (see registry)
 
@@ -95,3 +100,93 @@ def test_resolve_rejects_a_style_that_is_not_a_mapping():
     is a TypeError, not the 502-with-a-reason every other bad param gets."""
     with pytest.raises(ValueError, match="style must be a mapping"):
         resolve("sma", style="x")
+
+
+class TestMurphyOhlcvIndicators:
+    """The five Murphy names computable from OHLCV alone. Each test pins the
+    property that distinguishes the indicator from its nearest neighbour in the
+    registry -- the failure these would actually catch is someone 'simplifying'
+    one into the other."""
+
+    def test_momentum_is_a_difference_not_a_ratio(self):
+        f = compute(fixture_frame(), [resolve("momentum", period=10)])
+        m = f[col("momentum", period=10)]
+        close = f["adj_close"]
+        # Exactly close - close[10], to the last bit.
+        assert m[50] == pytest.approx(close[50] - close[40], abs=1e-12)
+        # And NOT the ratio form: roc would be a percentage of the same pair.
+        roc_like = (close[50] / close[40] - 1.0) * 100.0
+        assert m[50] != pytest.approx(roc_like, abs=1e-6)
+
+    def test_momentum_crosses_zero_where_price_returns_to_its_level(self):
+        f = compute(fixture_frame(), [resolve("momentum", period=10)])
+        m, close = f[col("momentum", period=10)], f["adj_close"]
+        for i in range(10, len(m)):
+            if m[i] is not None:
+                assert (m[i] > 0) == (close[i] > close[i - 10])
+
+    def test_envelope_width_ignores_volatility(self):
+        """The property that separates envelopes from bbands. Band width here is
+        a fixed fraction of the middle line, whatever the market is doing."""
+        f = compute(fixture_frame(), [resolve("envelopes", period=20, pct=2.5)])
+        mid = f[col("envelopes", "env_mid", period=20, pct=2.5)]
+        up = f[col("envelopes", "env_up", period=20, pct=2.5)]
+        lo = f[col("envelopes", "env_lo", period=20, pct=2.5)]
+        for i in range(25, len(mid)):
+            assert up[i] / mid[i] == pytest.approx(1.025, abs=1e-12)
+            assert lo[i] / mid[i] == pytest.approx(0.975, abs=1e-12)
+
+    def test_envelope_pct_is_percent_not_fraction(self):
+        f = compute(fixture_frame(), [resolve("envelopes", period=20, pct=10)])
+        mid = f[col("envelopes", "env_mid", period=20, pct=10)]
+        up = f[col("envelopes", "env_up", period=20, pct=10)]
+        assert up[30] / mid[30] == pytest.approx(1.10, abs=1e-12)
+
+    def test_ad_survives_a_bar_whose_high_equals_its_low(self):
+        """0/0 on a doji. Contributing 0 keeps the running sum finite; a NaN here
+        would poison every later bar, which is the bug worth pinning."""
+        df = fixture_frame()
+        row = 40
+        flat = df.with_columns([
+            pl.when(pl.int_range(pl.len()) == row).then(pl.col("close"))
+              .otherwise(pl.col("high")).alias("high"),
+            pl.when(pl.int_range(pl.len()) == row).then(pl.col("close"))
+              .otherwise(pl.col("low")).alias("low"),
+        ])
+        ad = compute(flat, [resolve("ad")])[col("ad")]
+        assert ad[row] is not None and ad[row] == ad[row]           # not NaN
+        assert ad[row] == pytest.approx(ad[row - 1], abs=1e-12)      # contributed 0
+        assert ad[-1] == ad[-1]                                      # and never poisoned
+
+    def test_ad_is_not_obv(self):
+        """obv assigns a bar's whole volume by the sign of the close change; ad
+        weights it by where the close landed inside the bar. Same inputs, and
+        they must not collapse onto each other."""
+        f = compute(fixture_frame(), [resolve("ad"), resolve("obv")])
+        a, o = f[col("ad")], f[col("obv")]
+        assert any(abs(a[i] - o[i]) > 1e-6 for i in range(20, len(a)))
+
+    def test_mfi_stays_inside_zero_and_one_hundred(self):
+        f = compute(fixture_frame(), [resolve("mfi", period=14)])
+        v = [x for x in f[col("mfi", period=14)] if x is not None]
+        assert v, "mfi produced no values"
+        assert all(0.0 <= x <= 100.0 for x in v)
+
+    def test_mfi_reads_exactly_one_hundred_when_no_bar_falls(self):
+        """No negative flow makes the ratio diverge. The limit is 100, and
+        returning it directly is what keeps inf out of the pane."""
+        df = fixture_frame()
+        n = len(df)
+        rising = df.with_columns([
+            (pl.lit(10.0) + pl.int_range(pl.len()).cast(pl.Float64)).alias("close"),
+            (pl.lit(11.0) + pl.int_range(pl.len()).cast(pl.Float64)).alias("high"),
+            (pl.lit(9.0) + pl.int_range(pl.len()).cast(pl.Float64)).alias("low"),
+        ])
+        v = compute(rising, [resolve("mfi", period=14)])[col("mfi", period=14)]
+        assert v[n - 1] == pytest.approx(100.0, abs=1e-12)
+
+    def test_the_new_indicators_declare_no_eodhd_map(self):
+        """None of these exist on EODHD's function list, so none may claim
+        parity -- an eodhd map here would send a query that cannot be answered."""
+        for name in ("momentum", "envelopes", "ad", "mfi"):
+            assert REGISTRY[name].eodhd is None, name
