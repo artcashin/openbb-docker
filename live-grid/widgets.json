@@ -121,6 +121,10 @@
         "description": "Comma separated, e.g. rsi:period=14,avwap:anchor=2026-08-28T14:30"
       },
       {
+        "paramName": "anchor", "value": "", "label": "AVWAP anchor", "type": "text",
+        "description": "Anchor an AVWAP (trade-true, from recorded ticks) at this time, ISO 8601 e.g. 2026-08-28T14:30. Shorthand for indicators=avwap:anchor=..."
+      },
+      {
         "paramName": "source", "value": "local", "label": "Source", "type": "text",
         "description": "local computes here; eodhd uses their pre-calculated values (5 API calls per indicator, refreshed on bar close)",
         "options": [

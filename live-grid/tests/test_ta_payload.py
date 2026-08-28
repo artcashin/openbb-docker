@@ -121,3 +121,17 @@ def test_bars_to_frame_carries_trade_vwap_past_leading_history_nulls():
     ]
     frame = bars_to_frame(bars)
     assert frame["vwap"].to_list() == [None, 1.25]
+
+
+def test_with_anchor_folds_the_param_into_the_indicator_list():
+    """The widget's anchor param is declarative click-anchoring: Workspace's
+    chart viewer has no click channel back to this backend."""
+    from app.ta.payload import with_anchor
+
+    assert with_anchor("", "2026-08-28T14:30") == "avwap:anchor=2026-08-28T14:30"
+    assert with_anchor("rsi:period=14", "2026-08-28T14:30") == (
+        "avwap:anchor=2026-08-28T14:30,rsi:period=14"
+    )
+    assert with_anchor("rsi:period=14", "") == "rsi:period=14"
+    explicit = "avwap:anchor=2026-08-28T09:30,rsi:period=14"
+    assert with_anchor(explicit, "2026-08-28T14:30") == explicit  # explicit wins

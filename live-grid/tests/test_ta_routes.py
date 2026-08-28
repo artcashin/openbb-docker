@@ -120,3 +120,10 @@ def test_a_degradation_appearing_mid_stream_forces_a_figure_not_a_delta(monkeypa
     title = second["figure"]["layout"]["title"]["text"]
     assert "SMA(3)" in title
     assert "sma|period=3" not in title
+
+
+def test_ta_chart_anchor_param_adds_an_anchored_vwap_trace():
+    response = client().get("/ta_chart", params={"symbol": "AAPL", "macro": "none",
+                                                 "anchor": "2026-08-28T14:30"})
+    names = [t.get("name") for t in response.json().get("data", [])]
+    assert "Anchored VWAP" in names

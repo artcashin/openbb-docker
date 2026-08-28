@@ -32,6 +32,7 @@ from app.ta.payload import (
     bars_to_frame,
     build_payload,
     revised_from,
+    with_anchor,
 )
 from app.ta.sources import EodhdSource
 
@@ -297,9 +298,11 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
     @app.get("/ta_chart")
     async def ta_chart(symbol: str = "AAPL", interval: str = "1d",
                        source: str = "local", macro: str = "none",
-                       indicators: str = "", start: str | None = None,
+                       indicators: str = "", anchor: str | None = None,
+                       start: str | None = None,
                        end: str | None = None, provider: str = "kdb"):
         s, e = _window(start, end)
+        indicators = with_anchor(indicators, anchor)
         params = ChartParams(symbol, interval, source, macro, indicators, s, e, provider)
         bars_error = None
         try:
@@ -337,7 +340,7 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
             interval=query.get("interval", "1d"),
             source=query.get("source", "local"),
             macro=query.get("macro", "none"),
-            indicators=query.get("indicators", ""),
+            indicators=with_anchor(query.get("indicators", ""), query.get("anchor")),
             start=s, end=e, provider=query.get("provider", "kdb"),
         )
         interval_s = float(os.getenv("TA_PUSH_INTERVAL_MS", "1000")) / 1000.0

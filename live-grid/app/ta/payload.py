@@ -40,6 +40,24 @@ def _coerce(key: str, raw: str):
     return int(value) if value.is_integer() and key != "k" else value
 
 
+def with_anchor(indicators: str, anchor: str | None) -> str:
+    """Fold the widget's `anchor` param into the indicator list.
+
+    A first-class param because Workspace's chart viewer has no click channel
+    back to this backend -- anchoring by interaction lives in clients that own
+    their renderer (bdobb-v2's real-time chart); here it is declarative. An
+    avwap already present in `indicators` wins over the param.
+    """
+    anchor = (anchor or "").strip()
+    if not anchor:
+        return indicators
+    chunks = (indicators or "").split(",")
+    if any(chunk.strip().split(":")[0].strip() == "avwap" for chunk in chunks):
+        return indicators
+    spec = f"avwap:anchor={anchor}"
+    return f"{spec},{indicators}" if indicators else spec
+
+
 def parse_indicators(raw: str) -> list[Req]:
     """`"rsi:period=14,sma:period=200"` -> resolved requests."""
     reqs: list[Req] = []
