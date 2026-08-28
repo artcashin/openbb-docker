@@ -43,3 +43,32 @@ class TestGuard:
     def test_missing_auth_file_denies_all(self, tmp_path):
         c = app_with_guard(str(tmp_path / "absent.env"))
         assert c.get("/ping", headers=basic("u1", "p1")).status_code == 401
+
+
+class TestAdminIsNotExempt:
+    """The admin (tier 3) surface is a unix socket with no port -- but it is NOT
+    header-free. create_app applies the same Basic-auth guard for role="admin"
+    as for role="network", so reaching the 0700 socket raises an ALREADY
+    AUTHENTICATED caller to tier 3; it does not replace authentication.
+
+    The README and the compose comment both claimed "no port and no header" for
+    years. Nothing tested it, so nothing caught it."""
+
+    def test_the_admin_role_is_not_exempt_from_basic_auth(self, tmp_path):
+        from app.server import create_app
+
+        auth = write_auth(tmp_path)
+        cred = tmp_path / "credentials.env"
+        cred.write_text("FMP_API_KEY=abc\n")
+        c = TestClient(create_app(role="admin", cred_file=str(cred), auth_file=auth))
+        assert c.get("/widgets.json").status_code == 401
+        assert c.get("/widgets.json", headers=basic("u1", "p1")).status_code == 200
+
+    def test_the_network_role_is_not_exempt_either(self, tmp_path):
+        from app.server import create_app
+
+        auth = write_auth(tmp_path)
+        cred = tmp_path / "credentials.env"
+        cred.write_text("FMP_API_KEY=abc\n")
+        c = TestClient(create_app(role="network", cred_file=str(cred), auth_file=auth))
+        assert c.get("/widgets.json").status_code == 401

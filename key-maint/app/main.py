@@ -32,7 +32,8 @@ def build_servers(
         #
         # Only this server is affected. The admin server above binds a unix
         # socket, so it never reaches the bridge at all: its 0700 host directory
-        # remains the authorization, with no port and no header.
+        # is what raises a caller to tier 3, on top of the same Basic auth that
+        # every tier requires (create_app applies the guard for both roles).
         host=os.environ.get("KEYMAINT_NETWORK_HOST", "127.0.0.1"),
         port=NETWORK_PORT,
         log_level="info",
