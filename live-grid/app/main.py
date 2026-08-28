@@ -277,7 +277,7 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
     @app.get("/chart")
     async def chart(symbol: str = "AAPL", interval: str = "1d",
                     start: str | None = None, end: str | None = None,
-                    provider: str = "kdb"):
+                    provider: str = "kdb", theme: str | None = None):
         s, e = _window(start, end)
         try:
             bars, _ = await build_series(
@@ -287,7 +287,7 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
             log.warning("chart failed for %s: %s", symbol, exc)
             return JSONResponse({"data": [], "layout": {"title": {"text": f"{symbol}: {exc}"}}},
                                 status_code=502)
-        return JSONResponse(build_figure(symbol, bars))
+        return JSONResponse(build_figure(symbol, bars, theme=theme))
 
     _eodhd = EodhdSource(
         key or "",
@@ -298,7 +298,7 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
     async def ta_chart(symbol: str = "AAPL", interval: str = "1d",
                        source: str = "local", macro: str = "none",
                        indicators: str = "", start: str | None = None,
-                       end: str | None = None, provider: str = "kdb"):
+                       end: str | None = None, provider: str = "kdb", theme: str | None = None):
         s, e = _window(start, end)
         params = ChartParams(symbol, interval, source, macro, indicators, s, e, provider)
         bars_error = None

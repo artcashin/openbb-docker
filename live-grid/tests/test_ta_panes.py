@@ -105,7 +105,10 @@ def test_style_overrides_key_by_key_and_keeps_the_render_type():
 
 def test_no_style_leaves_the_registry_render_untouched():
     panes = assign(None, [resolve("sma", period=50)])
-    assert panes[0].series[0].render["color"] == "#4c9be8"
+    # Render colours are {dark, light} now: the client sends its theme and the
+    # figure layer resolves it. The dark value is the one this registry entry
+    # always carried.
+    assert panes[0].series[0].render["color"] == {"dark": "#4c9be8", "light": "#2f6fd0"}
 
 
 def test_all_reqs_deduplicates_across_panes():

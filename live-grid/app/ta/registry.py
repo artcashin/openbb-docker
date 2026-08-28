@@ -119,8 +119,38 @@ def col_suffix(req: Req) -> str:
     return "|" + ",".join(parts) if parts else ""
 
 
+# One Dark -> One Light. These are the two halves of ONE designed palette, not
+# values invented per indicator: a light card needs darker, more saturated ink
+# for the same legibility, and choosing ad hoc would drift as indicators are
+# added. Any colour used in a render entry must appear here -- _themed raises on
+# a miss rather than silently shipping an unreadable line, and a test asserts
+# the map covers the whole registry.
+_LIGHT: dict[str, str] = {
+    "#c678dd": "#a626a4",  # purple
+    "#98c379": "#50a14f",  # green
+    "#61afef": "#4078f2",  # blue
+    "#e5c07b": "#c18401",  # yellow
+    "#e06c75": "#e45649",  # red
+    "#9aa0a6": "#696c77",  # mid grey
+    "#d19a66": "#986801",  # orange
+    "#56b6c2": "#0184bc",  # cyan
+    "#5c6370": "#a0a1a7",  # muted -- bars and guides, deliberately recessive
+    "#e8b923": "#b8860b",  # amber
+    "#abb2bf": "#383a42",  # foreground grey
+    "#8ed081": "#3f8c3f",  # light green
+    "#4c9be8": "#2f6fd0",  # secondary blue
+}
+
+
+def _themed(color: str | None) -> dict | None:
+    """A render colour as {dark, light}. Raises on an unmapped colour."""
+    if color is None:
+        return None
+    return {"dark": color, "light": _LIGHT[color]}
+
+
 def _line(color: str | None = None) -> dict:
-    return {"type": "line", "color": color}
+    return {"type": "line", "color": _themed(color)}
 
 
 # --- Simple moving average -------------------------------------------------
@@ -322,7 +352,7 @@ register(Indicator(
     convention="Raw bar volume, drawn as bars.",
     deps=lambda p: [],
     build=lambda p, b: [pl.col("volume").alias("volume_bar")],
-    render={"volume_bar": {"type": "bar", "color": "#5c6370"}},
+    render={"volume_bar": {"type": "bar", "color": _themed("#5c6370")}},
     # No eodhd map: this is the bar's own raw volume field, not a derived
     # indicator -- there is nothing to reconcile against a technical-
     # indicator endpoint (their avgvol/avgvolccy are rolling averages, a
@@ -347,7 +377,7 @@ register(Indicator(
                     Base("ewm", price_col("adjusted"), p["slow"])],
     build=_macd_build,
     render={"macd": _line("#61afef"), "macd_signal": _line("#e06c75"),
-            "macd_hist": {"type": "bar", "color": "#5c6370"}},
+            "macd_hist": {"type": "bar", "color": _themed("#5c6370")}},
     eodhd=EodhdMap("macd", {"fast_period": "fast", "slow_period": "slow",
                             "signal_period": "signal"},
                    {"macd": "macd", "signal": "macd_signal",
@@ -600,7 +630,7 @@ register(Indicator(
     ),
     deps=lambda p: [],
     build=lambda p, b: [],  # produced by iterative.parabolic_sar
-    render={"sar": {"type": "scatter", "mode": "markers", "color": "#abb2bf"}},
+    render={"sar": {"type": "scatter", "mode": "markers", "color": _themed("#abb2bf")}},
     eodhd=EodhdMap("sar", {"acceleration": "acceleration", "maximum": "maximum"},
                    {"sar": "sar"}, "raw", "EODHD sar is raw OHLC."),
 ))

@@ -18,6 +18,30 @@ from app.ta.panes import Pane, domains
 PRICE = "__price__"
 
 
+# The client sends its live theme setting; the server honours it. Values are the
+# two halves of one palette -- see _LIGHT in registry.py.
+THEMES = {"dark": "plotly_dark", "light": "plotly_white"}
+GUIDE = {"dark": "#5c6370", "light": "#a0a1a7"}
+
+
+def resolve_theme(theme: str | None) -> str:
+    """An unknown or absent theme falls back to dark, the long-standing default.
+
+    Deliberately permissive rather than a 400: a chart is presentation, and a
+    caller sending a theme this service does not know should get a readable
+    chart, not an error page.
+    """
+    return theme if theme in THEMES else "dark"
+
+
+def pick_colour(colour, theme: str):
+    """Render colours are {dark, light}. Plain strings pass through so a caller
+    that hand-builds a render entry is not broken by the themed shape."""
+    if isinstance(colour, dict):
+        return colour.get(theme) or colour.get("dark")
+    return colour
+
+
 def _axis(index: int) -> str:
     return "y" if index == 0 else f"y{index + 1}"
 
@@ -63,9 +87,10 @@ def _dates(frame: pl.DataFrame) -> list[str]:
 
 def build_ta_figure(
     symbol: str, frame: pl.DataFrame, panes: Sequence[Pane],
-    annotations: Sequence = (), subtitle: str = "",
+    annotations: Sequence = (), subtitle: str = "", theme: str | None = None,
 ) -> dict:
     """A stacked multi-pane figure: candlesticks on top, indicators below."""
+    theme = resolve_theme(theme)
     x = _dates(frame)
     spans = domains(list(panes))
 
@@ -77,7 +102,7 @@ def build_ta_figure(
     }]
 
     layout: dict = {
-        "template": "plotly_dark",
+        "template": THEMES[theme],
         "margin": {"l": 48, "r": 20, "t": 48, "b": 36},
         "showlegend": True,
         "hovermode": "x unified",
@@ -99,7 +124,7 @@ def build_ta_figure(
         for series in pane.series:
             render = dict(series.render)
             kind = render.pop("type", "line")
-            color = render.pop("color", None)
+            color = pick_colour(render.pop("color", None), theme)
             trace = {
                 "name": series.label, "x": x, "y": _column(frame, series.column),
                 "yaxis": axis, "xaxis": xaxis,
@@ -116,7 +141,7 @@ def build_ta_figure(
             layout["shapes"].append({
                 "type": "line", "xref": "paper", "x0": 0, "x1": 1,
                 "yref": axis, "y0": guide, "y1": guide,
-                "line": {"color": "#5c6370", "width": 1, "dash": "dot"},
+                "line": {"color": GUIDE[theme], "width": 1, "dash": "dot"},
             })
 
     # Annotations carry the internal column name, which since the
