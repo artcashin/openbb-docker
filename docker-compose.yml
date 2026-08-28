@@ -1,8 +1,10 @@
 # OpenBB Platform API behind a Tailscale sidecar — Adventures in OpenBB, Ep. 1–2.
 #
-# The tailscale container owns the network namespace; the API joins it, so the
-# pair appears on your tailnet as one node named "openbb". NOTHING is published
-# to the LAN and no ports are mapped — Tailscale Serve is the only way in:
+# The containers share a private bridge network, openbb-internal. Only the
+# sidecar is on the tailnet, so the stack still appears there as ONE node named
+# "openbb" — because nothing else has a tailnet presence of its own, not because
+# they share a network namespace. NOTHING is published to the LAN and no ports
+# are mapped — Tailscale Serve is the only way in:
 #
 #   https://openbb.<your-tailnet>.ts.net/    (Serve terminates TLS, real LE cert)
 #
@@ -12,11 +14,13 @@
 # policy — see docs/funnel.md). Lock first, then door: auth is REQUIRED
 # before the funnel config exists, by construction.
 #
-# What the lock covers: OpenBB hangs Basic auth off the /api/v1 router, so it
-# guards the data and nothing else. /widgets.json, /apps.json and /openapi.json
-# answer unauthenticated, and funneling port 443 therefore publishes the widget
-# catalogue and its parameter schemas. Deliberate, and spelled out in
-# docs/funnel.md — if that is more than you want public, keep this tailnet-only.
+# What the lock covers: EVERYTHING on the API. Upstream OpenBB hangs Basic auth
+# off the /api/v1 router only, which would leave /widgets.json, /apps.json,
+# /agents.json and FastAPI's own /docs and /openapi.json answering
+# unauthenticated — so the image patches rest_api.py to require Basic auth as
+# app-level middleware instead (see the Dockerfile). Measured with
+# OPENBB_API_AUTH=true and no credentials: all of those return 401. Funneling
+# port 443 therefore publishes nothing without the password.
 #
 # Before first start:
 #   cp ts.env.example ts.env                     # Tailscale auth key, chmod 600
@@ -39,10 +43,10 @@ services:
       - TS_HOSTNAME=openbb
       # MANDATORY. The image defaults to userspace networking, where tailscaled
       # terminates inbound tailnet connections itself and forwards them to
-      # 127.0.0.1 — which would make the API reachable AROUND Serve at
-      # <node-ip>:6900. Kernel mode (this, plus the tun device and NET_ADMIN
-      # below) makes the tailnet IP a real interface, so the 127.0.0.1 socket
-      # below is genuinely unreachable from other peers.
+      # 127.0.0.1 — this container's OWN loopback, where nothing listens: the
+      # services are on the bridge, not in this namespace. Kernel mode (this,
+      # plus the tun device and NET_ADMIN below) gives the node a real interface
+      # and lets Serve proxy to each service by name over openbb-internal.
       - TS_USERSPACE=false
       - TS_STATE_DIR=/var/lib/tailscale
       - TS_SERVE_CONFIG=/config/serve.json
@@ -51,6 +55,7 @@ services:
       # brand-new machine joining with a possibly-expired key).
       - ./ts-state:/var/lib/tailscale
       - ./ts-config:/config
+    networks: [openbb-internal]
     devices:
       - /dev/net/tun:/dev/net/tun
     cap_add:
@@ -63,10 +68,10 @@ services:
     image: openbb-local:1.0.0
     container_name: openbb-api
     restart: unless-stopped
-    network_mode: service:tailscale
+    networks: [openbb-internal]
     depends_on:
       - tailscale
-    command: ["openbb-api", "--host", "127.0.0.1", "--port", "6900"]
+    command: ["openbb-api", "--host", "0.0.0.0", "--port", "6900"]
     env_file:
       # Provider API keys (optional — keyless providers work with none).
       - path: ./credentials.env
@@ -81,16 +86,23 @@ services:
 
   # OpenBB MCP server (Ep. 6): wraps the same Platform app as openbb-api,
   # in-process, and serves MCP over streamable-http for the AI analyst.
-  # Bound to 127.0.0.1; Serve publishes it on :8443 — tailnet-only, NEVER
+  # On openbb-internal; Serve publishes it on :8443 — tailnet-only, NEVER
   # funneled (it has no auth of its own; do NOT load api-auth.env here —
   # auth on this in-process wrapper breaks its tool calls).
+  #
+  # BECAUSE it has no auth, be clear about what the bridge means for it: any
+  # process on this Docker host, and any container you attach to
+  # openbb-internal, can call it directly — and its tools run with YOUR
+  # provider API keys. Neither this nor the older arrangement exposes it to the
+  # LAN or the tailnet, and Serve still gates the tailnet path — but if you run
+  # untrusted workloads on this host, this is the service to think about first.
   # Endpoint path is /mcp (a request to /mcp/ 307-redirects there).
   openbb-mcp:
     build: .
     image: openbb-local:6.0.0
     container_name: openbb-mcp
     restart: unless-stopped
-    network_mode: service:tailscale
+    networks: [openbb-internal]
     depends_on:
       - tailscale
     # --default-categories + --tool-discovery keep the initial tools/list
@@ -99,7 +111,7 @@ services:
     # EVERY chat request. Discovery mode exposes ~10 tools (~1.4k tokens)
     # and lets the agent activate categories on demand. LOAD-BEARING —
     # removing these flags breaks chat completely (see Ep. 6's gotchas).
-    command: ["openbb-mcp", "--host", "127.0.0.1", "--port", "6901",
+    command: ["openbb-mcp", "--host", "0.0.0.0", "--port", "6901",
               "--default-categories", "equity", "--tool-discovery"]
     environment:
       # Neutralize the unconditionally-registered `install_skill` admin tool:
@@ -126,7 +138,13 @@ services:
     image: openbb-key-maint:latest
     container_name: openbb-key-maint
     restart: unless-stopped
-    network_mode: service:tailscale
+    environment:
+      # key-maint's network bind is in Python, not in this file; it defaults to
+      # loopback so a compose file that forgets this fails closed. Only the
+      # NETWORK server moves -- the admin server is a unix socket and stays off
+      # the bridge, with its 0700 host directory as the authorization.
+      - KEYMAINT_NETWORK_HOST=0.0.0.0
+    networks: [openbb-internal]
     depends_on:
       - tailscale
     volumes:
@@ -138,10 +156,17 @@ services:
 
   # rss-ticker (Ep. 8): the news wire — polls RSS feeds, streams new articles
   # over a websocket, serves a Bloomberg-style news window widget. Source lives
-  # in its own repo; compose builds it from GitHub. Loopback :8088; Serve
-  # publishes it on :8088 — tailnet-only, NEVER funneled (under tailscale_auth
-  # it trusts the identity header Serve injects, and a funneled request
-  # carries none, so it would fail closed — but don't rely on that).
+  # in its own repo; compose builds it from GitHub. On openbb-internal at :8088;
+  # Serve publishes it on :8088 — tailnet-only, NEVER funneled.
+  #
+  # AUTH MODE, and why it is not tailscale_auth: that mode trusts the
+  # Tailscale-User-Login header Serve injects, which is only sound when Serve
+  # is the ONLY thing that can reach the port -- so rss-ticker refuses to start
+  # under tailscale_auth unless bind_host is loopback. On a shared bridge any
+  # container attached to openbb-internal could connect directly and forge that
+  # header, so this stack uses manifest_key + per-user tokens instead: the
+  # manifest key gates widgets.json and is what you paste into Workspace, and
+  # each user carries their own token. See rss-ticker-config/config.yaml.
   #
   # Before first start:
   #   cp rss-ticker-config/config.yaml.example rss-ticker-config/config.yaml
@@ -151,7 +176,7 @@ services:
     image: rss-ticker:8.0.0
     container_name: openbb-rss-ticker
     restart: unless-stopped
-    network_mode: service:tailscale
+    networks: [openbb-internal]
     depends_on:
       - tailscale
     env_file:
@@ -162,6 +187,14 @@ services:
     volumes:
       - ./rss-ticker-config:/config:ro
       - rss-ticker-data:/data
+
+networks:
+  # Private to this stack. Docker networks are isolated from each other by
+  # default, so this bridge is the boundary the shared namespace used to be.
+  # Do NOT set `internal: true` — it blocks egress, and the API exists to make
+  # outbound calls to data providers.
+  openbb-internal:
+    driver: bridge
 
 volumes:
   openbb-data:
