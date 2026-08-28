@@ -321,15 +321,74 @@ def kdb_select(
         return {"table": table, "returned_rows": len(df), "rows": _records(df)}
 
 
+LIVE_GRID_URL = os.environ.get("LIVE_GRID_URL", "http://live-grid:6903")
+
+
+def _structure_get(**params) -> dict:
+    """One call to live-grid's /structure, one scale per call.
+
+    live-grid owns the data path: /series holds the kdb read-through cache and
+    its seam logic, and this tool must not grow a second answer to "get me
+    correct bars". Reachable by service name because both containers share the
+    openbb-internal bridge.
+    """
+    import httpx
+
+    r = httpx.get(f"{LIVE_GRID_URL}/structure", params=params, timeout=30.0)
+    r.raise_for_status()
+    return r.json()
+
+
+def structure_detect(symbol: str, interval: str = "1d",
+                     start: str | None = None, end: str | None = None) -> dict:
+    """Detect chart structure: swing pivots, trendlines and support/resistance.
+
+    Returns geometry, NOT named formations -- no "head and shoulders". Read the
+    pivots and name what you see.
+
+    Each pivot carries `confirmed`. The most recent one is routinely
+    `confirmed: false`: it is the developing swing and may still extend. Never
+    describe a formation as complete when it rests on an unconfirmed pivot.
+
+    Trendlines and levels carry `provisional` for the same reason, one step
+    removed: a line or level can be built in part from that same unconfirmed
+    pivot -- with as few as 3 touches, it can even be the anchor that defines
+    it -- so `provisional: true` means the geometry itself is still settling,
+    even though `touches` and `violations` read like a finished line. Never
+    call a provisional trendline or level a confirmed one.
+
+    Results come at three scales -- swing, intermediate, primary -- detected
+    independently. Structure appearing at more than one scale is stronger.
+    `swing_atr` is the size of the move into a pivot in units of average true
+    range, so it is comparable across symbols and intervals.
+    """
+    scales = ["swing", "intermediate", "primary"]
+    merged: dict | None = None
+    for name in scales:
+        params = {"symbol": symbol, "interval": interval, "scale": name}
+        if start:
+            params["start"] = start
+        if end:
+            params["end"] = end
+        page = _structure_get(**params)
+        if merged is None:
+            merged = {k: v for k, v in page.items() if k != "scales"}
+            merged["scales"] = []
+        merged["scales"] += page.get("scales", [])
+    return merged or {"symbol": symbol, "scales": []}
+
+
 # Registered here (not via decorator) so tests import the plain functions.
-for _fn in (
+REGISTERED_TOOLS = (
     arctic_list_libraries,
     arctic_list_symbols,
     arctic_read,
     kdb_tables,
     kdb_table_schema,
     kdb_select,
-):
+    structure_detect,
+)
+for _fn in REGISTERED_TOOLS:
     mcp.tool(_fn)
 
 

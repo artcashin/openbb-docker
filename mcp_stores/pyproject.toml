@@ -15,6 +15,7 @@ dependencies = [
     "starlette",
     "arcticdb",
     "pykx>=3.2",
+    "httpx",
 ]
 
 [project.optional-dependencies]
