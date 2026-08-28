@@ -22,6 +22,7 @@
     <button id="tool-segment" title="two clicks draw a closed segment">╱ segment</button>
     <button id="tool-ray" title="two clicks draw an open ray, extended as bars arrive">↗ ray</button>
     <button id="tool-fib" title="two clicks (swing start, swing end) draw retracement levels">ƒ fib</button>
+    <button id="tool-gann" title="one click on a swing point fans 30/45/60 degree lines, up from a low, down from a high">∠ gann</button>
     <button id="tool-clear" title="forget saved anchors and drawings, reload">🗑 clear</button>
   </span>
   <span id="status">connecting…</span>
@@ -90,7 +91,8 @@ function persist() {
   try {
     localStorage.setItem(STORE_KEY, JSON.stringify({
       anchors: [...anchors.keys()],
-      drawings: drawings.map(d => ({ kind: d.kind, a: d.a, b: d.b, slope: d.slope })),
+      drawings: drawings.map(d => (
+        { kind: d.kind, a: d.a, b: d.b, slope: d.slope, slopes: d.slopes })),
     }));
   } catch { /* storage unavailable: drawings just live for the session */ }
 }
@@ -100,6 +102,7 @@ const toolButtons = {
   segment: document.getElementById('tool-segment'),
   ray: document.getElementById('tool-ray'),
   fib: document.getElementById('tool-fib'),
+  gann: document.getElementById('tool-gann'),
 };
 for (const [name, btn] of Object.entries(toolButtons)) {
   btn.onclick = () => {
@@ -119,6 +122,13 @@ document.getElementById('tool-clear').onclick = () => {
 const FIB_LEVELS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
 
 function renderDrawing(d) {
+  if (d.kind === 'gann') {
+    // fanned from one recorded point along three recorded slopes
+    const t = Math.max(d.a.time + INTERVAL_S, bar ? bar.time : d.a.time + INTERVAL_S);
+    d.lines.forEach((line, i) => line.setData(
+      [d.a, { time: t, value: d.a.value + d.slopes[i] * (t - d.a.time) }]));
+    return;
+  }
   const tFar = Math.max(d.b.time, bar ? bar.time : d.b.time);
   if (d.kind === 'fib') {
     const t0 = Math.min(d.a.time, d.b.time);
@@ -140,10 +150,42 @@ function renderDrawing(d) {
 
 const _drawSeries = (opts) => chart.addSeries(LightweightCharts.LineSeries, {
   color: '#abb2bf', lineWidth: 1, priceLineVisible: false,
-  lastValueVisible: false, crosshairMarkerVisible: false, ...opts,
+  lastValueVisible: false, crosshairMarkerVisible: false,
+  // drawings annotate the price scale, they must not drive it: a gann
+  // fan's 60-degree far end would otherwise squash the candles
+  autoscaleInfoProvider: () => null, ...opts,
 });
 
+const GANN_DEGREES = [30, 45, 60];
+
+function addGann(a) {
+  // relative high or low? the click nearer the surrounding bars' low fans
+  // up; nearer their high fans down
+  const win = candles.data().filter((c) => Math.abs(c.time - a.time) <= 5 * INTERVAL_S);
+  const hi = win.length ? Math.max(...win.map((c) => c.high)) : a.value;
+  const lo = win.length ? Math.min(...win.map((c) => c.low)) : a.value;
+  const sign = (a.value - lo) <= (hi - a.value) ? 1 : -1;
+  // a chart "degree" is scale-dependent, so the angles are measured on
+  // screen AT DRAW TIME, then recorded as data slopes (price per second) --
+  // a redraw reproduces the same fan even after the view rescales
+  const el = document.getElementById('chart');
+  const vr = chart.timeScale().getVisibleRange();
+  const pTop = candles.coordinateToPrice(0);
+  const pBot = candles.coordinateToPrice(el.clientHeight);
+  if (!vr || pTop == null || pBot == null) return;
+  const k = ((pTop - pBot) / el.clientHeight) / ((vr.to - vr.from) / el.clientWidth);
+  const slopes = GANN_DEGREES.map((deg) => sign * Math.tan(deg * Math.PI / 180) * k);
+  materializeDrawing({ kind: 'gann', a, slopes });
+  persist();
+}
+
 function materializeDrawing(d) {
+  if (d.kind === 'gann') {
+    d.lines = GANN_DEGREES.map((deg) => _drawSeries({ color: '#4aa3c8', title: deg + '°' }));
+    drawings.push(d);
+    renderDrawing(d);
+    return;
+  }
   // back-compat: drawings saved before slopes were recorded derive one
   if (d.slope == null) d.slope = (d.b.value - d.a.value) / (d.b.time - d.a.time);
   if (d.kind === 'fib') {
@@ -173,6 +215,7 @@ chart.subscribeClick((p) => {
   if (!p.point) return;
   const point = { time: p.time, value: candles.coordinateToPrice(p.point.y) };
   if (point.value == null) return;
+  if (tool === 'gann') { addGann(point); showStatus(); return; }
   if (!pendingPoint) { pendingPoint = point; } else { addDrawing(tool, pendingPoint, point); pendingPoint = null; }
   showStatus();
 });
@@ -198,7 +241,9 @@ function showStatus() {
   const avNow = parts.length ? ' · ' + parts.join(' · ') : '';
   const hint = tool === 'anchor'
     ? 'click chart to anchor'
-    : `${tool}: click the ${pendingPoint ? 'second' : 'first'} point`;
+    : tool === 'gann'
+      ? 'gann: click a relative high or low'
+      : `${tool}: click the ${pendingPoint ? 'second' : 'first'} point`;
   status.innerHTML = `<b>live</b> — ${ticks} ticks · last ${lastPrice?.toFixed(2)}${avNow} · ${hint}`;
 }
 
@@ -255,7 +300,7 @@ ws.onmessage = (ev) => {
           a.lastSec = sec;
         }
       }
-      for (const d of drawings) if (d.kind === 'ray' || d.kind === 'fib') renderDrawing(d);
+      for (const d of drawings) if (d.kind !== 'segment') renderDrawing(d); // open kinds ride the live edge
     }
     showStatus();
   }
