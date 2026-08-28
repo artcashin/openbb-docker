@@ -126,15 +126,6 @@ async def _run_until(manager: FeedManager, condition, timeout: float = 5.0) -> N
             await task
 
 
-async def _run_briefly(manager: FeedManager, seconds: float = 0.05) -> None:
-    """Start manager.run(), let it cycle for a bit, then cancel it cleanly."""
-    task = asyncio.create_task(manager.run())
-    await asyncio.sleep(seconds)
-    task.cancel()
-    try:
-        await task
-    except asyncio.CancelledError:
-        pass
 
 
 class TestRecorderIntegration:
@@ -144,12 +135,23 @@ class TestRecorderIntegration:
             "k", QuoteTable(), client_factory=fake_ws_client_factory,
             drain_interval=0.01, rebuild_delay=0.0, recorder=recorder,
         )
-        asyncio.run(_run_briefly(m))
+        asyncio.run(_run_until(m, lambda: recorder.flush.called))
         assert recorder.flush.called
 
     def test_no_recorder_means_no_flush_calls(self, fake_ws_client_factory):
         m = make_manager(fake_ws_client_factory)  # recorder=None by default
-        asyncio.run(_run_briefly(m, seconds=0.03))  # must not raise
+        # No recorder means nothing to observe recorder-side, so watch the drain
+        # cycle itself: wait for a couple of cycles to prove the manager really
+        # ran for a while with no recorder attached, without raising.
+        calls = {"n": 0}
+        real_drain_all = m._drain_all
+
+        def counting_drain_all():
+            calls["n"] += 1
+            real_drain_all()
+
+        m._drain_all = counting_drain_all
+        asyncio.run(_run_until(m, lambda: calls["n"] >= 2))  # must not raise
 
     def test_prune_only_fires_once_per_interval(self, fake_ws_client_factory):
         # _last_prune starts at -inf, so the first drain cycle always clears
@@ -178,7 +180,7 @@ class TestRecorderIntegration:
             "k", QuoteTable(), client_factory=fake_ws_client_factory,
             drain_interval=0.01, rebuild_delay=0.0, recorder=recorder,
         )
-        asyncio.run(_run_briefly(m))
+        asyncio.run(_run_until(m, lambda: recorder.prune.called))
         assert recorder.prune.called
 
     def test_a_failing_recorder_never_breaks_the_feed_loop(self, fake_ws_client_factory):
