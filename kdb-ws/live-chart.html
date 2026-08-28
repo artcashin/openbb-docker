@@ -32,9 +32,6 @@ const candles = chart.addSeries(LightweightCharts.CandlestickSeries, {
   upColor: '#26a69a', downColor: '#ef5350', borderVisible: false,
   wickUpColor: '#26a69a', wickDownColor: '#ef5350',
 });
-const avLine = chart.addSeries(LightweightCharts.LineSeries, {
-  color: '#f0ad4e', lineWidth: 2, priceLineVisible: false,
-});
 
 // lightweight-charts time = unix seconds, ascending and unique per series
 const toSec = (iso) => Math.floor(Date.parse(iso.slice(0, 23) + 'Z') / 1000);
@@ -42,10 +39,29 @@ const bucketSec = (iso) => Math.floor(toSec(iso) / INTERVAL_S) * INTERVAL_S;
 
 let bar = null;           // the in-progress bar
 let ticks = 0, lastPrice = null;
-// anchored VWAP overlay: seeded by the avwap response, extended per live
-// tick from its running pv/vol totals. Ticks that arrive before the
-// response are already inside its sums -- ready gates against double-count.
-const av = { ready: false, pv: 0, vol: 0, lastSec: 0 };
+
+// Anchored VWAP overlays -- one per anchor, each a series SERVED BY KDB:
+// the avwap request returns the trade-true series (sum(price*size)/sum(size)
+// from the actual ticks) plus running pv/vol totals, and the client extends
+// it per live tick. Click the chart to anchor a new one at that time.
+// `ready` gates live accumulation: ticks that arrive before the response
+// are already inside the server's sums.
+const PALETTE = ['#f0ad4e', '#61afef', '#c678dd', '#98c379', '#e06c75', '#56b6c2'];
+const anchors = new Map(); // anchor iso -> {line, pv, vol, lastSec, ready}
+
+function addAnchor(iso, fit) {
+  if (anchors.has(iso) || anchors.size >= PALETTE.length || ws.readyState !== 1) return;
+  const line = chart.addSeries(LightweightCharts.LineSeries, {
+    color: PALETTE[anchors.size % PALETTE.length], lineWidth: 2,
+    priceLineVisible: false, title: 'AVWAP ' + iso.slice(11, 16) + 'Z',
+  });
+  anchors.set(iso, { line, pv: 0, vol: 0, lastSec: 0, ready: false, fit });
+  ws.send(JSON.stringify({ type: 'avwap', sym: SYM, anchor: iso }));
+}
+
+chart.subscribeClick((p) => {
+  if (p.time) addAnchor(new Date(p.time * 1000).toISOString().slice(0, 19), false);
+});
 
 function applyTick(r) {
   const t = bucketSec(r.time), p = r.price, v = r.size || 0;
@@ -62,8 +78,11 @@ function applyTick(r) {
 }
 
 function showStatus() {
-  const avNow = av.vol > 0 ? ` · avwap(${ANCHOR.slice(11, 16)}Z) ${(av.pv / av.vol).toFixed(2)}` : '';
-  status.innerHTML = `<b>live</b> — ${ticks} ticks · last ${lastPrice?.toFixed(2)}${avNow}`;
+  const parts = [...anchors.entries()]
+    .filter(([, a]) => a.vol > 0)
+    .map(([iso, a]) => `avwap(${iso.slice(11, 16)}Z) ${(a.pv / a.vol).toFixed(2)}`);
+  const avNow = parts.length ? ' · ' + parts.join(' · ') : '';
+  status.innerHTML = `<b>live</b> — ${ticks} ticks · last ${lastPrice?.toFixed(2)}${avNow} · click chart to anchor`;
 }
 
 const ws = new WebSocket('ws://127.0.0.1:5999/');
@@ -71,7 +90,7 @@ ws.onopen = () => {
   status.textContent = 'connected — requesting bars + avwap, subscribing';
   ws.send(JSON.stringify({ type: 'bars', sym: SYM, interval: INTERVAL_S }));
   ws.send(JSON.stringify({ type: 'sub', syms: [SYM] }));
-  ws.send(JSON.stringify({ type: 'avwap', sym: SYM, anchor: ANCHOR }));
+  addAnchor(ANCHOR, true);
 };
 ws.onmessage = (ev) => {
   const m = JSON.parse(ev.data);
@@ -81,25 +100,31 @@ ws.onmessage = (ev) => {
     bar = data[data.length - 1] || null;
     chart.timeScale().fitContent();
   } else if (m.table === 'avwap') {
+    const a = anchors.get(m.anchor);
+    if (!a) return;
     // collapse to one point per BAR bucket (last value wins): setData needs
     // unique ascending times, and sub-bar points would shrink the time
     // scale's unit to seconds, drawing the candles skinny
     const bySec = new Map(m.data.map(p => [bucketSec(p.time), p.avwap]));
-    avLine.setData([...bySec].map(([time, value]) => ({ time, value })));
-    av.pv = m.pv; av.vol = m.vol; av.ready = true;
-    av.lastSec = Math.max(0, ...bySec.keys());
+    a.line.setData([...bySec].map(([time, value]) => ({ time, value })));
+    a.pv = m.pv; a.vol = m.vol; a.ready = true;
+    a.lastSec = Math.max(0, ...bySec.keys());
     // per-second line points re-derive the time scale's bar unit, which
-    // collapses the view to seconds -- re-fit after the second seed lands
-    chart.timeScale().fitContent();
+    // collapses the view to seconds -- re-fit after the initial seed lands
+    // (not for click-added anchors: yanking the view under a click is rude)
+    if (a.fit) chart.timeScale().fitContent();
     showStatus();
   } else if (m.table === 'trades') {
     m.data.forEach(applyTick);
-    if (av.ready && m.data.length) {
-      for (const r of m.data) { av.pv += r.price * (r.size || 0); av.vol += r.size || 0; }
+    if (m.data.length) {
       const sec = bucketSec(m.data[m.data.length - 1].time);
-      if (av.vol > 0 && sec >= av.lastSec) {
-        avLine.update({ time: sec, value: av.pv / av.vol }); // same-bucket update replaces
-        av.lastSec = sec;
+      for (const a of anchors.values()) {
+        if (!a.ready) continue;
+        for (const r of m.data) { a.pv += r.price * (r.size || 0); a.vol += r.size || 0; }
+        if (a.vol > 0 && sec >= a.lastSec) {
+          a.line.update({ time: sec, value: a.pv / a.vol }); // same-bucket update replaces
+          a.lastSec = sec;
+        }
       }
     }
     showStatus();
