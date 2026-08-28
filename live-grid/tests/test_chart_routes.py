@@ -280,3 +280,13 @@ def test_a_date_only_end_covers_that_whole_day(tick_client):
     returns that day's bar, so midnight would clip the final day's ticks."""
     body = _series(tick_client, start="2025-06-10", end="2025-06-10")
     assert body["cache"]["rows_from_ticks"] == len(TICK_BARS)
+
+
+def test_history_endpoint_routes_by_asset_class():
+    """BTC-USD via equity/price/historical went upstream as BTC-USD.US -> 404;
+    each shape has its own Platform route (kdb registers all three fetchers)."""
+    from app.openbb_client import history_endpoint
+
+    assert history_endpoint("AAPL") == "equity/price/historical"
+    assert history_endpoint("BTC-USD") == "crypto/price/historical"
+    assert history_endpoint("EURUSD") == "currency/price/historical"
