@@ -169,6 +169,35 @@ services:
       - ./kdb-license:/opt/kx-license:ro
     command: ["/data/startup.q"]
 
+  # eod-dump: the classic kdb+ day cycle's .u.end, as a sidecar. The kdb
+  # service is this stack's tickerplant AND its RDB (in-memory trades, g# on
+  # sym); at 00:05 UTC daily this flushes the ended UTC day into the Ep. 11
+  # ArcticDB/MinIO store -- our HDB -- one Arctic symbol per ticker, in the
+  # `ticks_live` library. Where .Q.hdpf would purge the RDB's RAM, this
+  # deliberately does not: live-grid's rolling window prunes the cache on
+  # its own cadence, and the chart's seam needs the trailing day queryable.
+  # Reuses the openbb-local image (pykx + arcticdb + the same ARCTICDB_S3_*
+  # env as every other consumer). Requires minio.env -- without the HDB half
+  # there is nowhere to flush, so this service refuses to start.
+  eod-dump:
+    image: openbb-local:1.0.0
+    platform: linux/amd64
+    container_name: openbb-eod-dump
+    restart: unless-stopped
+    networks:
+      - openbb-internal
+    entrypoint: ["python", "/opt/eod_dump.py", "--loop"]
+    environment:
+      - KDB_HOST=kdb
+      - KDB_PORT=5000
+      - QLIC=/opt/kx-license
+    env_file:
+      - path: ./minio.env
+        required: true
+    volumes:
+      - ./scripts/eod_dump.py:/opt/eod_dump.py:ro
+      - ./kdb-license:/opt/kx-license:ro
+
   # OpenBB MCP server (Ep. 6): wraps the same Platform app as openbb-api,
   # in-process, and serves MCP over streamable-http for the AI analyst.
   # Bound to 127.0.0.1; Serve publishes it on :8443 — tailnet-only, NEVER

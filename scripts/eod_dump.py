@@ -1,0 +1,132 @@
+"""End-of-day flush: the kdb RDB surrenders the day's ticks to the ArcticDB HDB.
+
+The classic kdb+ day cycle (tickerplant -> RDB -> `.u.end` -> `.Q.hdpf` ->
+HDB) mapped onto this stack:
+
+    role         classic              here
+    tickerplant  tick.q               the kdb service (kdb-ws/startup.q: upd+pub)
+    RDB          in-memory, g# syms   the SAME q -- trades is RAM-resident
+    EOD flush    .u.end -> .Q.hdpf    this script: one UTC day -> ArcticDB,
+                                      one Arctic symbol per ticker
+    HDB          date-partitioned     the Ep. 11 ArcticDB/MinIO store, read by
+                 splayed tables       tick-lab, stores-mcp, stores-explorer
+    RAM purge    .Q.hdpf deletes      NOT copied: live-grid's rolling window
+                 tables, .Q.gc[]      prunes the cache on its own cadence --
+                                      the chart's seam needs the trailing day
+
+Idempotent per (symbol, day): ArcticDB `update` replaces the day's time range
+on a re-run instead of duplicating it. Runs in the openbb-local image, which
+already carries pykx, arcticdb, and the same ARCTICDB_S3_* env every other
+consumer of the store reads (minio.env).
+
+    python eod_dump.py --date 2026-08-28    # flush one UTC day, then exit
+    python eod_dump.py --dry-run            # read kdb, print, write nothing
+    python eod_dump.py --loop               # daily at 00:05 UTC, prior day
+"""
+
+from __future__ import annotations
+
+import argparse
+import logging
+import os
+import time
+from datetime import date, datetime, timedelta, timezone
+
+log = logging.getLogger("eod-dump")
+
+LIBRARY = os.getenv("EOD_LIBRARY", "ticks_live")
+FLUSH_UTC_MINUTES = 5  # daily at 00:05 UTC, flushing the day that just ended
+
+
+def read_day(day: date):
+    """The day's ticks out of the RDB, as a pandas frame."""
+    import pykx as kx
+
+    host = os.getenv("KDB_HOST", "kdb")
+    port = int(os.getenv("KDB_PORT", "5000"))
+    start = datetime(day.year, day.month, day.day)
+    end = start + timedelta(days=1)
+    with kx.SyncQConnection(host=host, port=port) as conn:
+        frame = conn(
+            "{[s;e] select time, sym, price, size from trades "
+            "where time within (s;e-1)}",
+            kx.toq(start, kx.TimestampAtom),
+            kx.toq(end, kx.TimestampAtom),
+        ).pd()
+    return frame
+
+
+def dump_day(day: date, dry_run: bool = False) -> int:
+    """Flush one UTC day to the HDB. Returns rows written."""
+    frame = read_day(day)
+    if frame.empty:
+        log.info("%s: RDB holds no ticks for this day; nothing to flush", day)
+        return 0
+
+    total = 0
+    groups = {str(sym): g for sym, g in frame.groupby("sym", observed=True) if len(g)}
+    if dry_run:
+        for sym, g in sorted(groups.items()):
+            log.info("%s %-8s %6d ticks (dry run)", day, sym, len(g))
+        return int(sum(len(g) for g in groups.values()))
+
+    from openbb_arcticdb.utils import get_library, resolve_config
+
+    uri, _ = resolve_config(None, LIBRARY, None)
+    lib = get_library(uri, LIBRARY, create_if_missing=True)
+    for sym, g in sorted(groups.items()):
+        df = (
+            g.drop(columns=["sym"])
+            .set_index("time")
+            .sort_index()
+        )
+        # update replaces the frame's time range in place -- the idempotency
+        # that .Q.hdpf gets from overwriting the date partition
+        if lib.has_symbol(sym):
+            lib.update(sym, df)
+        else:
+            lib.write(sym, df)
+        total += len(df)
+        log.info("%s %-8s %6d ticks -> %s/%s", day, sym, len(df), LIBRARY, sym)
+    log.info("%s: EOD complete, %d rows across %d symbols", day, total, len(groups))
+    return total
+
+
+def _sleep_until_next_flush() -> date:
+    """Sleep to the next 00:05 UTC; return the day that will have just ended."""
+    now = datetime.now(timezone.utc)
+    nxt = now.replace(hour=0, minute=FLUSH_UTC_MINUTES, second=0, microsecond=0)
+    if nxt <= now:
+        nxt += timedelta(days=1)
+    log.info("next flush at %s (in %ds)", nxt, int((nxt - now).total_seconds()))
+    time.sleep((nxt - now).total_seconds())
+    return (nxt - timedelta(days=1)).date()
+
+
+def main() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--date", help="UTC day to flush (YYYY-MM-DD); default yesterday")
+    parser.add_argument("--dry-run", action="store_true", help="read the RDB, write nothing")
+    parser.add_argument("--loop", action="store_true", help="flush daily at 00:05 UTC")
+    args = parser.parse_args()
+
+    if args.loop:
+        while True:
+            day = _sleep_until_next_flush()
+            try:
+                dump_day(day)
+            except Exception:  # noqa: BLE001 - one bad day must not kill the cycle
+                log.exception("EOD flush failed for %s; retrying tomorrow", day)
+        return
+
+    day = (
+        date.fromisoformat(args.date)
+        if args.date
+        else (datetime.now(timezone.utc) - timedelta(days=1)).date()
+    )
+    dump_day(day, dry_run=args.dry_run)
+
+
+if __name__ == "__main__":
+    main()
