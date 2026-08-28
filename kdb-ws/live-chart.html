@@ -13,6 +13,10 @@
   #tools button { background: #1c1c1c; color: #aaa; border: 1px solid #333; border-radius: 4px;
                   padding: 2px 8px; font-size: 13px; cursor: pointer; }
   #tools button.active { background: #2c313a; color: #fff; border-color: #61afef; }
+  #fleet { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 8px; font-size: 12px;
+           font-variant-numeric: tabular-nums; color: #9aa0a6; }
+  #fleet span b { color: #ddd; font-weight: 600; cursor: pointer; }
+  #fleet span.up b { color: #26a69a; } #fleet span.down b { color: #ef5350; }
 </style>
 </head>
 <body>
@@ -29,6 +33,7 @@
   <span id="status">connecting…</span>
 </div>
 <div id="chart"></div>
+<div id="fleet"></div>
 <script>
 // ?sym=BTC-USD&interval=30&anchor=2026-08-28T14:30:00 to override;
 // 10s bars so movement is visible fast; anchor defaults to UTC midnight
@@ -324,6 +329,29 @@ ws.onmessage = (ev) => {
     showStatus();
   }
 };
+// the fleet strip: last price + tick count per cached symbol, from the
+// stats message every 5s; click a symbol to open its chart
+const fleetEl = document.getElementById('fleet');
+const fleetPrev = {};
+function renderFleet(stats) {
+  fleetEl.innerHTML = stats.syms
+    .sort((x, y) => y.n - x.n)
+    .map((s) => {
+      const dir = fleetPrev[s.sym] == null || s.price === fleetPrev[s.sym] ? '' : (s.price > fleetPrev[s.sym] ? 'up' : 'down');
+      fleetPrev[s.sym] = s.price;
+      return `<span class="${dir}"><b data-sym="${s.sym}">${s.sym}</b> ${s.price} · ${s.n.toLocaleString()}</span>`;
+    }).join('');
+}
+fleetEl.onclick = (e) => {
+  const sym = e.target.dataset && e.target.dataset.sym;
+  if (sym) location.search = `?sym=${sym}&interval=${INTERVAL_S}`;
+};
+setInterval(() => { if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'stats' })); }, 5000);
+ws.addEventListener('message', (ev) => {
+  const m = JSON.parse(ev.data);
+  if (m.table === 'stats') renderFleet(m);
+});
+
 ws.onclose = () => { status.textContent = 'disconnected'; };
 ws.onerror = () => { status.textContent = 'websocket error — is the openbb-kdb container up?'; };
 </script>
