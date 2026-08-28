@@ -73,9 +73,46 @@ for name, pattern in (("getattr", GETATTR), ("attribute", ATTR)):
     if re.search(pattern, src):
         sys.exit(f"cftc_router still has unguarded {name} .strip() calls after patching")
 
+# Second defect in the same file, and a worse one. build_choices() fetches
+# contracts from cftc.gov over the network, and upstream awaits it UNGUARDED
+# in the router lifespan -- so a slow or unreachable CFTC aborts uvicorn's
+# startup and exits the container. The whole API, every provider, gone
+# because one government endpoint timed out. Observed on 2 of 10 CI runners
+# building byte-identical images.
+LIFESPAN = re.compile(r"(async def _cot_router_lifespan\(_\):\n)(    await build_choices\(\)\n)")
+GUARD = (
+    r"\1"
+    "    try:\n"
+    "        await build_choices()\n"
+    "    except Exception as exc:  # noqa: BLE001\n"
+    "        import sys as _sys\n"
+    "        print(\n"
+    "            f\"CFTC choices unavailable at startup ({type(exc).__name__}: {exc}). \"\n"
+    "            f\"COT search has no prebuilt choices; other endpoints are unaffected.\",\n"
+    "            file=_sys.stderr,\n"
+    "            flush=True,\n"
+    "        )\n"
+)
+src, n_life = LIFESPAN.subn(GUARD, src)
+if n_life != 1:
+    sys.exit(f"cftc_router lifespan guard matched {n_life} times -- upstream changed shape")
+
 ast.parse(src)
 path.write_text(src)
-print(f"cftc_router patched: {n_getattr} getattr + {n_attr} attribute call(s) guarded")
+
+# Assert the invariant on the FINAL source, not on the substitution count: no
+# bare `await` may remain at the lifespan's top level. This is the check the
+# original patch lacked, which is how it went silent when 1.4.2 shipped.
+tree = ast.parse(src)
+fn = next((f for f in ast.walk(tree)
+           if isinstance(f, ast.AsyncFunctionDef) and f.name == "_cot_router_lifespan"), None)
+if fn is None:
+    sys.exit("cftc_router has no _cot_router_lifespan -- upstream restructured")
+if any(isinstance(st, ast.Expr) and isinstance(st.value, ast.Await) for st in fn.body):
+    sys.exit("cftc_router lifespan still awaits unguarded -- a CFTC outage would kill startup")
+
+print(f"cftc_router patched: {n_getattr} getattr + {n_attr} attribute call(s) guarded, "
+      f"lifespan network call guarded")
 PY
 
 # Patch openbb_core.api.rest_api to require Basic auth on the WHOLE app.
