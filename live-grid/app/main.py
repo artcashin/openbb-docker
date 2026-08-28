@@ -327,6 +327,37 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
             figure["layout"]["title"]["text"] += f"  ·  bars unavailable: {bars_error}"
         return JSONResponse(figure)
 
+    @app.get("/structure")
+    async def structure(symbol: str = "AAPL", interval: str = "1d",
+                        start: str | None = None, end: str | None = None,
+                        scale: str | None = None, provider: str = "kdb"):
+        """Chart structure for one scale. The MCP tool returns all of them.
+
+        Reuses build_series so the kdb read-through cache and its seam logic
+        remain the single answer to "get me correct bars for this window".
+        """
+        from app.structure.detect import DEFAULT_SCALES, detect, scale_for_bars
+
+        s, e = _window(start, end)
+        bars, meta = await build_series(symbol, interval, s, e, recorder,
+                                        _tick_window(), provider)
+        # bars_to_frame, not a bare pl.DataFrame(bars): find_pivots/atr.py
+        # read the adjusted series via app.ta.exprs.adj(), which needs an
+        # adj_close column that raw build_series bars don't carry (tick bars
+        # in particular have none). bars_to_frame is the existing normalizer
+        # ta_chart already relies on for this same gap.
+        frame = bars_to_frame(bars)
+        chosen = scale or scale_for_bars(frame.height)
+        if chosen not in DEFAULT_SCALES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"unknown scale {chosen!r}; expected one of "
+                       f"{sorted(DEFAULT_SCALES)}",
+            )
+        result = detect(frame, symbol, interval,
+                        scales={chosen: DEFAULT_SCALES[chosen]})
+        return {**result.to_dict(), "cache": meta}
+
     @app.websocket("/ta_chart_ws")
     async def ta_chart_ws(ws: WebSocket) -> None:
         await ws.accept()
