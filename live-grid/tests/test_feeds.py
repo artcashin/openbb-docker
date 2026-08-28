@@ -154,10 +154,11 @@ class TestRecorderIntegration:
         asyncio.run(_run_until(m, lambda: calls["n"] >= 2))  # must not raise
 
     def test_prune_only_fires_once_per_interval(self, fake_ws_client_factory):
-        # loop.time() is a monotonic clock with an arbitrary (non-zero) origin,
-        # so with _last_prune initialised to 0.0 the very first drain cycle
-        # always clears "now - 0.0 >= PRUNE_INTERVAL" -- the first prune is
-        # effectively "on startup". What the interval must still guarantee is
+        # _last_prune starts at -inf, so the first drain cycle always clears the
+        # interval check and the first prune is effectively "on startup". (It
+        # used to start at 0.0, which only cleared once the HOST had been up
+        # PRUNE_INTERVAL -- so on a freshly booted runner prune never fired.)
+        # What the interval must still guarantee is
         # that it does NOT re-fire on every one of the several cycles that fit
         # inside this test's short run (default PRUNE_INTERVAL is 60s).
         recorder = MagicMock()

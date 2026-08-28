@@ -67,7 +67,12 @@ class FeedManager:
         self._active: dict[str, frozenset[str]] = {}  # feed -> subscribed set
         self._rebuild_pending = False
         self._last_rebuild = float("-inf")
-        self._last_prune = 0.0
+        # -inf, NOT 0.0: loop.time() is CLOCK_MONOTONIC, whose origin is boot,
+        # so `now - 0.0 >= PRUNE_INTERVAL` is only true once the HOST has been up
+        # PRUNE_INTERVAL seconds. On a freshly booted machine (a CI runner, a NAS
+        # that just rebooted) the first prune silently never fires. -inf makes
+        # the first cycle always prune, which is the intent.
+        self._last_prune = float("-inf")
 
     # -- subscription tracking ------------------------------------------------
     def register(self, conn_id: str, symbols: list[str]) -> None:

@@ -26,21 +26,31 @@ adapters are `--reference` options you select at runtime.
 
 ## What you get (this release: v11.1.1)
 
-Eight services across two tailnet nodes, zero exposed ports. The backbone,
+Nine services across two tailnet nodes, zero exposed ports. The backbone,
 unchanged since Ep. 1:
 
-- a small **Tailscale sidecar** that owns the network namespace and joins your
-  tailnet as a node named `openbb`;
+- a small **Tailscale sidecar** that joins your tailnet as a node named
+  `openbb` — the only service on this bridge with a tailnet address;
 - the **OpenBB Platform REST API** (all standard providers + the technical,
-  quantitative, and econometrics extensions) sharing that namespace, bound to
-  loopback only.
+  quantitative, and econometrics extensions), which the sidecar reaches over
+  the private `openbb-internal` bridge.
 
-Everything else — `openbb-mcp`, `key-maint`, `live-grid`, `rss-ticker`, and
-`minio` as its own second tailnet node — arrived in the episodes below.
+Everything else — `openbb-mcp`, `stores-mcp`, `stores-explorer`, `key-maint`,
+`live-grid`, `rss-ticker` and `kdb` on that same bridge, and `minio` as its own
+second tailnet node — arrived in the episodes below.
 
 **Tailscale Serve is the only way in** — real HTTPS with a Let's Encrypt
 certificate at `https://openbb.<your-tailnet>.ts.net`, reachable from every
-device on your tailnet and invisible to everything else.
+device on your tailnet and invisible to everything off this host.
+
+The services sit on a private Docker bridge, so other processes **on this
+Docker host** can reach them directly. The API and key-maint answer with Basic
+auth, rss-ticker with its manifest key and per-user tokens. **live-grid,
+stores-explorer, both MCP services and kdb have no auth at all** — and q
+executes arbitrary code, so if you run untrusted workloads on this host, do not
+run the `kdb` service. Nothing on your LAN reaches any of them, and Serve still
+gates the tailnet path. `minio` is separate: its own tailnet node, not on this
+bridge.
 
 **New in v11.0.0 (Ep. 11):** the shared store. **MinIO joins the tailnet as
 its own node**, `minio.<your-tailnet>.ts.net`, with a real Let's Encrypt
@@ -205,12 +215,12 @@ cp rss-ticker.env.example rss-ticker.env     # REQUIRED — admin key; chmod 600
 docker compose up -d --build
 
 # 3. Verify the front door (from any tailnet device)
-#    The lock is on the DATA routes. widgets.json is metadata and answers 200
-#    with or without credentials — OpenBB's Basic auth is a dependency of the
-#    /api/v1 router, and nothing else, so test it there.
+#    The lock covers every path, metadata included — the image patches OpenBB
+#    to enforce Basic auth as middleware, not just on the /api/v1 router.
 curl https://openbb.<your-tailnet>.ts.net/api/v1/equity/price/quote                        # 401
 curl -u openbb:<password> https://openbb.<your-tailnet>.ts.net/api/v1/equity/price/quote   # 422 — auth accepted, symbol required
-curl https://openbb.<your-tailnet>.ts.net/widgets.json                                     # 200 — metadata, by design
+curl https://openbb.<your-tailnet>.ts.net/widgets.json                                     # 401 — metadata is locked too
+curl -u openbb:<password> https://openbb.<your-tailnet>.ts.net/widgets.json                # 200
 
 # 4. Verify the walls (from a SECOND tailnet device)
 scripts/verify-isolation.sh openbb.<your-tailnet>.ts.net minio.<your-tailnet>.ts.net
