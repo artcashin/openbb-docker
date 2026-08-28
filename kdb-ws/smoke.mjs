@@ -87,6 +87,33 @@ assert.ok(Math.abs(av.pv - 6897) < 1e-9 && Math.abs(av.vol - 68) < 1e-9, `bad pv
 assert.ok(Math.abs(av.data[0].avwap - 101.1) < 1e-9, 'first point must equal first tick price');
 console.log('ok: anchored VWAP series + running pv/vol', { last: av.data[4].avwap, pv: av.pv, vol: av.vol });
 
+// 9. stats: q's own memory ledger plus last-per-sym from a by-clause.
+ws.send(JSON.stringify({ type: 'stats' }));
+const stats = await nextMessage();
+assert.equal(stats.table, 'stats');
+assert.ok(stats.memory.used > 0 && stats.memory.heap >= stats.memory.used);
+assert.equal(stats.rows, 7);
+const bySym = Object.fromEntries(stats.syms.map((s) => [s.sym, s]));
+assert.equal(bySym.AAPL.n, 5);
+assert.equal(bySym.MSFT.n, 2);
+assert.equal(bySym.AAPL.price, 103);
+console.log('ok: stats (memory + last-per-sym)', stats.memory);
+
+// 10. asof: the last trade as of each timestamp, via aj.
+const future = new Date(Date.now() + 3600e3).toISOString().slice(0, 19);
+ws.send(JSON.stringify({ type: 'asof', sym: 'AAPL', times: ['2000-01-01T00:00:00', future] }));
+const asof = await nextMessage();
+assert.equal(asof.table, 'asof');
+assert.equal(asof.data.length, 2);
+assert.ok(asof.data[0].price == null, 'no trade existed in 2000');
+assert.equal(asof.data[1].price, 103, 'as-of the future = the last trade');
+console.log('ok: as-of join', asof.data[1]);
+
+// 11. the g# attribute is applied and survives the inserts above.
+const attrOut = execSync('docker exec -i kdb-ws-test q', { input: 'h:hopen 5000\n-1 "attr=",string h"attr trades`sym";\nexit 0\n', stdio: ['pipe', 'pipe', 'inherit'] }).toString();
+assert.ok(attrOut.includes('attr=g'), `expected g attribute, got: ${attrOut}`);
+console.log('ok: g# attribute on sym');
+
 ws.close();
 console.log('\nALL CHECKS PASSED');
 process.exit(0);

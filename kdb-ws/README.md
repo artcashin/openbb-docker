@@ -30,6 +30,17 @@ One websocket, on the same port q already serves IPC on:
     server -> {"table":"avwap","sym":"AAPL","anchor":"...","pv":...,"vol":...,
                "data":[{"time":...,"avwap":...},...]}
 
+    client -> {"type":"stats"}
+    server -> {"table":"stats","memory":{"used":...,"heap":...,"peak":...},"rows":N,
+               "syms":[{"sym":...,"time":...,"price":...,"n":...},...]}
+              (.Q.w[]'s ledger -- the numbers the -w limit judges -- plus
+               last-per-sym from a by-clause, kdb's signature keyed shape)
+
+    client -> {"type":"asof","sym":"AAPL","times":["2026-08-28T18:30:00",...]}
+    server -> {"table":"asof","sym":"AAPL","data":[{"time":...,"price":...,"size":...},...]}
+              (aj: the last trade AS OF each requested time -- the as-of
+               join, kdb's canonical primitive; null before the first trade)
+
 Anchored VWAP is the cumulative `(sums price*size)%sums size` from the anchor
 forward — computed in q because the ticks are already here; recomputing it in
 a client-side dataframe would mean shipping every tick since the anchor on
@@ -98,6 +109,11 @@ time, drawings by (time, price) points and slope, never pixels — and
 persisted per symbol in `localStorage`, so a refresh replaces each series
 exactly: anchors re-request their trade-true series from kdb, drawings
 redraw from their recorded geometry. **🗑 clear** forgets it all.
+
+The trades table carries the `` `g# `` grouped attribute on `sym`: sym-filtered
+queries use a group index instead of scanning (measured ~25% on 641k rows
+with two symbols; the win grows with watchlist breadth). Inserts maintain it;
+`upd` re-applies it after a prune's table reassignment drops it.
 
 ## q traps this file already paid for
 

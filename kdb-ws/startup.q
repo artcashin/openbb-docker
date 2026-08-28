@@ -13,6 +13,12 @@
 /   server -> {"table":"avwap","sym":"AAPL","anchor":"...","data":[{"time":...,"avwap":...},...],"pv":...,"vol":...}
 /             (pv/vol are the running sum(price*size) and sum(size), so a live
 /              client can extend the series per tick: avwap=(pv+p*s)%(vol+s))
+/   client -> {"type":"stats"}
+/   server -> {"table":"stats","memory":{"used":...,"heap":...,"peak":...},"rows":N,
+/              "syms":[{"sym":...,"time":...,"price":...,"n":...},...]}
+/   client -> {"type":"asof","sym":"AAPL","times":["2026-08-28T18:30:00",...]}
+/   server -> {"table":"asof","sym":"AAPL","data":[{"time":...,"price":...,"size":...},...]}
+/             (the last trade AS OF each requested time; null before the first)
 / A second sub replaces the first; closing the socket unsubscribes.
 
 / .j.j serializes floats at display precision, which defaults to 7
@@ -21,6 +27,12 @@ system"P 17";
 
 / schema matches kdb-store/_INIT_SCHEMA -- idempotent, same guard
 if[not `trades in key `.; trades:([] time:`timestamp$(); sym:`symbol$(); price:`float$(); size:`float$())];
+
+/ grouped attribute on sym: sym-filtered queries (subscription filter,
+/ avwap, bars) use a group index instead of scanning every row. Inserts
+/ maintain it incrementally; the prune's table reassignment drops it, so
+/ upd re-applies when it is missing (O(1) to check, O(n) only after a prune)
+@[`trades;`sym;`g#];
 
 / websocket handle -> subscribed syms
 .wsu.subs:(`int$())!();
@@ -61,6 +73,22 @@ if[not `trades in key `.; trades:([] time:`timestamp$(); sym:`symbol$(); price:`
     (neg .z.w) .j.j `table`sym`data!(`bars;msg`sym;.wsu.bars[`$msg`sym;`long$1e9*msg`interval])];
   if["avwap"~msg`type;
     (neg .z.w) .j.j (`table`sym`anchor!(`avwap;msg`sym;msg`anchor)),.wsu.avwap[`$msg`sym;"P"$msg`anchor]];
+  if["stats"~msg`type;
+    / .Q.w[] is q's own memory ledger (the numbers the -w limit judges);
+    / the by-clause returns kdb's signature shape, a keyed table
+    (neg .z.w) .j.j `table`memory`rows`syms!
+      (`stats; `used`heap`peak#.Q.w[]; count trades;
+       0!select last time, last price, n:count i by sym from trades)];
+  if["asof"~msg`type;
+    / aj: the last trade AS OF each requested timestamp -- the as-of join,
+    / kdb's canonical primitive. The right side must be time-sorted and
+    / ticks land out of order, so sort per call (cheap at cache scale)
+    t:msg`times;
+    ts:$[10h=type t; enlist "P"$t; "P"$'t];
+    (neg .z.w) .j.j `table`sym`data!(`asof; msg`sym;
+      select time, price, size from aj[`sym`time;
+        ([] sym:count[ts]#`$msg`sym; time:ts);
+        `time xasc select sym, time, price, size from trades])];
  };
 
 .z.wc:{.wsu.subs::.wsu.subs _ x;};
@@ -70,4 +98,9 @@ if[not `trades in key `.; trades:([] time:`timestamp$(); sym:`symbol$(); price:`
  };
 
 / kdb-store's write_ticks calls upd when it exists, plain insert otherwise
-upd:{[t;d] t insert d; if[`trades=t; .wsu.pub[d]]; };
+upd:{[t;d]
+  t insert d;
+  if[`trades=t;
+    if[not `g=attr trades`sym; @[`trades;`sym;`g#]];
+    .wsu.pub[d]];
+ };
