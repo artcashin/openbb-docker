@@ -247,8 +247,9 @@ services:
   # One process, two servers: a network server on loopback :8447 (published by
   # Serve on :10000 — public ONLY if you funnel it, and it enforces the same
   # Basic auth as the API) and an admin server on a unix socket whose 0700
-  # host directory IS the tier-3 authorization (filesystem access via SSH —
-  # no port, no header).
+  # host directory is what raises a caller to tier 3 (filesystem access via
+  # SSH — no port, but the same Basic auth still applies: the socket replaces a
+  # second credential, not the first).
   key-maint:
     build: ./key-maint
     image: openbb-key-maint:latest

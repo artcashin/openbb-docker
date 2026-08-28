@@ -13,10 +13,12 @@ three postures:
 | 2 | Same URL from a tailnet device | + `run_tests` live probes |
 | 3 | Unix socket on the host, via an SSH exec session | + the key values themselves |
 
-All tiers require the main API's Basic auth (`api-auth.env`). Tier 3 has no
-port and no header at all — the admin server binds a **unix socket** in a
-host directory you create with mode 0700: being able to reach that file *is*
-the authorization.
+All tiers require the main API's Basic auth (`api-auth.env`) — tier 3
+included. What tier 3 does not have is a **port**: the admin server binds a
+**unix socket** in a host directory you create with mode 0700, so being able to
+open that file is what raises an authenticated caller to tier 3. The filesystem
+stands in for a second credential, not for the first one — there is no separate
+admin password to store, leak or rotate.
 
 ## Deploy
 
