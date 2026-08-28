@@ -135,20 +135,25 @@ services:
   # kdb+ (Ep. 10): the read-through cache's q, as its own service on
   # openbb-internal so openbb-api, live-grid, stores-mcp and stores-explorer can
   # all reach the same store by name. KX_PORT with no host binds every interface
-  # IN THIS CONTAINER, which on a private bridge means the bridge -- no ports
-  # are published, so nothing off this Docker host reaches it.
+  # IN THIS CONTAINER, which on a private bridge means the bridge -- plus the
+  # single host-loopback publish below for the websocket tick stream.
   #
   # READ THIS BEFORE RUNNING IT. q executes arbitrary q code and has no
   # authentication whatsoever. On the bridge, any process on this Docker host
   # and any container attached to openbb-internal can execute code inside it.
-  # The sibling containers could already do that under the shared namespace --
-  # host processes are what is new. It is never reachable from your LAN or your
-  # tailnet, and Serve publishes no route to it. If you run untrusted workloads
-  # on this host, do not run this service.
+  # The loopback publish extends that to processes on this host: q IPC shares
+  # the port with the websocket stream, so 127.0.0.1:5999 is arbitrary code
+  # execution for anything local. It is never reachable from your LAN or your
+  # tailnet, and Serve publishes no route to it -- keep it that way: never
+  # widen the bind past 127.0.0.1 and never serve/funnel it. If you run
+  # untrusted workloads on this host, remove the ports block or do not run
+  # this service.
   #
   # Needs ./kdb-data/startup.q, which this repo does not ship (kdb-data/ is
   # git-ignored). Without it the container exits and the cache passes through
-  # to the upstream provider.
+  # to the upstream provider. Start from kdb-ws/startup.q for a tick cache
+  # that also publishes trades to websocket subscribers (see kdb-ws/README.md);
+  # bdobb-v2's live chart consumes that stream at ws://127.0.0.1:5999/.
   kdb:
     image: ghcr.io/artcashin/kdb-x:amd64
     container_name: openbb-kdb
@@ -157,6 +162,8 @@ services:
       - openbb-internal
     environment:
       - KX_PORT=5000
+    ports:
+      - "127.0.0.1:5999:5000"
     volumes:
       - ./kdb-data:/data
       - ./kdb-license:/opt/kx-license:ro

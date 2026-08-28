@@ -366,6 +366,17 @@ def test_write_ticks_sends_one_batch_not_one_insert_per_row():
     assert len(inserts) == 1, f"expected one batched insert, got {len(inserts)}"
 
 
+def test_write_ticks_routes_through_upd_when_the_server_defines_it():
+    """kdb-ws/startup.q's upd inserts AND publishes to websocket subscribers;
+    the write must stay a bare insert on a q with no upd defined."""
+    s, conn = store_with()
+    s.write_ticks(_ticks_frame())
+    query = next(q for q in conn.queries if "insert" in q)
+    assert "`upd in key `." in query
+    assert "upd[`trades;incoming_ticks]" in query
+    assert "`trades insert incoming_ticks" in query
+
+
 def test_prune_ticks_deletes_below_the_cutoff_and_collects():
     s, conn = store_with({"count trades": 3})
     s.prune_ticks(D("2025-06-10T14:00:00"))

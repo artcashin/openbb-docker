@@ -1,0 +1,74 @@
+# kdb-ws — the tick cache speaks websocket
+
+`startup.q` turns the Ep. 10 kdb+ tick cache into a live publisher: any
+websocket + JSON client can subscribe to trades and pull OHLCV bars from the
+same q that live-grid records into — no pykx, no q client library. The
+consumer this was built for is **bdobb-v2's live chart**; `live-chart.html`
+here is the reference implementation of that client.
+
+The pattern is Jonathon McMurray's chained-tickerplant-over-websockets
+([blog post](https://jonathonmcmurray.github.io/kdb/q/websockets/2019/08/12/ws-server.html),
+[ws.q](https://github.com/jonathonmcmurray/ws.q), MIT). His library drags in
+the qutil package system, so the ~40 lines that matter are inlined in
+`startup.q` instead — and co-located in the cache's own q rather than run as
+a separate chain process, because the cache IS the tickerplant here.
+
+## Protocol
+
+One websocket, on the same port q already serves IPC on:
+
+    client -> {"type":"sub","syms":["AAPL","BTC-USD"]}
+    server -> {"table":"trades","data":[{"time":"...","sym":"AAPL","price":1.0,"size":2.0},...]}
+              (immediately: a snapshot of the last 500 cached ticks per sym;
+               then: every batch live-grid flushes, filtered to your syms)
+
+    client -> {"type":"bars","sym":"AAPL","interval":60}      # seconds
+    server -> {"table":"bars","sym":"AAPL","data":[{"barTime":...,"open":...,"high":...,
+               "low":...,"close":...,"vwap":...,"volume":...,"tickCount":...},...]}
+
+A second `sub` replaces the first; closing the socket unsubscribes. Defining
+`.z.ws` is also a hardening step: q's default evaluates whatever a websocket
+client sends.
+
+## How ticks get here
+
+live-grid's recorder flushes tick batches every ~250 ms through
+`kdb-store`'s `write_ticks`, which calls `upd` when the server defines it
+(this script does: insert + publish) and falls back to a bare insert on a
+plain q. Nothing else in the stack changes.
+
+## Deploy
+
+    cp kdb-ws/startup.q kdb-data/startup.q
+    docker compose up -d kdb
+
+The compose file publishes the port at `127.0.0.1:5999` for bdobb-v2.
+**Read the warning on the kdb service in docker-compose.yml first** — q IPC
+shares that port and executes arbitrary code with no auth. Loopback only,
+never serve/funnel it.
+
+## Test
+
+    ./run-test.sh        # throwaway KDB-X on :5998, full protocol smoke test
+
+Checks: pub with no subscribers, snapshot on subscribe, sym-filtered live
+push, the exact guarded expression `write_ticks` sends, cache accumulation,
+and the bars query. Needs docker, node ≥ 22, and a licence in ../kdb-license.
+
+## Demo
+
+    docker exec -d openbb-kdb bash -c 'q /data/gen.q < <(tail -f /dev/null)'  # synthetic ticks, or use the real feed
+    python3 -m http.server 8123 --bind 127.0.0.1 --directory kdb-ws
+    open http://127.0.0.1:8123/live-chart.html
+
+Candlesticks build live from the stream: `bars` request for history, `sub`
+for the tail, last bar updated in place per tick — the exact shape bdobb-v2's
+real-time chart widget needs.
+
+## q traps this file already paid for
+
+- A lone `/` on its own line in a q script opens a block comment that
+  silently swallows the rest of the file.
+- `-500#table` on a table shorter than 500 rows cycles rows instead of
+  clamping — snapshot takes must clamp to `count`.
+- Bars must `time xasc` before `first`/`last` — ticks land out of order.
