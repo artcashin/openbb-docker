@@ -85,9 +85,10 @@ def _arctic_library():
     """
     try:
         # pylint: disable=import-outside-toplevel
-        from openbb_arcticdb.utils import get_library
+        from openbb_arcticdb.utils import get_library, resolve_config
 
-        return get_library(uri=None, library=_L2_LIBRARY, create_if_missing=True)
+        uri, library = resolve_config(library=_L2_LIBRARY)
+        return get_library(uri, library, create_if_missing=True)
     except Exception:  # noqa: BLE001 - L2 is optional; degrade to L1 + live fetch
         return None
 
@@ -148,7 +149,10 @@ async def get_bundle(
         if cached is not None:
             return cached
         payload = await to_thread(_read_through_sync, sym, credentials)
-        _cache[sym] = (time.monotonic() + _TTL_SECONDS, payload)
+        now = time.monotonic()
+        for k in [k for k, (exp, _) in list(_cache.items()) if exp <= now]:
+            _cache.pop(k, None)
+        _cache[sym] = (now + _TTL_SECONDS, payload)
         return payload
 
 
