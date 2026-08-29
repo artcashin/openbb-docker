@@ -270,7 +270,11 @@ function showStatus() {
   status.innerHTML = `<b>live</b> — ${ticks} ticks · last ${lastPrice?.toFixed(2)}${avNow} · ${hint}`;
 }
 
-const WS_URL = qs.get('ws') || 'ws://127.0.0.1:5999/'; // ?ws=wss://openbb.<tailnet>.ts.net:5999/ for a served kdb
+// ?ws= overrides; default assumes kdb's websocket lives on THIS page's
+// host at :5999 -- true both for the local demo server and when served
+// from live-grid's /static behind tailscale Serve on the same node
+const WS_URL = qs.get('ws')
+  || (location.protocol === 'https:' ? 'wss://' : 'ws://') + (location.hostname || '127.0.0.1') + ':5999/';
 const ws = new WebSocket(WS_URL);
 ws.onopen = () => {
   status.textContent = 'connected — requesting bars + avwap, subscribing';
