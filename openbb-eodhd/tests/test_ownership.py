@@ -1,6 +1,8 @@
 # tests/test_ownership.py
 from openbb_eodhd.models.ownership import EODHDInstitutionalOwnershipFetcher as Fetcher
 from openbb_eodhd.models.ownership import EODHDInstitutionalOwnershipQueryParams as QP
+from openbb_eodhd.models.ownership import EODHDEquityOwnershipFetcher as OFetcher
+from openbb_eodhd.models.ownership import EODHDEquityOwnershipQueryParams as OQP
 
 BUNDLE = {"Holders": {"Institutions": {
     "0": {"name": "BlackRock Inc", "date": "2026-03-31", "totalShares": 7.83,
@@ -22,9 +24,6 @@ def test_maps_institutional_holders():
 def test_empty_holders_returns_empty_list():
     q = QP(symbol="AAPL")
     assert Fetcher.transform_data(q, {"Holders": {"Institutions": {}}}) == []
-
-from openbb_eodhd.models.ownership import EODHDEquityOwnershipFetcher as OFetcher
-from openbb_eodhd.models.ownership import EODHDEquityOwnershipQueryParams as OQP
 
 def test_equity_ownership_uses_investor_name_and_filing_date():
     q = OQP(symbol="AAPL")
