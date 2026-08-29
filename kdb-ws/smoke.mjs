@@ -81,11 +81,11 @@ console.log('ok: bars request (OHLCV+VWAP)', b0);
 ws.send(JSON.stringify({ type: 'avwap', sym: 'AAPL', anchor: '2000-01-01T00:00:00' }));
 const av = await nextMessage();
 assert.equal(av.table, 'avwap');
-assert.equal(av.data.length, 5);
-assert.ok(Math.abs(av.data[4].avwap - 6897 / 68) < 1e-9, `bad final avwap ${av.data[4].avwap}`);
+// bucketed to 1s by default: same-second ticks collapse to one point
+assert.ok(av.data.length >= 1 && av.data.length <= 5, `bad point count ${av.data.length}`);
+assert.ok(Math.abs(av.data.at(-1).avwap - 6897 / 68) < 1e-9, `bad final avwap ${av.data.at(-1).avwap}`);
 assert.ok(Math.abs(av.pv - 6897) < 1e-9 && Math.abs(av.vol - 68) < 1e-9, `bad pv/vol ${av.pv}/${av.vol}`);
-assert.ok(Math.abs(av.data[0].avwap - 101.1) < 1e-9, 'first point must equal first tick price');
-console.log('ok: anchored VWAP series + running pv/vol', { last: av.data[4].avwap, pv: av.pv, vol: av.vol });
+console.log('ok: anchored VWAP series + running pv/vol', { points: av.data.length, last: av.data.at(-1).avwap, pv: av.pv, vol: av.vol });
 
 // 9. stats: q's own memory ledger plus last-per-sym from a by-clause.
 ws.send(JSON.stringify({ type: 'stats' }));

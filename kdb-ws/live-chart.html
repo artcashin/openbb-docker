@@ -76,7 +76,7 @@ function addAnchor(iso, fit) {
     priceLineVisible: false, title: 'AVWAP ' + iso.slice(11, 16) + 'Z',
   });
   anchors.set(iso, { line, pv: 0, vol: 0, lastSec: 0, ready: false, fit });
-  ws.send(JSON.stringify({ type: 'avwap', sym: SYM, anchor: iso }));
+  ws.send(JSON.stringify({ type: 'avwap', sym: SYM, anchor: iso, interval: INTERVAL_S }));
   persist();
 }
 

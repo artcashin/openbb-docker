@@ -60,11 +60,14 @@ if[not `trades in key `.; trades:([] time:`timestamp$(); sym:`symbol$(); price:`
 / anchored VWAP: the cumulative vwap series for one sym from an anchor
 / time forward, straight off the tick cache; pv/vol let a client extend
 / the series live without re-requesting
-.wsu.avwap:{[s;t0]
+.wsu.avwap:{[s;t0;iv]
   t:`time xasc select from trades where sym=s, time>=t0;
-  `data`pv`vol!(
-    0!select time, avwap:(sums price*size)%sums size from t;
-    sum t[`price]*t`size; sum t`size)};
+  d:0!select time, avwap:(sums price*size)%sums size from t;
+  / thin to one point per bucket (client sends its bar interval; default
+  / 1s): a full day of BTC ticks is a ~150MB JSON response at tick
+  / resolution, which kills the websocket under the reply
+  d:0!select time:last time, avwap:last avwap by bkt:iv xbar time from d;
+  `data`pv`vol!(delete bkt from d; sum t[`price]*t`size; sum t`size)};
 
 .z.ws:{
   msg:@[.j.k;x;{()!()}];
@@ -72,7 +75,8 @@ if[not `trades in key `.; trades:([] time:`timestamp$(); sym:`symbol$(); price:`
   if["bars"~msg`type;
     (neg .z.w) .j.j `table`sym`data!(`bars;msg`sym;.wsu.bars[`$msg`sym;`long$1e9*msg`interval])];
   if["avwap"~msg`type;
-    (neg .z.w) .j.j (`table`sym`anchor!(`avwap;msg`sym;msg`anchor)),.wsu.avwap[`$msg`sym;"P"$msg`anchor]];
+    iv:`long$1e9*$[`interval in key msg; msg`interval; 1];
+    (neg .z.w) .j.j (`table`sym`anchor!(`avwap;msg`sym;msg`anchor)),.wsu.avwap[`$msg`sym;"P"$msg`anchor;iv]];
   if["stats"~msg`type;
     / .Q.w[] is q's own memory ledger (the numbers the -w limit judges);
     / the by-clause returns kdb's signature shape, a keyed table
