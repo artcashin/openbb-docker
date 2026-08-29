@@ -9,10 +9,21 @@ from openbb_eodhd.models.corporate_actions import (
 from openbb_eodhd.models.crypto_historical import EODHDCryptoHistoricalFetcher
 from openbb_eodhd.models.currency_historical import EODHDCurrencyHistoricalFetcher
 from openbb_eodhd.models.equity_historical import EODHDEquityHistoricalFetcher
+from openbb_eodhd.models.estimates import (
+    EODHDAnalystEstimatesFetcher,
+    EODHDForwardEpsEstimatesFetcher,
+    EODHDHistoricalEpsFetcher,
+    EODHDPriceTargetConsensusFetcher,
+)
 from openbb_eodhd.models.fundamental import (
     EODHDBalanceSheetFetcher,
     EODHDCashFlowStatementFetcher,
     EODHDIncomeStatementFetcher,
+)
+from openbb_eodhd.models.insider import EODHDInsiderTradingFetcher
+from openbb_eodhd.models.ownership import (
+    EODHDEquityOwnershipFetcher,
+    EODHDInstitutionalOwnershipFetcher,
 )
 
 __all__ = [
@@ -24,6 +35,13 @@ __all__ = [
     "EODHDCashFlowStatementFetcher",
     "EODHDHistoricalDividendsFetcher",
     "EODHDHistoricalSplitsFetcher",
+    "EODHDInstitutionalOwnershipFetcher",
+    "EODHDEquityOwnershipFetcher",
+    "EODHDInsiderTradingFetcher",
+    "EODHDHistoricalEpsFetcher",
+    "EODHDAnalystEstimatesFetcher",
+    "EODHDForwardEpsEstimatesFetcher",
+    "EODHDPriceTargetConsensusFetcher",
     "eodhd_provider",
 ]
 
@@ -47,6 +65,13 @@ eodhd_provider = Provider(
         "CashFlowStatement": EODHDCashFlowStatementFetcher,
         "HistoricalDividends": EODHDHistoricalDividendsFetcher,
         "HistoricalSplits": EODHDHistoricalSplitsFetcher,
+        "InstitutionalOwnership": EODHDInstitutionalOwnershipFetcher,
+        "EquityOwnership": EODHDEquityOwnershipFetcher,
+        "InsiderTrading": EODHDInsiderTradingFetcher,
+        "HistoricalEps": EODHDHistoricalEpsFetcher,
+        "AnalystEstimates": EODHDAnalystEstimatesFetcher,
+        "ForwardEpsEstimates": EODHDForwardEpsEstimatesFetcher,
+        "PriceTargetConsensus": EODHDPriceTargetConsensusFetcher,
     },
     repr_name="EOD Historical Data (EODHD)",
 )
