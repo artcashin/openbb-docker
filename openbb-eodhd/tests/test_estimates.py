@@ -71,3 +71,9 @@ def test_price_target_consensus():
 def test_price_target_consensus_empty_when_no_target():
     q = PtcQP(symbol="AAPL")
     assert PtcFetcher.transform_data(q, {"AnalystRatings": {"TargetPrice": 0}}) == []
+
+def test_forward_eps_labels_default_symbol_when_omitted():
+    q = FeQP()
+    rows = FeFetcher.transform_data(q, BUNDLE)
+    assert len(rows) == 1
+    assert rows[0].symbol == "AAPL"

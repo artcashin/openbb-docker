@@ -151,7 +151,7 @@ class EODHDForwardEpsEstimatesFetcher(
 
     @staticmethod
     def transform_data(query, data: dict, **kwargs) -> list[EODHDForwardEpsEstimatesData]:  # pylint: disable=unused-argument
-        sym = (query.symbol or "").upper()
+        sym = (query.symbol or "AAPL").upper()
         rows = []
         for t in F.earnings_trend(data):
             d = _date(t.get("date"))
@@ -201,7 +201,7 @@ class EODHDPriceTargetConsensusFetcher(
         if not target:
             return []
         return [EODHDPriceTargetConsensusData.model_validate({
-            "symbol": (query.symbol or "").upper(),
+            "symbol": (query.symbol or "AAPL").upper(),
             "name": F.general(data).get("Name"),
             "target_consensus": target,
             "rating": _f(ar.get("Rating")),

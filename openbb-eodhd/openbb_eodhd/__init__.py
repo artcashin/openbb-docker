@@ -51,7 +51,9 @@ eodhd_provider = Provider(
     description=(
         "EOD Historical Data (EODHD) APIs. Historical pricing for equities/ETFs, "
         "crypto, and forex (end-of-day + intraday); fundamentals (income, balance "
-        "sheet, cash flow); and corporate actions (dividends, splits)."
+        "sheet, cash flow); corporate actions (dividends, splits); ownership "
+        "(institutional and fund holders) and insider transactions; and analyst "
+        "estimates (historical EPS, forward estimates, price-target consensus)."
     ),
     # Becomes the credential field `eodhd_api_key` (env: EODHD_API_KEY).
     credentials=["api_key"],
