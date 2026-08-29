@@ -19,6 +19,13 @@ CashFlowStatement, HistoricalDividends, HistoricalSplits.
 This adds ~36 more (plus ~7 optional derived), reaching broad FMP parity for
 everything EODHD actually provides.
 
+**Beyond FMP.** A sweep across all 36 installed OpenBB providers (202 distinct
+standard models) found a handful of models FMP does *not* register that EODHD can
+still back — folded into this scope (see "Beyond FMP" below): EquitySearch,
+TrailingDividendYield, ForwardSalesEstimates, ForwardPeEstimates, OptionsChains, and
+a macro cluster (EconomicIndicators, CountryProfile, GdpReal, GdpNominal,
+ConsumerPriceIndex, Unemployment).
+
 ## Existing pattern (followed as-is)
 
 - One model file per domain under `openbb_eodhd/models/`, each defining
@@ -103,6 +110,25 @@ index, government trades, insider Form-4) each hit their specific EODHD endpoint
 | YieldCurve | US treasury yield curve |
 | GovernmentTrades | congressional trades *(marketplace — verify subscription)* |
 
+## Beyond FMP — models other providers have that EODHD can back
+
+Found by the cross-provider sweep; FMP does not register these. Registering EODHD
+fetchers under these standard-model names yields `..._eodhd_obb` widgets alongside
+the existing cboe/intrinio/etc. providers.
+
+| Standard model | Providers today (not FMP) | EODHD source | Notes |
+|---|---|---|---|
+| EquitySearch | cboe, intrinio, nasdaq, sec, tmx, tradier | `/search` (get_stocks_from_search) | symbol/name/ISIN lookup across stock/etf/fund/bond/index/crypto |
+| TrailingDividendYield | tiingo | SplitsDividends (already fetched) | trivial; reuses `/fundamentals` |
+| ForwardSalesEstimates | intrinio, seeking_alpha | Earnings.Trend.revenueEstimate | ships with the estimates cluster |
+| ForwardPeEstimates | intrinio | Valuation.ForwardPE / forward EPS | ships with metrics/estimates |
+| OptionsChains | cboe, deribit, intrinio, tmx, tradier, yfinance | US options EOD (marketplace) | **EOD not live; IV yes, full greeks likely no; marketplace + 10 calls/req** |
+| EconomicIndicators | EconDB, imf | `/macro-indicator/{country}` | overlaps EconDB/fred/oecd already on the NAS |
+| CountryProfile | EconDB | assembled from several `/macro-indicator` calls | multi-call; overlaps EconDB |
+| GdpReal / GdpNominal | EconDB, oecd | `/macro-indicator` (gdp_growth / gdp_current_usd) | real≈growth, nominal≈current-USD |
+| ConsumerPriceIndex | fred, imf, oecd | `/macro-indicator` (inflation_consumer_prices_annual) | EODHD gives the **inflation rate**, not the CPI index level — document the difference |
+| Unemployment | oecd | `/macro-indicator` (unemployment_total_percent) | |
+
 ## Optional / derived (default: NOT built unless requested)
 
 Low value and approximate; excluded from the default scope per design review:
@@ -136,10 +162,15 @@ verify every new provider registers and returns non-empty for `AAPL.US`.
 2. **Company core** — EquityInfo, EquityQuote, KeyMetrics, FinancialRatios,
    ShareStatistics, KeyExecutives, CompanyNews, EsgScore(deprecated).
 3. **Calendars / discovery / market data** — CalendarEarnings/Dividend/Ipo/Splits,
-   EconomicCalendar, HistoricalMarketCap, EquityScreener, EtfSearch/CryptoSearch,
-   CurrencyPairs/Snapshots, AvailableIndices, IndexConstituents, IndexHistorical,
-   TreasuryRates, YieldCurve, GovernmentTrades, WorldNews, MarketSnapshots,
-   EtfInfo/Holdings/Sectors/Countries.
+   EconomicCalendar, HistoricalMarketCap, EquityScreener, EquitySearch,
+   EtfSearch/CryptoSearch, CurrencyPairs/Snapshots, AvailableIndices,
+   IndexConstituents, IndexHistorical, TreasuryRates, YieldCurve, GovernmentTrades,
+   WorldNews, MarketSnapshots, EtfInfo/Holdings/Sectors/Countries,
+   TrailingDividendYield. (The estimate additions — ForwardSalesEstimates,
+   ForwardPeEstimates — ship with the Phase 1/2 estimates + metrics clusters.)
+4. **Beyond-FMP extras** — OptionsChains (verify marketplace subscription first;
+   document EOD/partial-greeks) and the macro cluster (EconomicIndicators,
+   CountryProfile, GdpReal, GdpNominal, ConsumerPriceIndex, Unemployment).
 
 ## Testing
 
@@ -157,9 +188,16 @@ verify every new provider registers and returns non-empty for `AAPL.US`.
   fields EODHD may not populate; per fetcher, fill what EODHD gives and let extras
   pass through — surface any hard-required gap during TDD (may force a model to the
   "not feasible" list).
-- **Marketplace endpoints:** IndexConstituents and GovernmentTrades (congressional
-  trades) are EODHD marketplace products — confirm the account's subscription during
-  Phase 3; drop if unavailable.
+- **Marketplace endpoints:** IndexConstituents, GovernmentTrades (congressional
+  trades), and OptionsChains (US options EOD) are EODHD marketplace products —
+  confirm the account's subscription before building; drop/defer if unavailable.
+- **OptionsChains fidelity:** EODHD options are **end-of-day, not a live chain**, and
+  expose implied volatility but likely not the full greek set (delta/gamma/theta/
+  vega). Populate what EODHD returns; leave unmapped greeks null rather than compute.
+- **Macro semantics:** EODHD `/macro-indicator` gives an **inflation rate** for CPI,
+  not the CPI index level fred/oecd return — map to the standard model's rate field
+  and document; GdpReal maps to a growth series, GdpNominal to current-USD level.
+  These overlap EconDB/fred/oecd already on the NAS (redundant coverage, by request).
 - **Point-in-time vs series:** FinancialRatios / PriceTarget are single-snapshot from
   EODHD where FMP returns history — document the difference; don't fake a series.
 - **API-call cost:** EODHD bills per call and some endpoints (insider Form-4, earnings
