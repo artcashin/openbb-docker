@@ -122,7 +122,7 @@ def _l2_put(sym: str, bundle: dict) -> None:
 
         now = datetime.now(timezone.utc)
         df = DataFrame({"payload": [json.dumps(bundle)]}, index=[Timestamp(now)])
-        lib.write(sym, df, metadata={"fetched_at": now.isoformat()})
+        lib.write(sym, df, metadata={"fetched_at": now.isoformat()}, prune_previous_versions=True)
     except Exception:  # noqa: BLE001
         return
 
