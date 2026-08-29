@@ -58,28 +58,44 @@ sections of this same payload. So add a shared helper:
   this helper, and it centralizes EODHD's dict-keyed-by-index arrays
   (`{"0": {...}, "1": ...}`) → lists.
 
-### Request coalescing (minimize API calls)
+### Request coalescing (minimize API calls) — two-tier cache
 
 OpenBB invokes each widget's fetcher independently — there is no batch hook where
 the extension could group requests up front. So a dashboard with N fundamentals
 widgets for one symbol would otherwise fire N `/fundamentals` calls (EODHD bills each
-at ~10 credits). `_fundamentals.py` collapses that to **one call per symbol** via an
-in-process **single-flight TTL cache**:
+at ~10 credits). `_fundamentals.get_bundle` collapses that with **two cache tiers**:
 
-- Module-level `dict[str, tuple[bundle, expiry_monotonic]]` keyed by the qualified
-  symbol (e.g. `AAPL.US`), plus a per-key `asyncio.Lock`.
-- On request: return the cached bundle if unexpired; else acquire the key's lock,
-  re-check (another coroutine may have filled it), and only then make the single HTTP
-  call. Concurrent fetchers for the same symbol await the one in-flight call and share
-  its result (single-flight).
-- TTL ~120s (module constant), so a re-render within the window is free while a symbol
-  change refetches. Stdlib only — `time.monotonic()` + dict + `asyncio.Lock`; no new
-  dependency, no cross-process state (correct for a single API worker; a multi-worker
-  deployment just gets one call per worker, still a large reduction).
-- Net: the whole fundamentals-derived cluster for a symbol = **1 API call** per render
-  window instead of one per widget. Dedicated-endpoint fetchers are unaffected (each
-  is its own call). Existing IncomeStatement/BalanceSheet/CashFlowStatement fetchers
-  are refactored onto this helper, which also reduces their calls from 3 to 1.
+**L1 — in-process single-flight (burst coalescing).** Module-level
+`dict[str, (bundle, expiry_monotonic)]` keyed by qualified symbol + a per-key
+`asyncio.Lock`. First caller for a symbol acquires the lock and does the work; the
+other ~10 widgets of the same render await it and share the result. Short TTL (~120s,
+`time.monotonic()`), stdlib only. This exists so a render's burst hits L2/EODHD once,
+not 10× — it is not the persistence layer.
+
+**L2 — ArcticDB read-through (persistent, cross-worker, cross-restart).** On an L1
+miss the single in-flight caller checks an `eodhd_fundamentals_cache` ArcticDB
+library keyed by qualified symbol: if the stored `fetched_at` is within the TTL,
+return the cached bundle (no EODHD call); else fetch from EODHD, write it back
+(`fetched_at` = now UTC in metadata, payload = the bundle JSON in a one-row frame),
+and return. Fundamentals move slowly (statements/holders quarterly, ratings ~daily),
+so this is where the real credit savings live — a symbol is refetched at most once per
+TTL window across the whole stack, not once per render/worker/restart.
+
+- **TTL:** `EODHD_FUNDAMENTALS_TTL_HOURS` env var, **default 24**.
+- **Connection:** soft-imports `openbb_arcticdb.utils.get_library` (already in the
+  container, with cached `Arctic` clients + `ARCTICDB_URI` resolution). Freshness is
+  gated with the cheap `read_metadata` before reading the ~1 MB payload.
+- **Best-effort / graceful:** every L2 read and write is wrapped so any ArcticDB
+  problem (or its absence — e.g. standalone Mac dev, MinIO down) falls back to a live
+  EODHD fetch and never breaks a request. `openbb-eodhd` gains **no hard dependency**
+  on `openbb-arcticdb`; L2 simply self-disables when unavailable.
+- Auto-enabled when the Arctic library resolves; otherwise L1-only.
+
+Net: the fundamentals-derived cluster for a symbol = **1 EODHD call per TTL window**
+(≈ once/day at the default), shared across every widget, worker, and restart.
+Dedicated-endpoint fetchers (quote, news, screener, options, …) are time-sensitive and
+stay uncached. Existing IncomeStatement/BalanceSheet/CashFlowStatement fetchers are
+refactored onto this helper (3 calls → 1, and now cached).
 
 Dedicated-endpoint fetchers (quote, news, calendars, screener, market cap, treasury,
 index, government trades, insider Form-4) each hit their specific EODHD endpoint.
