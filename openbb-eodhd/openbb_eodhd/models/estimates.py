@@ -6,6 +6,9 @@ from openbb_core.provider.abstract.fetcher import Fetcher
 from openbb_core.provider.standard_models.analyst_estimates import (
     AnalystEstimatesData, AnalystEstimatesQueryParams,
 )
+from openbb_core.provider.standard_models.forward_eps_estimates import (
+    ForwardEpsEstimatesData, ForwardEpsEstimatesQueryParams,
+)
 from openbb_core.provider.standard_models.historical_eps import (
     HistoricalEpsData, HistoricalEpsQueryParams,
 )
@@ -115,6 +118,50 @@ class EODHDAnalystEstimatesFetcher(
                 "estimated_revenue_high": _f(t.get("revenueEstimateHigh")),
                 "number_analysts_estimated_eps": _i(t.get("earningsEstimateNumberOfAnalysts")),
                 "number_analyst_estimated_revenue": _i(t.get("revenueEstimateNumberOfAnalysts")),
+            }))
+        rows.sort(key=lambda r: r.date)
+        return rows
+
+
+class EODHDForwardEpsEstimatesQueryParams(ForwardEpsEstimatesQueryParams):
+    """EODHD Forward EPS Estimates Query."""
+    exchange: str = Field(default="US", description="EODHD exchange code for bare symbols.")
+
+
+class EODHDForwardEpsEstimatesData(ForwardEpsEstimatesData):
+    """EODHD Forward EPS Estimates Data."""
+
+
+class EODHDForwardEpsEstimatesFetcher(
+    Fetcher[EODHDForwardEpsEstimatesQueryParams, list[EODHDForwardEpsEstimatesData]]
+):
+    """EODHD forward EPS estimates (Earnings.Trend)."""
+
+    @staticmethod
+    def transform_query(params: dict[str, Any]) -> EODHDForwardEpsEstimatesQueryParams:
+        return EODHDForwardEpsEstimatesQueryParams(**params)
+
+    @staticmethod
+    async def aextract_data(query, credentials, **kwargs) -> dict:  # pylint: disable=unused-argument
+        symbol = query.symbol or "AAPL"
+        return await F.get_bundle(symbol, query.exchange, credentials)
+
+    @staticmethod
+    def transform_data(query, data: dict, **kwargs) -> list[EODHDForwardEpsEstimatesData]:  # pylint: disable=unused-argument
+        sym = (query.symbol or "").upper()
+        rows = []
+        for t in F.earnings_trend(data):
+            d = _date(t.get("date"))
+            if d is None:
+                continue
+            rows.append(EODHDForwardEpsEstimatesData.model_validate({
+                "symbol": sym,
+                "date": d,
+                "fiscal_period": t.get("period"),
+                "mean": _f(t.get("earningsEstimateAvg")),
+                "low_estimate": _f(t.get("earningsEstimateLow")),
+                "high_estimate": _f(t.get("earningsEstimateHigh")),
+                "number_of_analysts": _i(t.get("earningsEstimateNumberOfAnalysts")),
             }))
         rows.sort(key=lambda r: r.date)
         return rows

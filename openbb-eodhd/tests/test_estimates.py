@@ -1,5 +1,7 @@
 from openbb_eodhd.models.estimates import EODHDAnalystEstimatesFetcher as AeFetcher
 from openbb_eodhd.models.estimates import EODHDAnalystEstimatesQueryParams as AeQP
+from openbb_eodhd.models.estimates import EODHDForwardEpsEstimatesFetcher as FeFetcher
+from openbb_eodhd.models.estimates import EODHDForwardEpsEstimatesQueryParams as FeQP
 from openbb_eodhd.models.estimates import EODHDHistoricalEpsFetcher as EpsFetcher
 from openbb_eodhd.models.estimates import EODHDHistoricalEpsQueryParams as EpsQP
 
@@ -35,3 +37,16 @@ def test_analyst_estimates_maps_trend():
     assert r.estimated_eps_high == 10.67
     assert r.estimated_revenue_avg == 525003468150.0
     assert r.number_analysts_estimated_eps == 39
+
+def test_forward_eps_maps_trend():
+    q = FeQP(symbol="AAPL")
+    rows = FeFetcher.transform_data(q, BUNDLE)
+    assert len(rows) == 1
+    r = rows[0]
+    assert r.symbol == "AAPL"
+    assert str(r.date) == "2027-09-30"
+    assert r.fiscal_period == "+1y"
+    assert r.mean == 9.53
+    assert r.low_estimate == 8.24
+    assert r.high_estimate == 10.67
+    assert r.number_of_analysts == 39
