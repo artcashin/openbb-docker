@@ -22,3 +22,16 @@ def test_maps_institutional_holders():
 def test_empty_holders_returns_empty_list():
     q = QP(symbol="AAPL")
     assert Fetcher.transform_data(q, {"Holders": {"Institutions": {}}}) == []
+
+from openbb_eodhd.models.ownership import EODHDEquityOwnershipFetcher as OFetcher
+from openbb_eodhd.models.ownership import EODHDEquityOwnershipQueryParams as OQP
+
+def test_equity_ownership_uses_investor_name_and_filing_date():
+    q = OQP(symbol="AAPL")
+    rows = OFetcher.transform_data(q, BUNDLE)
+    assert len(rows) == 2
+    r = rows[0]
+    assert r.investor_name == "BlackRock Inc"
+    assert r.symbol == "AAPL"
+    assert str(r.date) == "2026-03-31"
+    assert str(r.filing_date) == "2026-03-31"  # EODHD has no separate filing date; mirror `date`

@@ -69,3 +69,46 @@ class EODHDInstitutionalOwnershipFetcher(
             }))
         rows.sort(key=lambda r: (r.current_shares or 0), reverse=True)
         return rows
+
+
+class EODHDEquityOwnershipQueryParams(EquityOwnershipQueryParams):
+    """EODHD Equity Ownership Query."""
+    exchange: str = Field(default="US", description="EODHD exchange code for bare symbols.")
+
+
+class EODHDEquityOwnershipData(EquityOwnershipData):
+    """EODHD Equity Ownership Data."""
+    current_shares: int | None = Field(default=None, description="Shares currently held.")
+    total_shares_percent: float | None = Field(default=None, description="Holder % of shares outstanding.")
+
+
+class EODHDEquityOwnershipFetcher(
+    Fetcher[EODHDEquityOwnershipQueryParams, list[EODHDEquityOwnershipData]]
+):
+    """EODHD ownership (institutional + fund holders)."""
+
+    @staticmethod
+    def transform_query(params: dict[str, Any]) -> EODHDEquityOwnershipQueryParams:
+        return EODHDEquityOwnershipQueryParams(**params)
+
+    @staticmethod
+    async def aextract_data(query, credentials, **kwargs) -> dict:  # pylint: disable=unused-argument
+        return await F.get_bundle(query.symbol, query.exchange, credentials)
+
+    @staticmethod
+    def transform_data(query, data: dict, **kwargs) -> list[EODHDEquityOwnershipData]:  # pylint: disable=unused-argument
+        rows = []
+        for h in F.holders_institutions(data) + F.holders_funds(data):
+            d = _date(h.get("date"))
+            if d is None or not h.get("name"):
+                continue
+            rows.append(EODHDEquityOwnershipData.model_validate({
+                "investor_name": h.get("name"),
+                "date": d,
+                "filing_date": d,  # EODHD exposes only the position date
+                "symbol": query.symbol.upper(),
+                "current_shares": h.get("currentShares"),
+                "total_shares_percent": h.get("totalShares"),
+            }))
+        rows.sort(key=lambda r: (r.current_shares or 0), reverse=True)
+        return rows
