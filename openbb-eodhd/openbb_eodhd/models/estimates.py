@@ -3,6 +3,9 @@
 from typing import Any
 
 from openbb_core.provider.abstract.fetcher import Fetcher
+from openbb_core.provider.standard_models.analyst_estimates import (
+    AnalystEstimatesData, AnalystEstimatesQueryParams,
+)
 from openbb_core.provider.standard_models.historical_eps import (
     HistoricalEpsData, HistoricalEpsQueryParams,
 )
@@ -24,6 +27,11 @@ def _f(v):
         return float(v) if v not in (None, "", "NA") else None
     except (TypeError, ValueError):
         return None
+
+
+def _i(v):
+    f = _f(v)
+    return int(f) if f is not None else None
 
 
 class EODHDHistoricalEpsQueryParams(HistoricalEpsQueryParams):
@@ -62,6 +70,51 @@ class EODHDHistoricalEpsFetcher(
                 "eps_actual": _f(e.get("epsActual")),
                 "eps_estimated": _f(e.get("epsEstimate")),
                 "report_date": _date(e.get("reportDate")),
+            }))
+        rows.sort(key=lambda r: r.date)
+        return rows
+
+
+class EODHDAnalystEstimatesQueryParams(AnalystEstimatesQueryParams):
+    """EODHD Analyst Estimates Query."""
+    exchange: str = Field(default="US", description="EODHD exchange code for bare symbols.")
+
+
+class EODHDAnalystEstimatesData(AnalystEstimatesData):
+    """EODHD Analyst Estimates Data."""
+
+
+class EODHDAnalystEstimatesFetcher(
+    Fetcher[EODHDAnalystEstimatesQueryParams, list[EODHDAnalystEstimatesData]]
+):
+    """EODHD analyst estimates (Earnings.Trend)."""
+
+    @staticmethod
+    def transform_query(params: dict[str, Any]) -> EODHDAnalystEstimatesQueryParams:
+        return EODHDAnalystEstimatesQueryParams(**params)
+
+    @staticmethod
+    async def aextract_data(query, credentials, **kwargs) -> dict:  # pylint: disable=unused-argument
+        return await F.get_bundle(query.symbol, query.exchange, credentials)
+
+    @staticmethod
+    def transform_data(query, data: dict, **kwargs) -> list[EODHDAnalystEstimatesData]:  # pylint: disable=unused-argument
+        rows = []
+        for t in F.earnings_trend(data):
+            d = _date(t.get("date"))
+            if d is None:
+                continue
+            rows.append(EODHDAnalystEstimatesData.model_validate({
+                "symbol": query.symbol.upper(),
+                "date": d,
+                "estimated_eps_avg": _f(t.get("earningsEstimateAvg")),
+                "estimated_eps_low": _f(t.get("earningsEstimateLow")),
+                "estimated_eps_high": _f(t.get("earningsEstimateHigh")),
+                "estimated_revenue_avg": _f(t.get("revenueEstimateAvg")),
+                "estimated_revenue_low": _f(t.get("revenueEstimateLow")),
+                "estimated_revenue_high": _f(t.get("revenueEstimateHigh")),
+                "number_analysts_estimated_eps": _i(t.get("earningsEstimateNumberOfAnalysts")),
+                "number_analyst_estimated_revenue": _i(t.get("revenueEstimateNumberOfAnalysts")),
             }))
         rows.sort(key=lambda r: r.date)
         return rows
