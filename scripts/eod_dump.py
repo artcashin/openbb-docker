@@ -146,6 +146,15 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.loop:
+        # Catch-up before sleeping: a loop that starts after 00:05 (container
+        # recreated, host rebooted) must not skip the day that already ended
+        # while nobody was scheduled -- exactly how the first NAS flush was
+        # missed. Idempotent, so re-flushing a covered day is harmless.
+        yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).date()
+        try:
+            dump_day(yesterday)
+        except Exception:  # noqa: BLE001 - catch-up is best-effort
+            log.exception("catch-up flush failed for %s", yesterday)
         while True:
             day = _sleep_until_next_flush()
             # the RDB holds a rolling day, so a failed flush (the docker host
