@@ -46,15 +46,40 @@ Highlights, Valuation, SharesStats, Technicals, SplitsDividends, AnalystRatings,
 Holders (Institutions + Funds), InsiderTransactions, outstandingShares, Earnings
 (History/Trend/Annual), Financials, ESGScores, and (for ETFs) ETF_Data.
 
-The three statement fetchers already fetch this. ~18 of the new fetchers are also
+The three statement fetchers already fetch this (today via per-section `filter=`
+calls — to be refactored onto the shared path). ~18 of the new fetchers are also
 sections of this same payload. So add a shared helper:
 
-- `openbb_eodhd/models/_fundamentals.py` — fetches the `/fundamentals` payload once
-  (honoring `_client`'s symbol/credential logic), with typed section accessors
-  (`general()`, `highlights()`, `holders()`, `insider()`, `earnings()`,
-  `analyst_ratings()`, `shares_stats()`, `esg()`, `etf_data()`). Fundamentals-derived
-  fetchers become thin section-extractors over this helper — no redundant API calls,
-  and one place to handle EODHD's dict-keyed-by-index arrays (`{"0": {...}, "1": ...}`).
+- `openbb_eodhd/models/_fundamentals.py` — fetches the **whole** `/fundamentals`
+  payload once per symbol (honoring `_client`'s symbol/credential logic), with typed
+  section accessors (`general()`, `highlights()`, `valuation()`, `holders()`,
+  `insider()`, `earnings()`, `analyst_ratings()`, `shares_stats()`, `esg()`,
+  `etf_data()`). Fundamentals-derived fetchers become thin section-extractors over
+  this helper, and it centralizes EODHD's dict-keyed-by-index arrays
+  (`{"0": {...}, "1": ...}`) → lists.
+
+### Request coalescing (minimize API calls)
+
+OpenBB invokes each widget's fetcher independently — there is no batch hook where
+the extension could group requests up front. So a dashboard with N fundamentals
+widgets for one symbol would otherwise fire N `/fundamentals` calls (EODHD bills each
+at ~10 credits). `_fundamentals.py` collapses that to **one call per symbol** via an
+in-process **single-flight TTL cache**:
+
+- Module-level `dict[str, tuple[bundle, expiry_monotonic]]` keyed by the qualified
+  symbol (e.g. `AAPL.US`), plus a per-key `asyncio.Lock`.
+- On request: return the cached bundle if unexpired; else acquire the key's lock,
+  re-check (another coroutine may have filled it), and only then make the single HTTP
+  call. Concurrent fetchers for the same symbol await the one in-flight call and share
+  its result (single-flight).
+- TTL ~120s (module constant), so a re-render within the window is free while a symbol
+  change refetches. Stdlib only — `time.monotonic()` + dict + `asyncio.Lock`; no new
+  dependency, no cross-process state (correct for a single API worker; a multi-worker
+  deployment just gets one call per worker, still a large reduction).
+- Net: the whole fundamentals-derived cluster for a symbol = **1 API call** per render
+  window instead of one per widget. Dedicated-endpoint fetchers are unaffected (each
+  is its own call). Existing IncomeStatement/BalanceSheet/CashFlowStatement fetchers
+  are refactored onto this helper, which also reduces their calls from 3 to 1.
 
 Dedicated-endpoint fetchers (quote, news, calendars, screener, market cap, treasury,
 index, government trades, insider Form-4) each hit their specific EODHD endpoint.
