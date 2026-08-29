@@ -1,0 +1,175 @@
+# openbb-eodhd: FMP-parity provider interface
+
+**Date:** 2026-08-29
+**Status:** design approved (scope + phasing); pending spec review → implementation plan
+
+## Goal
+
+Make `openbb-eodhd` a broad OpenBB provider interface, using **FMP as the reference
+surface**: for every OpenBB standard model FMP registers (69 of them), add an EODHD
+fetcher wherever EODHD's API can supply the data. Registering under the same
+standard-model names FMP uses makes OpenBB auto-generate the parallel
+`..._eodhd_obb` widget IDs, which bdobb-v2 and OpenBB Workspace pick up for free
+after a container rebuild + `widgets.json` regeneration.
+
+Today `openbb-eodhd` (v9.0.0) implements **9** fetchers: EquityHistorical,
+EtfHistorical, CryptoHistorical, CurrencyHistorical, IncomeStatement, BalanceSheet,
+CashFlowStatement, HistoricalDividends, HistoricalSplits.
+
+This adds ~36 more (plus ~7 optional derived), reaching broad FMP parity for
+everything EODHD actually provides.
+
+## Existing pattern (followed as-is)
+
+- One model file per domain under `openbb_eodhd/models/`, each defining
+  `Fetcher` subclass(es) that map an OpenBB standard `QueryParams`/`Data` pair onto
+  EODHD's API via `openbb_eodhd/models/_client.py`.
+- Well-known fields mapped to OpenBB conventional names; unmapped fields pass
+  through snake_cased (standard models allow extras) — see `models/fundamental.py`.
+- Fetchers registered in `openbb_eodhd/__init__.py` `eodhd_provider.fetcher_dict`,
+  keyed by the standard-model name.
+- Credential `eodhd_api_key` (env `EODHD_API_KEY`) already declared.
+- Symbol handling (`TICKER.EXCHANGE`, default `.US`) already in `_client`.
+- Per-model tests under `tests/` with recorded fixtures.
+
+## Key structural decision: shared `/fundamentals` fetch
+
+EODHD returns one large `/api/fundamentals/{symbol}` payload containing General,
+Highlights, Valuation, SharesStats, Technicals, SplitsDividends, AnalystRatings,
+Holders (Institutions + Funds), InsiderTransactions, outstandingShares, Earnings
+(History/Trend/Annual), Financials, ESGScores, and (for ETFs) ETF_Data.
+
+The three statement fetchers already fetch this. ~18 of the new fetchers are also
+sections of this same payload. So add a shared helper:
+
+- `openbb_eodhd/models/_fundamentals.py` — fetches the `/fundamentals` payload once
+  (honoring `_client`'s symbol/credential logic), with typed section accessors
+  (`general()`, `highlights()`, `holders()`, `insider()`, `earnings()`,
+  `analyst_ratings()`, `shares_stats()`, `esg()`, `etf_data()`). Fundamentals-derived
+  fetchers become thin section-extractors over this helper — no redundant API calls,
+  and one place to handle EODHD's dict-keyed-by-index arrays (`{"0": {...}, "1": ...}`).
+
+Dedicated-endpoint fetchers (quote, news, calendars, screener, market cap, treasury,
+index, government trades, insider Form-4) each hit their specific EODHD endpoint.
+
+## Mapping — fetchers to ADD
+
+### A. Fundamentals-derived (shared `/fundamentals` payload)
+
+| OpenBB standard model | EODHD section | Notes |
+|---|---|---|
+| EquityInfo | General | profile: name/sector/industry/description/officers/employees/ISIN/CIK/IPODate |
+| KeyMetrics | Highlights + Valuation | marketcap, PE/PEG, EPS, margins, ROE/ROA, revenue TTM |
+| FinancialRatios | Valuation + Highlights (+Technicals) | **current-only** (single row); FMP returns a series |
+| ShareStatistics | SharesStats + outstandingShares | shares out/float, %insiders, %institutions |
+| KeyExecutives | General.Officers | name/title/yearBorn (no compensation) |
+| InstitutionalOwnership | Holders.Institutions | top holders, shares, weight |
+| EquityOwnership | Holders.Institutions/Funds | FMP's generic ownership model → holders |
+| InsiderTrading | InsiderTransactions (bundle) **or** `/insider-transactions` Form-4 | prefer the dedicated Form-4 endpoint for date-range + purchase/sale codes |
+| HistoricalEps | Earnings.History | reportDate, epsActual, epsEstimate |
+| AnalystEstimates | Earnings.Trend | eps/revenue estimates, #analysts, revisions |
+| ForwardEpsEstimates | Earnings.Trend | forward EPS by period |
+| PriceTarget | AnalystRatings + Highlights.WallStreetTargetPrice | **consensus target only** (no per-analyst rows) |
+| PriceTargetConsensus | AnalystRatings | target + strong-buy/buy/hold/sell/strong-sell counts |
+| EsgScore | ESGScores | **DEPRECATED** — EODHD ESG is a stale 2019 beta; implement + mark deprecated |
+| EtfInfo | ETF_Data (+General) | ETF profile/fees |
+| EtfHoldings | ETF_Data.Holdings | top positions + weights |
+| EtfSectors | ETF_Data.Sector_Weights | |
+| EtfCountries | ETF_Data.World_Regions / Asset_Allocation | |
+
+### B. Dedicated endpoints
+
+| OpenBB standard model | EODHD endpoint |
+|---|---|
+| EquityQuote | `/real-time/{symbol}` (live/delayed) |
+| MarketSnapshots | `/real-time` bulk / exchange snapshot *(verify shape)* |
+| CompanyNews | `/news?s={symbol}` |
+| WorldNews | `/news?t={topic}` (general feed, no symbol) |
+| CalendarEarnings | `/calendar/earnings` (upcoming) |
+| CalendarDividend | upcoming dividends calendar |
+| CalendarIpo | `/calendar/ipos` |
+| CalendarSplits | `/calendar/splits` |
+| EconomicCalendar | `/economic-events` |
+| HistoricalMarketCap | `/historical-market-cap/{symbol}` |
+| EquityScreener | `/screener` |
+| EtfSearch | `/search` / exchange-symbol-list filtered to ETFs |
+| CryptoSearch | `/search` (crypto) |
+| CurrencyPairs | `/exchange-symbol-list/FOREX` |
+| CurrencySnapshots | `/real-time` (forex) |
+| AvailableIndices | `/exchange-symbol-list/INDX` |
+| IndexConstituents | index components *(marketplace — verify subscription)* |
+| IndexHistorical | `/eod/{index}` — reuse the historical fetcher |
+| TreasuryRates | US treasury rates |
+| YieldCurve | US treasury yield curve |
+| GovernmentTrades | congressional trades *(marketplace — verify subscription)* |
+
+## Optional / derived (default: NOT built unless requested)
+
+Low value and approximate; excluded from the default scope per design review:
+
+- PricePerformance, EtfPricePerformance — computed returns from historical prices.
+- EquityActive / EquityGainers / EquityLosers — screener sorted by volume/change.
+- IncomeStatementGrowth / BalanceSheetGrowth / CashFlowStatementGrowth — YoY computed
+  from the statement fetchers.
+
+## Not feasible (EODHD does not provide) — stay on FMP / sec / benzinga
+
+| Standard model | Why | Alternative on the NAS |
+|---|---|---|
+| CompanyFilings, DiscoveryFilings | no SEC filings index | `sec` |
+| EarningsCallTranscript | EODHD has no transcripts | FMP only (paywalled) |
+| NportDisclosure | SEC N-PORT, FMP-specific | — |
+| EtfEquityExposure | reverse ETF lookup | FMP only |
+| RevenueGeographic, RevenueBusinessLine | no segment data in fundamentals | FMP only |
+| ExecutiveCompensation | Officers has no comp figures | FMP / sec |
+| CalendarEvents | no corporate-events calendar (earnings/div/ipo/splits are separate) | FMP |
+| RiskPremium | FMP = equity risk premium by country; EODHD only sovereign (different) | FMP |
+
+## Phasing
+
+Each phase: model files + tests + register in `__init__.py` + container rebuild +
+verify every new provider registers and returns non-empty for `AAPL.US`.
+
+1. **Gap-fillers** — InstitutionalOwnership, EquityOwnership, InsiderTrading,
+   HistoricalEps, AnalystEstimates, ForwardEpsEstimates, PriceTarget,
+   PriceTargetConsensus. (Removes the FMP-402 wall immediately.)
+2. **Company core** — EquityInfo, EquityQuote, KeyMetrics, FinancialRatios,
+   ShareStatistics, KeyExecutives, CompanyNews, EsgScore(deprecated).
+3. **Calendars / discovery / market data** — CalendarEarnings/Dividend/Ipo/Splits,
+   EconomicCalendar, HistoricalMarketCap, EquityScreener, EtfSearch/CryptoSearch,
+   CurrencyPairs/Snapshots, AvailableIndices, IndexConstituents, IndexHistorical,
+   TreasuryRates, YieldCurve, GovernmentTrades, WorldNews, MarketSnapshots,
+   EtfInfo/Holdings/Sectors/Countries.
+
+## Testing
+
+- Follow the existing recorded-fixture pattern in `tests/` (one test module per new
+  model file).
+- Add a registration smoke check: each new standard-model key is present in
+  `eodhd_provider.fetcher_dict` and its fetcher returns a non-empty, schema-valid
+  result for `AAPL.US` (ETF models against a known ETF, forex/index against known
+  symbols).
+- Bump `openbb-eodhd` version and note new providers in the README/description.
+
+## Risks / open items
+
+- **Required standard-model fields:** some standard `Data` models have required
+  fields EODHD may not populate; per fetcher, fill what EODHD gives and let extras
+  pass through — surface any hard-required gap during TDD (may force a model to the
+  "not feasible" list).
+- **Marketplace endpoints:** IndexConstituents and GovernmentTrades (congressional
+  trades) are EODHD marketplace products — confirm the account's subscription during
+  Phase 3; drop if unavailable.
+- **Point-in-time vs series:** FinancialRatios / PriceTarget are single-snapshot from
+  EODHD where FMP returns history — document the difference; don't fake a series.
+- **API-call cost:** EODHD bills per call and some endpoints (insider Form-4, earnings
+  trends) cost 10 calls each — the shared `/fundamentals` helper keeps the
+  fundamentals-derived cluster to one call; dedicated endpoints are one call each.
+- **Deployment:** the NAS runs `openbb-local:1.0.0` from `/share/Container/openbb`.
+  How that image is built/pulled (local build on the NAS vs. GHCR pull of a
+  Mac-built image) must be confirmed in the implementation plan so the new providers
+  actually reach production; the `update-openbb-docker` skill's `--container`/`--push`
+  covers the Mac→GHCR path.
+- **Standalone github repo drift:** `github.com/artcashin/openbb-eodhd` is a stale
+  0.1.0; the live source is this in-repo copy (v9.0.0). Decide whether to re-sync the
+  standalone repo or leave it (out of scope here).
