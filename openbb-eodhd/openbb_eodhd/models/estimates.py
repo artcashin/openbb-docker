@@ -12,6 +12,9 @@ from openbb_core.provider.standard_models.forward_eps_estimates import (
 from openbb_core.provider.standard_models.historical_eps import (
     HistoricalEpsData, HistoricalEpsQueryParams,
 )
+from openbb_core.provider.standard_models.price_target_consensus import (
+    PriceTargetConsensusData, PriceTargetConsensusQueryParams,
+)
 from pydantic import Field
 
 from openbb_eodhd.models import _fundamentals as F
@@ -165,3 +168,41 @@ class EODHDForwardEpsEstimatesFetcher(
             }))
         rows.sort(key=lambda r: r.date)
         return rows
+
+
+class EODHDPriceTargetConsensusQueryParams(PriceTargetConsensusQueryParams):
+    """EODHD Price Target Consensus Query."""
+    exchange: str = Field(default="US", description="EODHD exchange code for bare symbols.")
+
+
+class EODHDPriceTargetConsensusData(PriceTargetConsensusData):
+    """EODHD Price Target Consensus Data."""
+    rating: float | None = Field(default=None, description="EODHD analyst rating (1=strong buy .. 5=strong sell).")
+
+
+class EODHDPriceTargetConsensusFetcher(
+    Fetcher[EODHDPriceTargetConsensusQueryParams, list[EODHDPriceTargetConsensusData]]
+):
+    """EODHD price target consensus (AnalystRatings)."""
+
+    @staticmethod
+    def transform_query(params: dict[str, Any]) -> EODHDPriceTargetConsensusQueryParams:
+        return EODHDPriceTargetConsensusQueryParams(**params)
+
+    @staticmethod
+    async def aextract_data(query, credentials, **kwargs) -> dict:  # pylint: disable=unused-argument
+        symbol = query.symbol or "AAPL"
+        return await F.get_bundle(symbol, query.exchange, credentials)
+
+    @staticmethod
+    def transform_data(query, data: dict, **kwargs) -> list[EODHDPriceTargetConsensusData]:  # pylint: disable=unused-argument
+        ar = F.analyst_ratings(data)
+        target = _f(ar.get("TargetPrice"))
+        if not target:
+            return []
+        return [EODHDPriceTargetConsensusData.model_validate({
+            "symbol": (query.symbol or "").upper(),
+            "name": F.general(data).get("Name"),
+            "target_consensus": target,
+            "rating": _f(ar.get("Rating")),
+        })]
