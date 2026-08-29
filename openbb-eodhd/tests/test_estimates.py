@@ -4,6 +4,8 @@ from openbb_eodhd.models.estimates import EODHDForwardEpsEstimatesFetcher as FeF
 from openbb_eodhd.models.estimates import EODHDForwardEpsEstimatesQueryParams as FeQP
 from openbb_eodhd.models.estimates import EODHDHistoricalEpsFetcher as EpsFetcher
 from openbb_eodhd.models.estimates import EODHDHistoricalEpsQueryParams as EpsQP
+from openbb_eodhd.models.estimates import EODHDPriceTargetConsensusFetcher as PtcFetcher
+from openbb_eodhd.models.estimates import EODHDPriceTargetConsensusQueryParams as PtcQP
 
 BUNDLE = {"Earnings": {"History": {
     "0": {"reportDate": "2026-10-29", "date": "2026-09-30", "epsActual": None, "epsEstimate": 1.98},
@@ -50,3 +52,22 @@ def test_forward_eps_maps_trend():
     assert r.low_estimate == 8.24
     assert r.high_estimate == 10.67
     assert r.number_of_analysts == 39
+
+BUNDLE_RATINGS = {
+    "General": {"Name": "Apple Inc."},
+    "AnalystRatings": {"Rating": 4.04, "TargetPrice": 324.45,
+                       "StrongBuy": 23, "Buy": 7, "Hold": 16, "Sell": 1, "StrongSell": 1},
+}
+
+def test_price_target_consensus():
+    q = PtcQP(symbol="AAPL")
+    rows = PtcFetcher.transform_data(q, BUNDLE_RATINGS)
+    assert len(rows) == 1
+    r = rows[0]
+    assert r.symbol == "AAPL"
+    assert r.name == "Apple Inc."
+    assert r.target_consensus == 324.45
+
+def test_price_target_consensus_empty_when_no_target():
+    q = PtcQP(symbol="AAPL")
+    assert PtcFetcher.transform_data(q, {"AnalystRatings": {"TargetPrice": 0}}) == []
