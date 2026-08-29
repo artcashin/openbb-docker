@@ -188,9 +188,18 @@ verify every new provider registers and returns non-empty for `AAPL.US`.
   fields EODHD may not populate; per fetcher, fill what EODHD gives and let extras
   pass through — surface any hard-required gap during TDD (may force a model to the
   "not feasible" list).
-- **Marketplace endpoints:** IndexConstituents, GovernmentTrades (congressional
-  trades), and OptionsChains (US options EOD) are EODHD marketplace products —
-  confirm the account's subscription before building; drop/defer if unavailable.
+- **Marketplace access — CONFIRMED against the live key (2026-08-29):** the account
+  is EODHD All-in-One (100k req/day). Verified working: search, screener, macro
+  indicators, and **GovernmentTrades** (congressional trades, 200 OK). Verified
+  **403 (not subscribed)**: **OptionsChains** (Options Data Feed) and
+  **IndexConstituents** (Index Components marketplace). The public `demo` key does
+  **not** unlock these — it 403s on options too and only serves the core APIs
+  (fundamentals/eod/real-time/news/earnings-calendar/market-cap/div/splits/technicals)
+  for AAPL/MSFT/TSLA/VTI/EURUSD.FOREX/BTC-USD.CC. So OptionsChains and
+  IndexConstituents can be **coded but not verified or used** until those two add-ons
+  are purchased — build them last, behind a clear "requires subscription" note, and
+  leave their tests skipped/marked xfail until the feed is enabled. Everything else in
+  scope is testable now with the account key.
 - **OptionsChains fidelity:** EODHD options are **end-of-day, not a live chain**, and
   expose implied volatility but likely not the full greek set (delta/gamma/theta/
   vega). Populate what EODHD returns; leave unmapped greeks null rather than compute.
