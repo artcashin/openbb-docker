@@ -1391,7 +1391,7 @@ git commit -m "feat(eodhd): register Phase-1 ownership/insider/estimates fetcher
 **Interfaces:**
 - Consumes: the registered provider; `update-openbb-docker` skill's `--container`.
 
-> This task confirms deployment. Resolve the spec's open item first: check whether the NAS `openbb-local:1.0.0` image is built on the NAS from `/share/Container/openbb` or pulled from GHCR (`docker --context nas inspect openbb-api` image + `/share/Container/openbb/docker-compose.yml`). Rebuild wherever that image originates. Steps below assume the standard Mac build → GHCR → NAS pull; adjust to the NAS-local build if that is the actual origin.
+> This task confirms deployment. Resolve the spec's open item first: check whether the NAS `openbb-local:1.0.0` image is built on the NAS from `<nas-checkout>` or pulled from GHCR (`docker --context nas inspect openbb-api` image + `<nas-checkout>/docker-compose.yml`). Rebuild wherever that image originates. Steps below assume the standard Mac build → GHCR → NAS pull; adjust to the NAS-local build if that is the actual origin.
 
 - [ ] **Step 1: Run the extension unit suite (offline gate)**
 
@@ -1417,7 +1417,7 @@ Expected: all 7 keys printed.
 Push/pull per the resolved deployment path, recreate `openbb-api`, then:
 ```bash
 AUTH="Authorization: Basic <token from backends.json>"
-BASE="https://openbb.tailb9874f.ts.net"
+BASE="https://openbb.<your-tailnet>.ts.net"
 for ep in equity/ownership/institutional equity/fundamental/historical_eps equity/estimates/consensus; do
   curl -s -m 30 -H "$AUTH" "$BASE/api/v1/$ep?symbol=AAPL&provider=eodhd" \
     -o /tmp/r.json -w "[%{http_code}] $ep -> "; \
