@@ -253,7 +253,7 @@ verify every new provider registers and returns non-empty for `AAPL.US`.
 - **API-call cost:** EODHD bills per call and some endpoints (insider Form-4, earnings
   trends) cost 10 calls each — the shared `/fundamentals` helper keeps the
   fundamentals-derived cluster to one call; dedicated endpoints are one call each.
-- **Deployment:** the NAS runs `openbb-local:1.0.0` from `/share/Container/openbb`.
+- **Deployment:** the NAS runs `openbb-local:1.0.0` from `<nas-checkout>`.
   How that image is built/pulled (local build on the NAS vs. GHCR pull of a
   Mac-built image) must be confirmed in the implementation plan so the new providers
   actually reach production; the `update-openbb-docker` skill's `--container`/`--push`
