@@ -1,5 +1,6 @@
 """Tests for openbb_eodhd.models.fundamental."""
 
+import asyncio
 from datetime import date
 
 import pytest
@@ -281,3 +282,35 @@ class TestCashFlowFetcher:
         results = EODHDCashFlowStatementFetcher.transform_data(qp, rows)
         assert len(results) == 1
         assert results[0].free_cash_flow == 500000000.0
+
+
+# ============================================================
+# Bundle coalescing (Task 2)
+# ============================================================
+
+def test_three_statements_one_symbol_share_one_fetch(monkeypatch):
+    """Income+Balance+CashFlow for one symbol -> ONE /fundamentals fetch."""
+    from openbb_eodhd.models import _fundamentals as F
+
+    F._reset_cache_for_tests()
+    calls = {"n": 0}
+    bundle = {"Financials": {
+        "Income_Statement": {"yearly": {"2025-09-30": {"date": "2025-09-30", "totalRevenue": 1}}, "quarterly": {}},
+        "Balance_Sheet": {"yearly": {"2025-09-30": {"date": "2025-09-30", "totalAssets": 2}}, "quarterly": {}},
+        "Cash_Flow": {"yearly": {"2025-09-30": {"date": "2025-09-30", "netIncome": 3}}, "quarterly": {}},
+    }}
+    monkeypatch.setattr(F, "_fetch_sync", lambda s, c: (calls.__setitem__("n", calls["n"] + 1) or bundle))
+    creds = {"eodhd_api_key": "k"}
+
+    async def go():
+        for Fetcher, QP in [
+            (EODHDIncomeStatementFetcher, EODHDIncomeStatementQueryParams),
+            (EODHDBalanceSheetFetcher, EODHDBalanceSheetQueryParams),
+            (EODHDCashFlowStatementFetcher, EODHDCashFlowStatementQueryParams),
+        ]:
+            q = QP(symbol="AAPL")
+            data = await Fetcher.aextract_data(q, creds)
+            Fetcher.transform_data(q, data)
+
+    asyncio.run(go())
+    assert calls["n"] == 1
