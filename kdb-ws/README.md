@@ -55,6 +55,18 @@ each refresh. `pv`/`vol` are the running totals, so a subscribed client
 extends the series per tick without re-requesting:
 `avwap = (pv += p*s) / (vol += s)`.
 
+**Per-bar `vwap` is the composition primitive.** Each bar's `vwap * volume`
+is exactly that bar's `sum(price*size)`, so a client can build VWAP variants
+from bars alone, trade-true, without ever touching ticks:
+
+    anchored from bar k:   Σ(vwap_i·vol_i, i≥k) / Σ(vol_i, i≥k)
+    rolling over N bars:   Σ(vwap_i·vol_i, last N) / Σ(vol_i, last N)
+                           (a 30-minute rolling vwap = six 5-minute bars)
+
+The same primitive rides through every aggregation layer: this websocket's
+`bars`, live-grid's tick-derived `/series` bars, and the ArcticDB provider's
+resample (`vwap=true` query param) over flushed ticks in the HDB.
+
 A second `sub` replaces the first; closing the socket unsubscribes. Defining
 `.z.ws` is also a hardening step: q's default evaluates whatever a websocket
 client sends.
