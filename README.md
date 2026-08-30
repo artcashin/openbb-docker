@@ -16,7 +16,7 @@ from later chapters is.
 | v9.0.0 | Ep. 9 — The Tape | EODHD provider extension + live-grid streaming service |
 | v10.0.0 | Ep. 10 — The Cache | kdb+ read-through cache (`provider="kdb"`) + tick recording and a unified chart in `live-grid` |
 | v11.0.0 | Ep. 11 — The Shared Store | MinIO as its own tailnet node + ArcticDB (`provider="arcticdb"`) + `tick-lab` + the `live_chart` widget |
-| v11.1.0 | Ep. 11 — The Shared Store | `tick-lab`'s EODHD-through-the-API reference adapter — the per-minute 2023 comparison yfinance cannot serve |
+| v11.1.1 | Ep. 11 — The Shared Store | `tick-lab`'s EODHD-through-the-API reference adapter — the per-minute 2023 comparison yfinance cannot serve |
 | v11.1.1 | Ep. 11 — The Shared Store | `tick-lab`'s in-process OpenBB reference adapter (`--reference eodhd-local`) — the same call made locally, and what it costs versus `eodhd-api` |
 
 Ep. 11's three tags point at the same commit. The chapter was built and
@@ -24,7 +24,7 @@ verified as one body of work — the rows above describe what each release
 *adds*, not three separate states of the code, and the two later reference
 adapters are `--reference` options you select at runtime.
 
-## What you get (this release: v11.1.0)
+## What you get (this release: v11.1.1)
 
 Nine services across two tailnet nodes, zero exposed ports. The backbone,
 unchanged since Ep. 1:
@@ -76,7 +76,7 @@ same store via `minio.env`'s `ARCTICDB_S3_*` values, load FirstRate Data's
 free tick sample (GOOG + MSFT, 2023-05-12 — **not committed here**, it's
 third-party licensed data you download yourself), and it rolls your stored
 ticks into 1-minute bars and checks them against a reference source —
-`eodhd-api` by default since v11.1.0, with `yfinance` and the in-process
+`eodhd-api` by default since v11.1.1, with `yfinance` and the in-process
 `eodhd-local` also available via `--reference`. **Apple Silicon readers, read
 this:** the Platform image is pinned `linux/amd64` because ArcticDB
 publishes no aarch64 Linux wheels — on an M-series Mac it runs under
