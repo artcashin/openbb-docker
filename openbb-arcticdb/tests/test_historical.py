@@ -3,6 +3,7 @@
 These test the in-process logic only; no ArcticDB connection needed.
 """
 
+import numpy as np
 import pandas as pd
 import pytest
 from openbb_core.provider.abstract.data import Data
@@ -153,3 +154,47 @@ class TestValidate:
         data = [{"date": "2026-01-01", "close": 100.0}]
         result = _validate(None, data, Data)
         assert result[0].close == 100.0
+
+
+class TestPandasOhlcvVwap:
+    """Per-bar trade-weighted price -- the sufficient statistic for anchored
+    and rolling VWAP composed client-side."""
+
+    def _ticks(self):
+        idx = pd.date_range("2026-08-31 13:30", periods=1800, freq="s")
+        rng = np.random.default_rng(11)
+        return pd.DataFrame(
+            {"price": 100 + np.cumsum(rng.normal(0, 0.02, 1800)),
+             "size": rng.integers(1, 200, 1800).astype(float)},
+            index=idx,
+        )
+
+    def test_tick_vwap_is_the_trade_sum(self):
+        ticks = self._ticks()
+        out = _pandas_ohlcv(ticks, "5min", origin="epoch", vwap=True)
+        grp = ticks.groupby(pd.Grouper(freq="5min", origin="epoch"))
+        manual = grp.apply(lambda g: (g.price * g["size"]).sum() / g["size"].sum())
+        assert np.allclose(out["vwap"], manual)
+
+    def test_downsampling_vwap_bars_stays_trade_true(self):
+        """sum(vwap*volume)/sum(volume) over six 5m bars == the 30m trade sum
+        -- the identity a client's rolling VWAP relies on."""
+        ticks = self._ticks()
+        b5 = _pandas_ohlcv(ticks, "5min", origin="epoch", vwap=True)
+        from_bars = _pandas_ohlcv(b5, "30min", origin="epoch", vwap=True)
+        from_ticks = _pandas_ohlcv(ticks, "30min", origin="epoch", vwap=True)
+        assert np.allclose(from_bars["vwap"], from_ticks["vwap"])
+
+    def test_vwap_is_opt_in_and_never_approximated(self):
+        ticks = self._ticks()
+        assert "vwap" not in _pandas_ohlcv(ticks, "5min").columns
+        bars = _pandas_ohlcv(ticks, "5min", vwap=True).drop(columns="vwap")
+        # bars without their own vwap column carry no trade info -- no output,
+        # never a (H+L+C)/3 stand-in
+        assert "vwap" not in _pandas_ohlcv(bars, "30min", vwap=True).columns
+
+    def test_zero_traded_size_bucket_is_nan(self):
+        ticks = self._ticks()
+        ticks.loc[ticks.index[:300], "size"] = 0.0
+        out = _pandas_ohlcv(ticks, "5min", origin="epoch", vwap=True)
+        assert np.isnan(out["vwap"].iloc[0])
