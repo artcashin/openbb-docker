@@ -22,11 +22,8 @@ from openbb_core.provider.standard_models.income_statement import (
     IncomeStatementData,
     IncomeStatementQueryParams,
 )
-from openbb_core.app.model.abstract.error import OpenBBError
-from openbb_core.provider.utils.errors import EmptyDataError, UnauthorizedError
+from openbb_core.provider.utils.errors import EmptyDataError
 from pydantic import Field
-
-from openbb_eodhd.models._client import get_client, raise_sdk_error
 
 # EODHD field -> OpenBB conventional field name. Unmapped fields pass through
 # snake_cased, so these maps only need the commonly-consumed line items.
@@ -105,43 +102,6 @@ def _num(value: Any) -> Any:
         return value  # non-numeric passthrough (kept as-is)
 
 
-async def _fetch_section(
-    section: str,
-    symbol: str,
-    exchange: str,
-    credentials: dict[str, str] | None,
-) -> dict:
-    """Fetch one Financials section (yearly+quarterly) for a symbol."""
-    # The official SDK is synchronous (requests); run it off the event loop.
-    # pylint: disable=import-outside-toplevel
-    from asyncio import to_thread
-
-    return await to_thread(_fetch_section_sync, section, symbol, exchange, credentials)
-
-
-def _fetch_section_sync(
-    section: str,
-    symbol: str,
-    exchange: str,
-    credentials: dict[str, str] | None,
-) -> dict:
-    client = get_client(credentials)
-    sym = symbol.strip().upper()
-    sym = sym if "." in sym else f"{sym}.{exchange.upper()}"
-    try:
-        with client:
-            response = client.get_fundamentals_data(
-                sym, filter=f"Financials::{section}"
-            )
-    except (OpenBBError, UnauthorizedError):
-        raise
-    except Exception as exc:
-        raise_sdk_error(exc, f"fundamentals for '{sym}'")
-    if not isinstance(response, dict) or not response:
-        raise EmptyDataError(f"EODHD returned no fundamentals for '{sym}'.")
-    return response
-
-
 def _transform(section_data: dict, period: str, limit: int | None, field_map: dict) -> list[dict]:
     """Turn one EODHD statement section into standard-model row dicts."""
     # pylint: disable=import-outside-toplevel
@@ -177,8 +137,13 @@ def _transform(section_data: dict, period: str, limit: int | None, field_map: di
 
 
 async def _extract(section: str, field_map: dict, query, credentials) -> list[dict]:
-    """Shared extract: fetch the section then map to standard rows."""
-    data = await _fetch_section(section, query.symbol, query.exchange, credentials)
+    """Shared extract: read the section from the shared /fundamentals bundle, then map to standard rows."""
+    # pylint: disable=import-outside-toplevel
+    from openbb_eodhd.models._fundamentals import get_bundle
+
+    bundle = await get_bundle(query.symbol, query.exchange, credentials)
+    financials = bundle.get("Financials") or {}
+    data = financials.get(section) or {}
     return _transform(data, query.period, query.limit, field_map)
 
 
