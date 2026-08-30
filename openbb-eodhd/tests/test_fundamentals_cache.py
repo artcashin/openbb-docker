@@ -108,7 +108,10 @@ def test_l2_miss_fetches_and_writes_back(monkeypatch):
 
 
 def test_arctic_library_passes_resolved_uri_not_none(monkeypatch):
-    import openbb_arcticdb.utils as U
+    U = pytest.importorskip(
+        "openbb_arcticdb.utils",
+        reason="L2 is a soft dependency; without openbb-arcticdb it degrades to L1",
+    )
     captured = {}
     monkeypatch.setattr(U, "resolve_config",
         lambda uri=None, library=None, credentials=None: ("lmdb:///tmp/eodhd-test", library))
