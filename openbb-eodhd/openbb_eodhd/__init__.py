@@ -9,10 +9,21 @@ from openbb_eodhd.models.corporate_actions import (
 from openbb_eodhd.models.crypto_historical import EODHDCryptoHistoricalFetcher
 from openbb_eodhd.models.currency_historical import EODHDCurrencyHistoricalFetcher
 from openbb_eodhd.models.equity_historical import EODHDEquityHistoricalFetcher
+from openbb_eodhd.models.estimates import (
+    EODHDAnalystEstimatesFetcher,
+    EODHDForwardEpsEstimatesFetcher,
+    EODHDHistoricalEpsFetcher,
+    EODHDPriceTargetConsensusFetcher,
+)
 from openbb_eodhd.models.fundamental import (
     EODHDBalanceSheetFetcher,
     EODHDCashFlowStatementFetcher,
     EODHDIncomeStatementFetcher,
+)
+from openbb_eodhd.models.insider import EODHDInsiderTradingFetcher
+from openbb_eodhd.models.ownership import (
+    EODHDEquityOwnershipFetcher,
+    EODHDInstitutionalOwnershipFetcher,
 )
 
 __all__ = [
@@ -24,6 +35,13 @@ __all__ = [
     "EODHDCashFlowStatementFetcher",
     "EODHDHistoricalDividendsFetcher",
     "EODHDHistoricalSplitsFetcher",
+    "EODHDInstitutionalOwnershipFetcher",
+    "EODHDEquityOwnershipFetcher",
+    "EODHDInsiderTradingFetcher",
+    "EODHDHistoricalEpsFetcher",
+    "EODHDAnalystEstimatesFetcher",
+    "EODHDForwardEpsEstimatesFetcher",
+    "EODHDPriceTargetConsensusFetcher",
     "eodhd_provider",
 ]
 
@@ -33,7 +51,9 @@ eodhd_provider = Provider(
     description=(
         "EOD Historical Data (EODHD) APIs. Historical pricing for equities/ETFs, "
         "crypto, and forex (end-of-day + intraday); fundamentals (income, balance "
-        "sheet, cash flow); and corporate actions (dividends, splits)."
+        "sheet, cash flow); corporate actions (dividends, splits); ownership "
+        "(institutional and fund holders) and insider transactions; and analyst "
+        "estimates (historical EPS, forward estimates, price-target consensus)."
     ),
     # Becomes the credential field `eodhd_api_key` (env: EODHD_API_KEY).
     credentials=["api_key"],
@@ -47,6 +67,13 @@ eodhd_provider = Provider(
         "CashFlowStatement": EODHDCashFlowStatementFetcher,
         "HistoricalDividends": EODHDHistoricalDividendsFetcher,
         "HistoricalSplits": EODHDHistoricalSplitsFetcher,
+        "InstitutionalOwnership": EODHDInstitutionalOwnershipFetcher,
+        "EquityOwnership": EODHDEquityOwnershipFetcher,
+        "InsiderTrading": EODHDInsiderTradingFetcher,
+        "HistoricalEps": EODHDHistoricalEpsFetcher,
+        "AnalystEstimates": EODHDAnalystEstimatesFetcher,
+        "ForwardEpsEstimates": EODHDForwardEpsEstimatesFetcher,
+        "PriceTargetConsensus": EODHDPriceTargetConsensusFetcher,
     },
     repr_name="EOD Historical Data (EODHD)",
 )
