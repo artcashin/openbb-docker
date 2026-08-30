@@ -330,7 +330,7 @@ class KdbStore:
             return conn(
                 "{[qwsym;qwlo;qwhi;qwbucket]"
                 " 0!select open:first price, high:max price, low:min price,"
-                " close:last price, volume:sum size"
+                " close:last price, volume:sum size, vwap:size wavg price"
                 " by t: qwbucket xbar time"
                 " from `time xasc select from trades"
                 " where sym=qwsym, time within (qwlo;qwhi)}",
