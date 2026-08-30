@@ -82,12 +82,21 @@ def _resample_spec(interval: str) -> str:
     return f"{n}{pandas_unit}"
 
 
-def _pandas_ohlcv(df, rule: str, origin: str = "start_day"):
+def _pandas_ohlcv(df, rule: str, origin: str = "start_day", vwap: bool = False):
     """Resample any tabular data into OHLCV bars at the given interval.
 
     Handles both full OHLCV columns and tick data (a single price column with
     an optional volume/size column).  Pandas ``.resample().agg()`` is limited
     to existing column names, so the tick path builds the result explicitly.
+
+    With ``vwap=True`` each bar gains its trade-weighted price: on tick data,
+    sum(price*size)/sum(size) over the bucket; when downsampling bars that
+    already carry a ``vwap`` column, sum(vwap*volume)/sum(volume) -- which is
+    algebraically the same trade sum. Bars without trade information get NO
+    vwap: a typical-price approximation is deliberately not offered. Per-bar
+    vwap is the sufficient statistic for client-side composition -- anchored
+    VWAP by accumulating vwap*volume from a point in time, or a rolling VWAP
+    over the last N bars (a 30-minute rolling vwap from six 5-minute bars).
     """
     # pylint: disable=import-outside-toplevel
     import pandas as pd
@@ -104,6 +113,13 @@ def _pandas_ohlcv(df, rule: str, origin: str = "start_day"):
         # column's original case, e.g. "Open"); the standard OHLCV models and
         # the tick path below both key on lowercase open/high/low/close/volume.
         out.columns = [str(c).lower() for c in out.columns]
+        if vwap and "vwap" in cl and "volume" in cl:
+            # downsampling bars that carry their own trade-weighted vwap:
+            # vwap_i * volume_i is that bar's sum(price*size), so this stays
+            # trade-true at the coarser interval
+            pv = (df[cl["vwap"]] * df[cl["volume"]]).resample(rule, origin=origin).sum()
+            vol_sum = df[cl["volume"]].resample(rule, origin=origin).sum()
+            out["vwap"] = pv / vol_sum
         result_cols = list(out.columns)
     else:
         price = next(
@@ -129,6 +145,12 @@ def _pandas_ohlcv(df, rule: str, origin: str = "start_day"):
         )
         if vol is not None:
             out["volume"] = resampled[vol].sum()
+            if vwap:
+                # trade-true per-bar vwap straight from the ticks; a bucket
+                # with zero traded size gets NaN ("no trade data"), never a
+                # fabricated value
+                pv = (df[price] * df[vol]).resample(rule, origin=origin).sum()
+                out["vwap"] = pv / out["volume"]
         result_cols = list(out.columns)
 
     # Drop empty buckets (e.g. gaps): sum() volume is 0 but OHLC are NaN.
@@ -153,6 +175,7 @@ async def _extract_bars(query, credentials: Optional[dict]) -> list[dict]:
     interval = getattr(query, "interval", None) or "1d"
     pandas_rule = _resample_spec(interval)
     pandas_anchor = bool(getattr(query, "pandas_anchor", False))
+    want_vwap = bool(getattr(query, "vwap", False))
     start_ts, end_ts = to_bounds(query.start_date, query.end_date)
 
     def _read() -> list[dict]:
@@ -176,7 +199,7 @@ async def _extract_bars(query, credentials: Optional[dict]) -> list[dict]:
                 origin = ref.normalize() if ref is not None else "epoch"
             else:
                 origin = "epoch"
-            df = _pandas_ohlcv(df, pandas_rule, origin=origin)
+            df = _pandas_ohlcv(df, pandas_rule, origin=origin, vwap=want_vwap)
             if df is None or df.empty:
                 continue
             df = df.reset_index()
@@ -237,6 +260,18 @@ def _build_fetcher(label: str, qp_base, data_base):
                 "Bucket anchoring for resampling. False (default) uses an epoch "
                 "origin ('epoch'); True uses the pandas default anchor "
                 "(origin='start_day'). Affects where bar boundaries fall."
+            ),
+        )
+        vwap: bool = Field(
+            default=False,
+            description=(
+                "Include each bar's trade-weighted price: sum(price*size)/"
+                "sum(size) over the period from tick data, or the equivalent "
+                "sum(vwap*volume)/sum(volume) when downsampling bars that "
+                "carry a vwap column. Bars without trade data get no vwap "
+                "(never a typical-price approximation). Per-bar vwap lets a "
+                "client compose anchored VWAP (accumulate vwap*volume from a "
+                "point in time) or a rolling VWAP over the last N bars."
             ),
         )
         # Widen start/end to accept BOTH date and datetime (the standard models
