@@ -119,6 +119,35 @@ class TestTimeTravel:
         out = store.write("AAPL", df)
         assert out["version"] == 1
 
+    def test_as_of_timestamp_time_travel(self, store: DeltaStore):
+        """Non-int as_of must accept a naive/aware datetime AND an ISO string
+        (delta-rs wants int | RFC3339-str | datetime; str(naive_timestamp) is
+        not RFC3339 and used to raise ValueError -- see fix report)."""
+        import time
+
+        df1 = pd.DataFrame({"date": pd.to_datetime(["2026-01-02"]), "close": [1.0]})
+        df2 = pd.DataFrame({"date": pd.to_datetime(["2026-01-03"]), "close": [2.0]})
+        store.write("AAPL", df1)
+        time.sleep(1.1)  # commit timestamps land at ~1s resolution
+        between = pd.Timestamp.now("UTC")
+        time.sleep(1.1)
+        store.write("AAPL", df2)
+
+        by_datetime = store.read("AAPL", as_of=between.to_pydatetime(), output="dataframe")
+        by_iso_string = store.read("AAPL", as_of=between.isoformat(), output="dataframe")
+        assert by_datetime["close"].tolist() == [1.0]
+        assert by_iso_string["close"].tolist() == [1.0]
+
+    def test_as_of_date_object_does_not_raise(self, store: DeltaStore):
+        """A plain `date` (not datetime/str/int) must not raise inside load_as_version."""
+        from datetime import date, timedelta
+
+        df = pd.DataFrame({"date": pd.to_datetime(["2026-01-02"]), "close": [1.0]})
+        store.write("AAPL", df)
+        future = date.today() + timedelta(days=1)
+        out = store.read("AAPL", as_of=future, output="dataframe")
+        assert out["close"].tolist() == [1.0]
+
 
 class TestDatetimeIndex:
     def test_datetime_index_round_trips_as_date_index(self, store: DeltaStore):

@@ -170,7 +170,16 @@ class DeltaStore:
             )
         dt = self._table(key)
         if as_of is not None:
-            dt.load_as_version(as_of if isinstance(as_of, int) else str(as_of))
+            if isinstance(as_of, int):
+                dt.load_as_version(as_of)
+            else:
+                # load_as_version wants int | RFC3339-str | datetime; str()
+                # of a date/naive-Timestamp/plain date-string is NOT RFC3339.
+                from pandas import Timestamp
+
+                ts = Timestamp(as_of)
+                ts = ts.tz_localize("UTC") if ts.tzinfo is None else ts
+                dt.load_as_version(ts.to_pydatetime())
         dataset = dt.to_pyarrow_dataset()
         start_ts, end_ts = to_bounds(start_date, end_date)
         filt = _date_filter(dataset.schema, start_ts, end_ts)
