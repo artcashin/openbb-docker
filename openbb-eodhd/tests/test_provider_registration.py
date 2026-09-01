@@ -15,3 +15,15 @@ def test_phase3_calendar_models_registered():
         "CalendarEarnings", "CalendarIpo", "CalendarSplits", "EconomicCalendar",
     ]:
         assert key in eodhd_provider.fetcher_dict, f"missing {key}"
+
+
+def test_phase3_market_models_registered():
+    for key in [
+        "EquitySearch", "EtfSearch", "CryptoSearch", "EquityScreener",
+        "CurrencyPairs", "CurrencySnapshots", "AvailableIndices",
+        "IndexHistorical", "HistoricalMarketCap", "WorldNews",
+        "TreasuryRates", "YieldCurve", "GovernmentTrades",
+        "EtfInfo", "EtfHoldings", "EtfSectors", "EtfCountries",
+        "TrailingDividendYield",
+    ]:
+        assert key in eodhd_provider.fetcher_dict, f"missing {key}"

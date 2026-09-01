@@ -86,3 +86,42 @@ def raise_sdk_error(exc: Exception, context: str) -> NoReturn:
             " the token/plan has access to this data."
         ) from exc
     raise OpenBBError(f"EODHD {context} failed: {exc}") from exc
+
+
+def sdk_call(credentials: dict[str, str] | None, call, context: str):
+    """One SDK call with the extension's standard error mapping.
+
+    `call` receives the connected client; OpenBB errors pass through untouched
+    and anything else maps via `raise_sdk_error`.
+    """
+    client = get_client(credentials)
+    try:
+        with client:
+            return call(client)
+    except (OpenBBError, UnauthorizedError):
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise_sdk_error(exc, context)
+
+
+def rest_json(client, endpoint: str, params: dict) -> "object":
+    """Parsed-JSON GET against an endpoint the pinned SDK has no wrapper for.
+
+    Rides the SDK's own BaseAPI (same session, timeout, typed errors, and
+    parsed-JSON returns as every official wrapper) with the client's key.
+    None-valued params are omitted; call inside `sdk_call` so its errors map
+    through `raise_sdk_error` like any other SDK call.
+    """
+    # pylint: disable=import-outside-toplevel
+    from eodhd.APIs.BaseAPI import BaseAPI
+
+    api = BaseAPI(
+        session=getattr(client, "_session", None),
+        timeout=getattr(client, "_timeout", (5.0, 30.0)),
+    )
+    qs = "".join(api._param(k, v) for k, v in params.items())  # pylint: disable=protected-access
+    return api._rest_get_method(  # pylint: disable=protected-access
+        api_key=client._api_key,  # pylint: disable=protected-access
+        endpoint=endpoint,
+        querystring=qs,
+    )

@@ -130,7 +130,7 @@ index, government trades, insider Form-4) each hit their specific EODHD endpoint
 | OpenBB standard model | EODHD endpoint |
 |---|---|
 | EquityQuote | `/real-time/{symbol}` (live/delayed) |
-| MarketSnapshots | `/real-time` bulk / exchange snapshot *(verify shape)* |
+| MarketSnapshots | `/real-time` bulk / exchange snapshot — **deferred (verified 2026-09-01):** `/real-time` takes only an explicit symbol list; EODHD has no whole-market snapshot endpoint on the core plan, so the standard model's semantics can't be met |
 | CompanyNews | `/news?s={symbol}` |
 | WorldNews | `/news?t={topic}` (general feed, no symbol) |
 | CalendarEarnings | `/calendar/earnings` (upcoming) |
@@ -202,7 +202,12 @@ verify every new provider registers and returns non-empty for `AAPL.US`.
    PriceTargetConsensus. (Removes the FMP-402 wall immediately.)
 2. **Company core** — EquityInfo, EquityQuote, KeyMetrics, FinancialRatios,
    ShareStatistics, KeyExecutives, CompanyNews, EsgScore(deprecated).
-3. **Calendars / discovery / market data** — CalendarEarnings/Dividend/Ipo/Splits,
+3. **Calendars / discovery / market data** — **shipped 2026-09-01 (v9.2.0 + v9.3.0)**
+   minus the deferrals noted in the mapping tables (CalendarDividend,
+   MarketSnapshots) and IndexConstituents (marketplace 403, build last per the
+   risk note). GovernmentTrades landed on the core `/congressional-trades`
+   endpoint via the shared `rest_json` helper — the SDK has no wrapper yet.
+   Original scope: CalendarEarnings/Dividend/Ipo/Splits,
    EconomicCalendar, HistoricalMarketCap, EquityScreener, EquitySearch,
    EtfSearch/CryptoSearch, CurrencyPairs/Snapshots, AvailableIndices,
    IndexConstituents, IndexHistorical, TreasuryRates, YieldCurve, GovernmentTrades,

@@ -13,8 +13,19 @@ from openbb_eodhd.models.corporate_actions import (
     EODHDHistoricalSplitsFetcher,
 )
 from openbb_eodhd.models.crypto_historical import EODHDCryptoHistoricalFetcher
+from openbb_eodhd.models.currency import (
+    EODHDCurrencyPairsFetcher,
+    EODHDCurrencySnapshotsFetcher,
+)
 from openbb_eodhd.models.currency_historical import EODHDCurrencyHistoricalFetcher
+from openbb_eodhd.models.dividend_yield import EODHDTrailingDivYieldFetcher
 from openbb_eodhd.models.equity_historical import EODHDEquityHistoricalFetcher
+from openbb_eodhd.models.etf import (
+    EODHDEtfCountriesFetcher,
+    EODHDEtfHoldingsFetcher,
+    EODHDEtfInfoFetcher,
+    EODHDEtfSectorsFetcher,
+)
 from openbb_eodhd.models.estimates import (
     EODHDAnalystEstimatesFetcher,
     EODHDForwardEpsEstimatesFetcher,
@@ -26,10 +37,27 @@ from openbb_eodhd.models.fundamental import (
     EODHDCashFlowStatementFetcher,
     EODHDIncomeStatementFetcher,
 )
+from openbb_eodhd.models.government import EODHDGovernmentTradesFetcher
+from openbb_eodhd.models.index import (
+    EODHDAvailableIndicesFetcher,
+    EODHDIndexHistoricalFetcher,
+)
 from openbb_eodhd.models.insider import EODHDInsiderTradingFetcher
+from openbb_eodhd.models.market_cap import EODHDHistoricalMarketCapFetcher
+from openbb_eodhd.models.news import EODHDWorldNewsFetcher
 from openbb_eodhd.models.ownership import (
     EODHDEquityOwnershipFetcher,
     EODHDInstitutionalOwnershipFetcher,
+)
+from openbb_eodhd.models.screener import EODHDEquityScreenerFetcher
+from openbb_eodhd.models.search import (
+    EODHDCryptoSearchFetcher,
+    EODHDEquitySearchFetcher,
+    EODHDEtfSearchFetcher,
+)
+from openbb_eodhd.models.treasury import (
+    EODHDTreasuryRatesFetcher,
+    EODHDYieldCurveFetcher,
 )
 
 __all__ = [
@@ -52,6 +80,24 @@ __all__ = [
     "EODHDCalendarIpoFetcher",
     "EODHDCalendarSplitsFetcher",
     "EODHDEconomicCalendarFetcher",
+    "EODHDEquitySearchFetcher",
+    "EODHDEtfSearchFetcher",
+    "EODHDCryptoSearchFetcher",
+    "EODHDEquityScreenerFetcher",
+    "EODHDCurrencyPairsFetcher",
+    "EODHDCurrencySnapshotsFetcher",
+    "EODHDAvailableIndicesFetcher",
+    "EODHDIndexHistoricalFetcher",
+    "EODHDHistoricalMarketCapFetcher",
+    "EODHDWorldNewsFetcher",
+    "EODHDTreasuryRatesFetcher",
+    "EODHDYieldCurveFetcher",
+    "EODHDGovernmentTradesFetcher",
+    "EODHDEtfInfoFetcher",
+    "EODHDEtfHoldingsFetcher",
+    "EODHDEtfSectorsFetcher",
+    "EODHDEtfCountriesFetcher",
+    "EODHDTrailingDivYieldFetcher",
     "eodhd_provider",
 ]
 
@@ -64,7 +110,10 @@ eodhd_provider = Provider(
         "sheet, cash flow); corporate actions (dividends, splits); ownership "
         "(institutional and fund holders) and insider transactions; analyst "
         "estimates (historical EPS, forward estimates, price-target consensus); "
-        "and calendars (upcoming earnings, IPOs, splits, economic events)."
+        "calendars (upcoming earnings, IPOs, splits, economic events); search, "
+        "screener and index/forex reference data; ETF profiles and holdings; "
+        "world news; US Treasury rates and yield curve; congressional trades; "
+        "and historical market cap."
     ),
     # Becomes the credential field `eodhd_api_key` (env: EODHD_API_KEY).
     credentials=["api_key"],
@@ -89,6 +138,24 @@ eodhd_provider = Provider(
         "CalendarIpo": EODHDCalendarIpoFetcher,
         "CalendarSplits": EODHDCalendarSplitsFetcher,
         "EconomicCalendar": EODHDEconomicCalendarFetcher,
+        "EquitySearch": EODHDEquitySearchFetcher,
+        "EtfSearch": EODHDEtfSearchFetcher,
+        "CryptoSearch": EODHDCryptoSearchFetcher,
+        "EquityScreener": EODHDEquityScreenerFetcher,
+        "CurrencyPairs": EODHDCurrencyPairsFetcher,
+        "CurrencySnapshots": EODHDCurrencySnapshotsFetcher,
+        "AvailableIndices": EODHDAvailableIndicesFetcher,
+        "IndexHistorical": EODHDIndexHistoricalFetcher,
+        "HistoricalMarketCap": EODHDHistoricalMarketCapFetcher,
+        "WorldNews": EODHDWorldNewsFetcher,
+        "TreasuryRates": EODHDTreasuryRatesFetcher,
+        "YieldCurve": EODHDYieldCurveFetcher,
+        "GovernmentTrades": EODHDGovernmentTradesFetcher,
+        "EtfInfo": EODHDEtfInfoFetcher,
+        "EtfHoldings": EODHDEtfHoldingsFetcher,
+        "EtfSectors": EODHDEtfSectorsFetcher,
+        "EtfCountries": EODHDEtfCountriesFetcher,
+        "TrailingDividendYield": EODHDTrailingDivYieldFetcher,
     },
     repr_name="EOD Historical Data (EODHD)",
 )
