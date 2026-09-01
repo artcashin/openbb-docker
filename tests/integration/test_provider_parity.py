@@ -1,8 +1,8 @@
-"""provider="arcticdb" must return the same 1-minute bars tick-lab computes.
+"""provider="deltalake" must return the same 1-minute bars tick-lab computes.
 
-Runs INSIDE the Platform image (it needs openbb + the arcticdb extension) and
+Runs INSIDE the Platform image (it needs openbb + the deltalake extension) and
 asserts against the same golden CSV tick-lab asserts against. Requires a
-reachable ArcticDB store configured through ARCTICDB_S3_* and the fixture
+reachable Delta Lake store configured through DELTA_S3_* and the fixture
 ticks already loaded into library 'ticks' as symbol 'MSFT'.
 
 See tests/integration/README.md for the full setup (loading fixtures, then
@@ -26,7 +26,7 @@ import pytest
 
 pytestmark = pytest.mark.skipif(
     os.getenv("TICK_LAB_TEST_S3") != "1",
-    reason="needs a reachable ArcticDB store; see tests/integration/README.md",
+    reason="needs a reachable Delta Lake store; see tests/integration/README.md",
 )
 
 GOLDEN = Path(__file__).resolve().parents[2] / "tick-lab/tests/fixtures/golden_1m_bars_all.csv"
@@ -49,7 +49,7 @@ def test_provider_returns_the_golden_bars():
 
     result = obb.equity.price.historical(
         "MSFT",
-        provider="arcticdb",
+        provider="deltalake",
         library="ticks",
         interval="1m",
         start_date="2023-05-12",

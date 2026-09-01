@@ -24,12 +24,12 @@ NODE_NAME="${TS_HOSTNAME:-minio}"
 PID_FILE=/run/minio.pid
 
 # The certificate must be issued for this node's MagicDNS name, which is the
-# same host ArcticDB clients connect to. Default from ARCTICDB_S3_ENDPOINT so
+# same host Delta Lake clients connect to. Default from DELTA_S3_ENDPOINT so
 # minio.env stays the single source of truth: compose CANNOT interpolate an
 # env_file value into the compose file, so this defaulting happens here.
-DOMAIN="${MINIO_CERT_DOMAIN:-${ARCTICDB_S3_ENDPOINT:-}}"
+DOMAIN="${MINIO_CERT_DOMAIN:-${DELTA_S3_ENDPOINT:-}}"
 if [ -z "$DOMAIN" ]; then
-    echo "entrypoint: set ARCTICDB_S3_ENDPOINT (or MINIO_CERT_DOMAIN) in minio.env," \
+    echo "entrypoint: set DELTA_S3_ENDPOINT (or MINIO_CERT_DOMAIN) in minio.env," \
          "e.g. minio.<your-tailnet>.ts.net" >&2
     exit 1
 fi

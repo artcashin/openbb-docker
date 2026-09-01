@@ -65,9 +65,6 @@ services:
     # 4.7.2 = the skill-built image (OpenBB 4.7.2, openbb-eodhd 9.5.0 with the
     # full FMP-parity fetcher set — 52 eodhd widgets).
     image: openbb-local:4.7.2
-    # ArcticDB publishes no aarch64 Linux wheels, so the image is amd64.
-    # On Apple Silicon this runs under emulation -- correct, but slower.
-    platform: linux/amd64
     container_name: openbb-api
     restart: unless-stopped
     # Bridge migration (Layer 1): was `network_mode: service:tailscale`.
@@ -93,7 +90,7 @@ services:
       # purpose: without it the API would come up unauthenticated.
       - path: ./api-auth.env
         required: true
-      # Ep. 11: ARCTICDB_S3_* -- the MinIO store, shared with tick-lab.
+      # Ep. 11: DELTA_S3_* -- the MinIO store, shared with tick-lab.
       - path: ./minio.env
         required: false
     # Ep. 10: the kdb+ read-through cache. This repo ships NO KX software --
@@ -225,9 +222,6 @@ services:
     # 4.7.2 = the skill-built image (OpenBB 4.7.2, openbb-eodhd 9.5.0), same
     # as openbb-api — the MCP tool set tracks the same provider registry.
     image: openbb-local:4.7.2
-    # ArcticDB publishes no aarch64 Linux wheels, so the image is amd64.
-    # On Apple Silicon this runs under emulation -- correct, but slower.
-    platform: linux/amd64
     container_name: openbb-mcp
     restart: unless-stopped
     # Bridge migration (Layer 1): was
@@ -267,12 +261,12 @@ services:
     env_file:
       - path: ./credentials.env
         required: false
-      # Ep. 11: ARCTICDB_S3_* -- this server wraps the same Platform app as
+      # Ep. 11: DELTA_S3_* -- this server wraps the same Platform app as
       # openbb-api in-process, so its equity/etf/crypto/currency/index
-      # historical-price tools accept provider="arcticdb" too. Without this,
-      # ARCTICDB_S3_* is unset here and the provider falls back silently to a
-      # local LMDB store instead of the shared MinIO bucket (see
-      # openbb_arcticdb.utils.resolve_config) -- same store, no auth of its
+      # historical-price tools accept provider="deltalake" too. Without this,
+      # DELTA_S3_* is unset here and the provider falls back silently to a
+      # local directory store instead of the shared MinIO bucket (see
+      # openbb_deltalake.utils.resolve_config) -- same store, no auth of its
       # own either way, so it's safe to share the file.
       - path: ./minio.env
         required: false
@@ -289,7 +283,6 @@ services:
   stores-mcp:
     build: .
     image: openbb-local:11.0.0
-    platform: linux/amd64
     container_name: openbb-stores-mcp
     restart: unless-stopped
     # Bridge migration (Layer 1): was
@@ -336,9 +329,6 @@ services:
       context: .
       dockerfile: stores-explorer/Dockerfile
     image: openbb-stores-explorer:11.2.0
-    # ArcticDB publishes no aarch64 Linux wheels, so the image is amd64.
-    # On Apple Silicon this runs under emulation -- correct, but slower.
-    platform: linux/amd64
     container_name: openbb-stores-explorer
     restart: unless-stopped
     # Bridge migration (Layer 1): was
@@ -549,7 +539,6 @@ services:
   minio:
     build: ./minio
     image: openbb-minio:11.0.0
-    platform: linux/amd64
     container_name: openbb-minio
     hostname: minio
     restart: unless-stopped
@@ -568,13 +557,13 @@ services:
       # service or pick a free name here and set MINIO_CERT_DOMAIN to match.
       - TS_HOSTNAME=minio
       # Only needed when the node name and the name clients connect to differ
-      # (see above). Defaults to ARCTICDB_S3_ENDPOINT, which is correct when
+      # (see above). Defaults to DELTA_S3_ENDPOINT, which is correct when
       # they are the same.
       # - MINIO_CERT_DOMAIN=minio.<your-tailnet>.ts.net
       - TS_STATE_DIR=/var/lib/tailscale
       # NOTE: the cert domain is NOT set here. Compose interpolates ${...} from
       # the shell or a root .env only -- never from env_file -- so referencing
-      # ARCTICDB_S3_ENDPOINT here would silently expand to empty. The entrypoint
+      # DELTA_S3_ENDPOINT here would silently expand to empty. The entrypoint
       # reads it from its own environment instead, where env_file did put it.
       - MINIO_CERT_RENEW_SECONDS=43200
     command: ["/data", "--console-address", ":9001"]
@@ -600,7 +589,7 @@ services:
       # resolved by the daemon and always lands in its own storage.
       - minio-ts-state:/var/lib/tailscale
 
-  # One-shot: ArcticDB will NOT create its own bucket, so `docker compose up`
+  # One-shot: Delta Lake will NOT create its own bucket, so `docker compose up`
   # would otherwise leave you with a store that 404s on first write.
   minio-init:
     image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z
@@ -621,12 +610,12 @@ services:
         # fine. We share minio's network namespace, so map the name to loopback
         # and keep FULL certificate verification: the cert is issued for exactly
         # this name, so TLS still validates.
-        echo "127.0.0.1 $${ARCTICDB_S3_ENDPOINT}" >> /etc/hosts
+        echo "127.0.0.1 $${DELTA_S3_ENDPOINT}" >> /etc/hosts
         for i in $$(seq 1 60); do
-          if mc alias set store "https://$${ARCTICDB_S3_ENDPOINT}:$${ARCTICDB_S3_PORT}" \
+          if mc alias set store "https://$${DELTA_S3_ENDPOINT}:$${DELTA_S3_PORT}" \
                "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}" >/dev/null 2>&1; then
-            mc mb --ignore-existing "store/$${ARCTICDB_S3_BUCKET}"
-            echo "minio-init: bucket $${ARCTICDB_S3_BUCKET} ready"
+            mc mb --ignore-existing "store/$${DELTA_S3_BUCKET}"
+            echo "minio-init: bucket $${DELTA_S3_BUCKET} ready"
             exit 0
           fi
           sleep 2

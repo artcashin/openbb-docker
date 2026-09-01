@@ -125,8 +125,8 @@ def fs_and_root(base: str, options: dict[str, str]):
 def normalize_index(df):
     """Coerce a date/`datetime.date` column or index into a sorted DatetimeIndex.
 
-    ArcticDB cannot normalize `datetime.date` values and stores time series most
-    usefully with a DatetimeIndex (enables `date_range` filtering on read). Frames
+    Delta Lake cannot normalize `datetime.date` values and stores time series most
+    usefully with a DatetimeIndex (enables date-range filtering on read). Frames
     without any date-like index are returned unchanged.
     """
     # pylint: disable=import-outside-toplevel
@@ -182,7 +182,7 @@ def parse_temporal(v: Any):
 
 
 def to_bounds(start: Any, end: Any):
-    """Return (start_ts, end_ts) pandas Timestamps for an ArcticDB `date_range`.
+    """Return (start_ts, end_ts) pandas Timestamps for a Delta Lake date-range read.
 
     A pure-date `end` is widened to end-of-day so the whole day is inclusive
     (matters for intraday/tick data); a datetime `end` is used exactly.

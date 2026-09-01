@@ -207,8 +207,8 @@ class TestPandasOhlcvVwap:
         assert np.isnan(out["vwap"].iloc[0])
 # ---------------------------------------------------------------------------
 # DeltaLakeEquityHistoricalFetcher.aextract_data (the read path, via a real
-# temporary Delta store seeded through DeltaStore.write — no lmdb:// / arctic
-# `lib` fixture involved, uri= is a plain tmp-path string).
+# temporary Delta store seeded through DeltaStore.write — no s3:// URI or
+# external fixture involved, uri= is a plain tmp-path string).
 # ---------------------------------------------------------------------------
 
 

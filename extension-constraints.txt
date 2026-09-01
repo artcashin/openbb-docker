@@ -7,6 +7,13 @@
 # minimum viable versions compatible with the additional data sources.
 
 fastapi<0.129.0,>=0.128.0  # from openbb-core
-pandas<3  # from arcticdb
-protobuf<7,>=3.5.0.post1  # from arcticdb
 uvicorn<0.41.0,>=0.40.0  # from openbb-core
+# --- Ep. 10: ceiling pykx actually needs ---
+# Derived by ~/Developer/OpenBB/derive-constraints.py, which reads the
+# extensions' declared bounds BEFORE openbb-core's. This is not theoretical:
+# pandas 3 dropped pandas.core.indexes.numeric, which pykx imports. The image
+# happens to resolve a compatible version today, so this isn't pinned by
+# accident -- it makes it deliberate, so a future OpenBB bump cannot drag
+# pandas past what pykx tolerates.
+pandas<3  # from pykx
+
