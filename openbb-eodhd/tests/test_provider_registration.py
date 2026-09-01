@@ -27,3 +27,11 @@ def test_phase3_market_models_registered():
         "TrailingDividendYield",
     ]:
         assert key in eodhd_provider.fetcher_dict, f"missing {key}"
+
+
+def test_phase2_company_models_registered():
+    for key in [
+        "EquityInfo", "EquityQuote", "KeyMetrics", "FinancialRatios",
+        "ShareStatistics", "KeyExecutives", "CompanyNews", "EsgScore",
+    ]:
+        assert key in eodhd_provider.fetcher_dict, f"missing {key}"

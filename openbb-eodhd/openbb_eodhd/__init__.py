@@ -20,6 +20,7 @@ from openbb_eodhd.models.currency import (
 from openbb_eodhd.models.currency_historical import EODHDCurrencyHistoricalFetcher
 from openbb_eodhd.models.dividend_yield import EODHDTrailingDivYieldFetcher
 from openbb_eodhd.models.equity_historical import EODHDEquityHistoricalFetcher
+from openbb_eodhd.models.esg import EODHDEsgScoreFetcher
 from openbb_eodhd.models.etf import (
     EODHDEtfCountriesFetcher,
     EODHDEtfHoldingsFetcher,
@@ -44,7 +45,20 @@ from openbb_eodhd.models.index import (
 )
 from openbb_eodhd.models.insider import EODHDInsiderTradingFetcher
 from openbb_eodhd.models.market_cap import EODHDHistoricalMarketCapFetcher
-from openbb_eodhd.models.news import EODHDWorldNewsFetcher
+from openbb_eodhd.models.metrics import (
+    EODHDFinancialRatiosFetcher,
+    EODHDKeyMetricsFetcher,
+)
+from openbb_eodhd.models.news import (
+    EODHDCompanyNewsFetcher,
+    EODHDWorldNewsFetcher,
+)
+from openbb_eodhd.models.profile import (
+    EODHDEquityInfoFetcher,
+    EODHDKeyExecutivesFetcher,
+    EODHDShareStatisticsFetcher,
+)
+from openbb_eodhd.models.quote import EODHDEquityQuoteFetcher
 from openbb_eodhd.models.ownership import (
     EODHDEquityOwnershipFetcher,
     EODHDInstitutionalOwnershipFetcher,
@@ -98,6 +112,14 @@ __all__ = [
     "EODHDEtfSectorsFetcher",
     "EODHDEtfCountriesFetcher",
     "EODHDTrailingDivYieldFetcher",
+    "EODHDEquityInfoFetcher",
+    "EODHDEquityQuoteFetcher",
+    "EODHDKeyMetricsFetcher",
+    "EODHDFinancialRatiosFetcher",
+    "EODHDShareStatisticsFetcher",
+    "EODHDKeyExecutivesFetcher",
+    "EODHDCompanyNewsFetcher",
+    "EODHDEsgScoreFetcher",
     "eodhd_provider",
 ]
 
@@ -108,7 +130,9 @@ eodhd_provider = Provider(
         "EOD Historical Data (EODHD) APIs. Historical pricing for equities/ETFs, "
         "crypto, and forex (end-of-day + intraday); fundamentals (income, balance "
         "sheet, cash flow); corporate actions (dividends, splits); ownership "
-        "(institutional and fund holders) and insider transactions; analyst "
+        "(institutional and fund holders) and insider transactions; company "
+        "profiles, quotes, key metrics/ratios, share statistics, executives "
+        "and company news; analyst "
         "estimates (historical EPS, forward estimates, price-target consensus); "
         "calendars (upcoming earnings, IPOs, splits, economic events); search, "
         "screener and index/forex reference data; ETF profiles and holdings; "
@@ -156,6 +180,14 @@ eodhd_provider = Provider(
         "EtfSectors": EODHDEtfSectorsFetcher,
         "EtfCountries": EODHDEtfCountriesFetcher,
         "TrailingDividendYield": EODHDTrailingDivYieldFetcher,
+        "EquityInfo": EODHDEquityInfoFetcher,
+        "EquityQuote": EODHDEquityQuoteFetcher,
+        "KeyMetrics": EODHDKeyMetricsFetcher,
+        "FinancialRatios": EODHDFinancialRatiosFetcher,
+        "ShareStatistics": EODHDShareStatisticsFetcher,
+        "KeyExecutives": EODHDKeyExecutivesFetcher,
+        "CompanyNews": EODHDCompanyNewsFetcher,
+        "EsgScore": EODHDEsgScoreFetcher,  # deprecated: stale 2019 beta feed
     },
     repr_name="EOD Historical Data (EODHD)",
 )

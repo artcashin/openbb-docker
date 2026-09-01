@@ -200,8 +200,10 @@ verify every new provider registers and returns non-empty for `AAPL.US`.
 1. **Gap-fillers** — InstitutionalOwnership, EquityOwnership, InsiderTrading,
    HistoricalEps, AnalystEstimates, ForwardEpsEstimates, PriceTarget,
    PriceTargetConsensus. (Removes the FMP-402 wall immediately.)
-2. **Company core** — EquityInfo, EquityQuote, KeyMetrics, FinancialRatios,
-   ShareStatistics, KeyExecutives, CompanyNews, EsgScore(deprecated).
+2. **Company core** — **shipped 2026-09-01 (v9.4.0)**: EquityInfo, EquityQuote,
+   KeyMetrics, FinancialRatios, ShareStatistics, KeyExecutives, CompanyNews,
+   EsgScore(deprecated). KeyMetrics/FinancialRatios are single-snapshot rows
+   (`fiscal_period: TTM`) per the point-in-time risk note.
 3. **Calendars / discovery / market data** — **shipped 2026-09-01 (v9.2.0 + v9.3.0)**
    minus the deferrals noted in the mapping tables (CalendarDividend,
    MarketSnapshots) and IndexConstituents (marketplace 403, build last per the
