@@ -197,6 +197,12 @@ Low value and approximate; excluded from the default scope per design review:
 Each phase: model files + tests + register in `__init__.py` + container rebuild +
 verify every new provider registers and returns non-empty for `AAPL.US`.
 
+**Release scoping (2026-09-01):** the whole parity set ships as **one package
+with episode 10.0.0** — bdobb-v2's v3–v9 rebuild uses standard providers only
+(yfinance, fmp, the reference backend). The per-phase 9.x version bumps below
+are working-branch increments; the episode release renames the extension to
+its chapter-matched **10.0.0**.
+
 1. **Gap-fillers** — InstitutionalOwnership, EquityOwnership, InsiderTrading,
    HistoricalEps, AnalystEstimates, ForwardEpsEstimates, PriceTarget,
    PriceTargetConsensus. (Removes the FMP-402 wall immediately.)
