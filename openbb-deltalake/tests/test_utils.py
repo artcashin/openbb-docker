@@ -3,7 +3,6 @@
 from datetime import date, datetime
 
 import pandas as pd
-import pytest
 
 from openbb_deltalake.utils import (
     normalize_index,

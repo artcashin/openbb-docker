@@ -80,12 +80,17 @@ def resolve_config(
         or os.getenv("DELTA_LIBRARY")
         or "openbb"
     )
-    s3 = s3_options_from_env()
     explicit = uri or creds.get("deltalake_uri") or os.getenv("DELTA_URI")
     if explicit:
         explicit = str(explicit).rstrip("/")
-        opts = s3[1] if (explicit.startswith("s3://") and s3) else {}
+        # Only evaluate S3 env if explicit is s3://; local paths need no S3 options.
+        opts = {}
+        if explicit.startswith("s3://"):
+            s3 = s3_options_from_env()
+            opts = s3[1] if s3 else {}
         return explicit, library, opts
+    # No explicit arg; try S3 env, then fall back to local default.
+    s3 = s3_options_from_env()
     if s3:
         return s3[0], library, s3[1]
     return default_base(), library, {}

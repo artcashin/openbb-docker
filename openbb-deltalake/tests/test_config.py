@@ -74,6 +74,32 @@ def test_resolve_config_local_default(monkeypatch, tmp_path):
     assert opts == {}
 
 
+def test_resolve_config_local_explicit_ignores_malformed_s3_env(monkeypatch, tmp_path):
+    from openbb_deltalake.utils import resolve_config
+
+    # Malformed S3 env should not affect local explicit path.
+    monkeypatch.setenv("DELTA_S3_ENDPOINT", "minio.tail.ts.net")
+    monkeypatch.setenv("DELTA_S3_BUCKET", "openbb")
+    monkeypatch.setenv("DELTA_S3_ACCESS", "user")
+    monkeypatch.setenv("DELTA_S3_SECRET", "secret")
+    monkeypatch.setenv("DELTA_S3_PORT", "nope")  # malformed port
+    base, library, opts = resolve_config(str(tmp_path), "mylib", None)
+    assert (base, library, opts) == (str(tmp_path), "mylib", {})
+
+
+def test_resolve_config_s3_explicit_raises_on_malformed_env(monkeypatch):
+    from openbb_deltalake.utils import resolve_config
+
+    # Malformed S3 env SHOULD fail when trying to use s3:// explicit path.
+    monkeypatch.setenv("DELTA_S3_ENDPOINT", "minio.tail.ts.net")
+    monkeypatch.setenv("DELTA_S3_BUCKET", "openbb")
+    monkeypatch.setenv("DELTA_S3_ACCESS", "user")
+    monkeypatch.setenv("DELTA_S3_SECRET", "secret")
+    monkeypatch.setenv("DELTA_S3_PORT", "nope")  # malformed port
+    with pytest.raises(ValueError):
+        resolve_config("s3://bucket", "lib", None)
+
+
 def test_table_path():
     from openbb_deltalake.utils import table_path
 
