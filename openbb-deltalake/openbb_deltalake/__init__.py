@@ -13,10 +13,10 @@ from openbb_deltalake.models.historical import (
 )
 from openbb_deltalake.store import ArcticStore, store
 
-__all__ = ["arcticdb_provider", "ext", "ArcticStore", "store"]
+__all__ = ["deltalake_provider", "ext", "ArcticStore", "store"]
 
 # --- Read path: provider extension (OHLCV standard models) -----------------
-arcticdb_provider = Provider(
+deltalake_provider = Provider(
     name="arcticdb",
     website="https://arcticdb.io",
     description=(
