@@ -197,11 +197,13 @@ Low value and approximate; excluded from the default scope per design review:
 Each phase: model files + tests + register in `__init__.py` + container rebuild +
 verify every new provider registers and returns non-empty for `AAPL.US`.
 
-**Release scoping (2026-09-01):** the whole parity set ships as **one package
-with episode 10.0.0** — bdobb-v2's v3–v9 rebuild uses standard providers only
-(yfinance, fmp, the reference backend). The per-phase 9.x version bumps below
-are working-branch increments; the episode release renames the extension to
-its chapter-matched **10.0.0**.
+**Release scoping (2026-09-01, final):** the whole parity set IS **episode 9**
+— "mapping EODHD to do the FMP data via API calls" — so the per-phase 9.x
+version bumps below are already chapter-matched; no rename at release.
+bdobb-v2's v3–v8 rebuild uses standard providers only (yfinance, fmp, the
+reference backend). Episode 10 is websockets/kdb/caching; episode 11 is Delta
+Lake daily storage plus the read-through cache that minimizes API calls —
+which is where this design's ArcticDB L2 tier gets rebuilt on Delta Lake.
 
 1. **Gap-fillers** — InstitutionalOwnership, EquityOwnership, InsiderTrading,
    HistoricalEps, AnalystEstimates, ForwardEpsEstimates, PriceTarget,

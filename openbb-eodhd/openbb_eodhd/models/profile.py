@@ -103,7 +103,10 @@ class EODHDEquityInfoFetcher(Fetcher[EODHDEquityInfoQueryParams, list[EODHDEquit
             "ipo_date": _date(g.get("IPODate")),
             "fiscal_year_end": g.get("FiscalYearEnd"),
             "is_delisted": g.get("IsDelisted"),
-            "logo_url": g.get("LogoURL"),
+            # LogoURL arrives as a root-relative path; the host serves it as a
+            # public static PNG (no api_token), so absolutize for direct use.
+            "logo_url": f"https://eodhd.com{g['LogoURL']}"
+            if (g.get("LogoURL") or "").startswith("/") else g.get("LogoURL"),
             "updated_at": _date(g.get("UpdatedAt")),
         })]
 

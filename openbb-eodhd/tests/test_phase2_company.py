@@ -96,6 +96,8 @@ class TestEquityInfo:
         assert r.employees == 150000
         assert r.ipo_date == date(1980, 12, 12)
         assert r.industry_group == "Technology Hardware & Equipment"
+        # relative LogoURL absolutized to the public static host
+        assert r.logo_url == "https://eodhd.com/img/logos/US/aapl.png"
 
     def test_empty_bundle(self):
         q = EODHDEquityInfoQueryParams(symbol="AAPL")
