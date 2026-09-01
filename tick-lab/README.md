@@ -43,6 +43,11 @@ for that history.
 cp .env.example .env
 ```
 
+Upgrading from before the Delta Lake rename? Both `../minio.env` and this
+`.env` still need their `ARCTICDB_S3_*` keys renamed to `DELTA_S3_*` — see
+the "Upgrading an existing v11 stack" note in the root
+[README.md](../README.md).
+
 The values are the **same names, same values** as `../minio.env` — copy
 them across, don't invent your own:
 

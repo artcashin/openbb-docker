@@ -256,6 +256,7 @@ def _date_filter(schema, start_ts, end_ts):
     tz = getattr(field_type, "tz", None)
 
     def _bound(ts):
+        ts = ts.floor("us")  # to_pydatetime() on ns precision warns; Delta stores us anyway.
         if tz is None:
             return ts.tz_localize(None) if ts.tzinfo else ts
         return ts.tz_localize(tz) if ts.tzinfo is None else ts.tz_convert(tz)

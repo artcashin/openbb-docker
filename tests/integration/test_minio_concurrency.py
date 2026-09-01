@@ -1,6 +1,6 @@
 """Spec gate: delta-rs commit atomicity on MinIO via conditional puts.
 
-Two writers appending concurrently must BOTH land (no lost update) or fail
+Eight writers appending concurrently must ALL land (no lost update) or fail
 loudly — never silently drop a commit. Skipped without a MinIO env.
 """
 
