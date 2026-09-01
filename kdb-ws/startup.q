@@ -127,3 +127,6 @@ upd:{[t;d]
     if[not `g=attr trades`sym; @[`trades;`sym;`g#]];
     .wsu.pub[d]];
  };
+
+/ persistence (2026-09-01): tick log + -11! replay -- see persist.q
+system"l /data/persist.q";

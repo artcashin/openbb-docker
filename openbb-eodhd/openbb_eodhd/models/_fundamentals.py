@@ -168,6 +168,10 @@ def general(b: dict) -> dict:
     return b.get("General") or {}
 
 
+def technicals(b: dict) -> dict:
+    return b.get("Technicals") or {}
+
+
 def highlights(b: dict) -> dict:
     return b.get("Highlights") or {}
 
