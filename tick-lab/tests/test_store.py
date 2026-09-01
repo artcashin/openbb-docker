@@ -14,7 +14,7 @@ import pandas as pd
 import pytest
 
 from tick_lab.config import S3Config, from_env
-from tick_lab.store import StoreWriteError, TickStore, to_bounds
+from tick_lab.store import LibraryNotFoundError, StoreWriteError, TickStore, to_bounds
 
 pytestmark_integration = pytest.mark.skipif(
     os.getenv("TICK_LAB_TEST_S3") != "1",
@@ -68,6 +68,20 @@ def test_read_on_missing_library_raises_clear_error(tmp_path):
 
     with pytest.raises(ValueError, match="no-such-library"):
         store.read("no-such-library", "MSFT")
+
+
+def test_read_on_missing_symbol_raises_plain_value_error(tmp_path):
+    # The library itself exists (has a written symbol), but the requested
+    # symbol does not -- a different, narrower error than the library not
+    # existing at all, so it must NOT be a LibraryNotFoundError.
+    store = TickStore(DUMMY_CFG, base=str(tmp_path))
+    library = f"ticklabtest{uuid.uuid4().hex[:8]}"
+    idx = pd.DatetimeIndex(["2023-05-12T13:30:00Z"]).tz_convert("UTC")
+    store.write(library, "A", pd.DataFrame({"price": [1.0]}, index=idx))
+
+    with pytest.raises(ValueError, match="B") as exc:
+        store.read(library, "B")
+    assert not isinstance(exc.value, LibraryNotFoundError)
 
 
 def test_write_and_read_round_trips(tmp_path):
