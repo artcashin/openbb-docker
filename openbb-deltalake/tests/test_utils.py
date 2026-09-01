@@ -1,4 +1,4 @@
-"""Tests for connection helpers and date utilities (no ArcticDB connection needed)."""
+"""Tests for date utilities (no connection needed)."""
 
 from datetime import date, datetime
 
@@ -6,45 +6,10 @@ import pandas as pd
 import pytest
 
 from openbb_deltalake.utils import (
-    get_library,
     normalize_index,
     parse_temporal,
-    redact_uri,
-    resolve_config,
     to_bounds,
 )
-
-S3_URI_WITH_SECRETS = (
-    "s3s://minio.example.ts.net:openbb"
-    "?port=9000&access=rootuser&secret=hunter2&use_virtual_addressing=false"
-)
-
-
-# ---------------------------------------------------------------------------
-# resolve_config
-# ---------------------------------------------------------------------------
-
-class TestResolveConfig:
-    def test_defaults(self):
-        uri, lib = resolve_config(None, None, None)
-        assert lib == "openbb"
-        assert uri.endswith("/arcticdb")
-        assert uri.startswith("lmdb://")
-
-    def test_explicit_overrides_everything(self):
-        uri, lib = resolve_config("lmdb:///custom", "mine", {"arcticdb_uri": "x", "arcticdb_library": "y"})
-        assert uri == "lmdb:///custom"
-        assert lib == "mine"
-
-    def test_credentials_fallback(self):
-        uri, lib = resolve_config(None, None, {"arcticdb_uri": "lmdb:///from_creds", "arcticdb_library": "creds_lib"})
-        assert uri == "lmdb:///from_creds"
-        assert lib == "creds_lib"
-
-
-# ---------------------------------------------------------------------------
-# normalize_index
-# ---------------------------------------------------------------------------
 
 class TestNormalizeIndex:
     def test_datetimeindex_unchanged(self):
@@ -77,10 +42,6 @@ class TestNormalizeIndex:
         assert list(out["v"]) == [1, 2, 3]
 
 
-# ---------------------------------------------------------------------------
-# parse_temporal
-# ---------------------------------------------------------------------------
-
 class TestParseTemporal:
     def test_none(self):
         assert parse_temporal(None) is None
@@ -109,10 +70,6 @@ class TestParseTemporal:
         assert result.hour == 14
 
 
-# ---------------------------------------------------------------------------
-# to_bounds
-# ---------------------------------------------------------------------------
-
 class TestToBounds:
     def test_both_none(self):
         s, e = to_bounds(None, None)
@@ -132,54 +89,3 @@ class TestToBounds:
     def test_start_date(self):
         s, _ = to_bounds(date(2026, 1, 1), None)
         assert s is not None
-
-
-# ---------------------------------------------------------------------------
-# redact_uri
-# ---------------------------------------------------------------------------
-
-class TestRedactUri:
-    def test_access_and_secret_are_replaced(self):
-        redacted = redact_uri(S3_URI_WITH_SECRETS)
-        assert "hunter2" not in redacted
-        assert "rootuser" not in redacted
-        assert "access=%2A%2A%2A" in redacted or "access=***" in redacted
-        assert "secret=%2A%2A%2A" in redacted or "secret=***" in redacted
-
-    def test_other_query_params_survive(self):
-        redacted = redact_uri(S3_URI_WITH_SECRETS)
-        assert "port=9000" in redacted
-        assert "use_virtual_addressing=false" in redacted
-
-    def test_lmdb_uri_has_no_query_string_and_passes_through(self):
-        assert redact_uri("lmdb:///tmp/arcticdb") == "lmdb:///tmp/arcticdb"
-
-    def test_uri_without_query_string_passes_through(self):
-        assert redact_uri("s3s://host:bucket") == "s3s://host:bucket"
-
-
-# ---------------------------------------------------------------------------
-# get_library: the credential must never reach the error message
-# ---------------------------------------------------------------------------
-
-class TestGetLibraryRedactsSecrets:
-    def test_missing_library_error_never_contains_the_secret(self, monkeypatch):
-        class _FakeArctic:
-            def __init__(self, uri):
-                pass
-
-            def has_library(self, name):
-                return False
-
-        monkeypatch.setattr("arcticdb.Arctic", _FakeArctic)
-        try:
-            with pytest.raises(FileNotFoundError) as exc:
-                get_library(S3_URI_WITH_SECRETS, "missing-lib", create_if_missing=False)
-        finally:
-            from openbb_deltalake.utils import _arctic_cache
-            _arctic_cache.pop(S3_URI_WITH_SECRETS, None)
-
-        message = str(exc.value)
-        assert "hunter2" not in message
-        assert "rootuser" not in message
-        assert "missing-lib" in message
