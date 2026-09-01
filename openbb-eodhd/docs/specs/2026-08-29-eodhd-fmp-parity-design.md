@@ -134,7 +134,7 @@ index, government trades, insider Form-4) each hit their specific EODHD endpoint
 | CompanyNews | `/news?s={symbol}` |
 | WorldNews | `/news?t={topic}` (general feed, no symbol) |
 | CalendarEarnings | `/calendar/earnings` (upcoming) |
-| CalendarDividend | upcoming dividends calendar |
+| CalendarDividend | upcoming dividends calendar — **deferred (verified 2026-09-01):** `/calendar/dividends` requires `filter[symbol]` or `filter[date_eq]` (no open range sweep) and rows carry only `{date, symbol}` — no amount/pay/record dates. Revisit if EODHD enriches the rows |
 | CalendarIpo | `/calendar/ipos` |
 | CalendarSplits | `/calendar/splits` |
 | EconomicCalendar | `/economic-events` |

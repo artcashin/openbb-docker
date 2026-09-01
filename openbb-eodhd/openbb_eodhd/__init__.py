@@ -2,6 +2,12 @@
 
 from openbb_core.provider.abstract.provider import Provider
 
+from openbb_eodhd.models.calendar import (
+    EODHDCalendarEarningsFetcher,
+    EODHDCalendarIpoFetcher,
+    EODHDCalendarSplitsFetcher,
+    EODHDEconomicCalendarFetcher,
+)
 from openbb_eodhd.models.corporate_actions import (
     EODHDHistoricalDividendsFetcher,
     EODHDHistoricalSplitsFetcher,
@@ -42,6 +48,10 @@ __all__ = [
     "EODHDAnalystEstimatesFetcher",
     "EODHDForwardEpsEstimatesFetcher",
     "EODHDPriceTargetConsensusFetcher",
+    "EODHDCalendarEarningsFetcher",
+    "EODHDCalendarIpoFetcher",
+    "EODHDCalendarSplitsFetcher",
+    "EODHDEconomicCalendarFetcher",
     "eodhd_provider",
 ]
 
@@ -52,8 +62,9 @@ eodhd_provider = Provider(
         "EOD Historical Data (EODHD) APIs. Historical pricing for equities/ETFs, "
         "crypto, and forex (end-of-day + intraday); fundamentals (income, balance "
         "sheet, cash flow); corporate actions (dividends, splits); ownership "
-        "(institutional and fund holders) and insider transactions; and analyst "
-        "estimates (historical EPS, forward estimates, price-target consensus)."
+        "(institutional and fund holders) and insider transactions; analyst "
+        "estimates (historical EPS, forward estimates, price-target consensus); "
+        "and calendars (upcoming earnings, IPOs, splits, economic events)."
     ),
     # Becomes the credential field `eodhd_api_key` (env: EODHD_API_KEY).
     credentials=["api_key"],
@@ -74,6 +85,10 @@ eodhd_provider = Provider(
         "AnalystEstimates": EODHDAnalystEstimatesFetcher,
         "ForwardEpsEstimates": EODHDForwardEpsEstimatesFetcher,
         "PriceTargetConsensus": EODHDPriceTargetConsensusFetcher,
+        "CalendarEarnings": EODHDCalendarEarningsFetcher,
+        "CalendarIpo": EODHDCalendarIpoFetcher,
+        "CalendarSplits": EODHDCalendarSplitsFetcher,
+        "EconomicCalendar": EODHDEconomicCalendarFetcher,
     },
     repr_name="EOD Historical Data (EODHD)",
 )
