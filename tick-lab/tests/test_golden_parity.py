@@ -1,8 +1,8 @@
 """tick-lab's roll-up must match the committed golden bars.
 
 The same CSV is asserted against by tests/integration/test_provider_parity.py,
-which runs provider="arcticdb" inside the Platform image. Pinning both sides to
-one artifact is what makes the two environments comparable without either
+which runs provider="deltalake" inside the Platform image. Pinning both sides
+to one artifact is what makes the two environments comparable without either
 importing the other.
 """
 
@@ -44,7 +44,7 @@ def test_golden_excludes_premarket_and_the_closing_print():
 
 
 def test_rollup_session_all_matches_the_golden_bars():
-    """provider="arcticdb" does no session filtering, so it produces the
+    """provider="deltalake" does no session filtering, so it produces the
     'all' shape, not the 'regular' one -- this pins that shape to its own
     golden (golden_1m_bars_all.csv), the same file
     tests/integration/test_provider_parity.py compares against.

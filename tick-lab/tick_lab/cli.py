@@ -47,7 +47,7 @@ _NAME = re.compile(r"^([A-Za-z0-9.\-]+)_(trade|quote)s?(?=[_.]|$)", re.IGNORECAS
 # What tick_lab.store.to_bounds actually accepts: a plain date, or an ISO
 # date+time joined by "T" or a space. Anything else (typos like
 # "2023-13-45", free text like "last-tuesday") is rejected here, at the
-# argparse boundary, instead of reaching pandas/ArcticDB deep in `compare`
+# argparse boundary, instead of reaching pandas/Delta deep in `compare`
 # and surfacing as a confusing parse error.
 _DATE_SHAPE = re.compile(r"^\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}:\d{2}(\.\d+)?)?$")
 
@@ -148,7 +148,7 @@ def cmd_load(args) -> int:
                 print(f"  would write {len(frame):>8,} {kind} rows -> {library}/{symbol}")
                 continue
 
-            # A write failure (network blip, ArcticDB rejecting the frame,
+            # A write failure (network blip, delta-rs rejecting the frame,
             # ...) is a per-file problem, not a reason to abort the rest of
             # the batch -- so it is reported and counted exactly like a
             # parse failure, and the loop continues to the next file.
@@ -242,7 +242,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="tick-lab", description=__doc__)
     sub = parser.add_subparsers(dest="command")
 
-    load = sub.add_parser("load", help="load a FirstRate zip (or directory) into ArcticDB")
+    load = sub.add_parser("load", help="load a FirstRate zip (or directory) into Delta Lake")
     load.add_argument("path", help="path to the .zip or an extracted directory")
     load.add_argument("--dry-run", action="store_true",
                       help="report what would be written, write nothing")

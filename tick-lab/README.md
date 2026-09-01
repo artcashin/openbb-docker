@@ -1,6 +1,6 @@
 # tick-lab
 
-A local CLI that reads ticks out of the shared ArcticDB store, rolls them
+A local CLI that reads ticks out of the shared Delta Lake store, rolls them
 into 1-minute OHLCV bars, and checks those bars against an independent
 source. Companion code for *Adventures in OpenBB, Ep. 11*.
 
@@ -26,7 +26,7 @@ python -m venv .venv
 .venv/bin/pip install -e '.[dev]'
 ```
 
-Requires Python 3.10+. `arcticdb` is a native-extension package; on Apple
+Requires Python 3.10+. `deltalake` is a native-extension package; on Apple
 Silicon this resolves a macOS `arm64` wheel natively (unlike the Docker image
 this store also feeds — see [`docs/arcticdb-minio-design.md`](../docs/arcticdb-minio-design.md#the-amd64-pin-and-what-it-means-on-apple-silicon)
 for why that one runs emulated).
@@ -41,12 +41,12 @@ The values are the **same names, same values** as `../minio.env` — copy
 them across, don't invent your own:
 
 ```
-ARCTICDB_S3_ENDPOINT=minio.<your-tailnet>.ts.net
-ARCTICDB_S3_PORT=9000
-ARCTICDB_S3_BUCKET=openbb
-ARCTICDB_S3_SECURE=true
-ARCTICDB_S3_ACCESS=      # = MINIO_ROOT_USER in minio.env
-ARCTICDB_S3_SECRET=      # = MINIO_ROOT_PASSWORD in minio.env
+DELTA_S3_ENDPOINT=minio.<your-tailnet>.ts.net
+DELTA_S3_PORT=9000
+DELTA_S3_BUCKET=openbb
+DELTA_S3_SECURE=true
+DELTA_S3_ACCESS=      # = MINIO_ROOT_USER in minio.env
+DELTA_S3_SECRET=      # = MINIO_ROOT_PASSWORD in minio.env
 ```
 
 One `minio.env` feeds both the container and this CLI, so they can never
@@ -82,7 +82,7 @@ keyed by symbol (`MSFT`, `GOOG`). A write is an **overwrite**, so re-running
 manage.
 
 Per-file failures (an unparseable file, a filename that doesn't say what
-kind it is, a write ArcticDB rejects) are reported to stderr and the run
+kind it is, a write Delta rejects) are reported to stderr and the run
 continues; the exit code is non-zero only if something failed.
 
 ## Compare
@@ -301,7 +301,7 @@ cd tick-lab
 .venv/bin/pytest -q
 ```
 
-Everything except the ArcticDB round-trip tests runs with **no network and
+Everything except the round-trip-over-S3 tests runs with **no network and
 no live store** — `firstrate.py` parsing, the roll-up arithmetic (session
 edges, DST, tolerance/bps math), the `yfinance` adapter's failure
 classification, and the CLI all run against fixtures and monkeypatched
@@ -328,20 +328,20 @@ s3 = boto3.client("s3", endpoint_url="http://127.0.0.1:19000",
 s3.create_bucket(Bucket="openbb")
 PY
 
-TICK_LAB_TEST_S3=1 ARCTICDB_S3_ENDPOINT=127.0.0.1 ARCTICDB_S3_PORT=19000 \
-  ARCTICDB_S3_BUCKET=openbb ARCTICDB_S3_SECURE=false \
-  ARCTICDB_S3_ACCESS=testuser ARCTICDB_S3_SECRET=testpassword123 \
+TICK_LAB_TEST_S3=1 DELTA_S3_ENDPOINT=127.0.0.1 DELTA_S3_PORT=19000 \
+  DELTA_S3_BUCKET=openbb DELTA_S3_SECURE=false \
+  DELTA_S3_ACCESS=testuser DELTA_S3_SECRET=testpassword123 \
   .venv/bin/pytest tests/test_store.py -q
 
 docker rm -f ticklab-minio
 ```
 
 `boto3` is a test-only convenience for creating the throwaway bucket (MinIO
-doesn't let ArcticDB create one itself); install it into `.venv` if it's
+doesn't let Delta create one itself); install it into `.venv` if it's
 missing.
 
 There's also a provider-parity check one level up, in `tests/integration/`
-at the repo root — it runs `provider="arcticdb"` **inside** the Platform
+at the repo root — it runs `provider="deltalake"` **inside** the Platform
 image and asserts it returns the exact same bars `tick-lab` computes by
 hand, both pinned against one committed golden CSV
 (`tests/fixtures/golden_1m_bars.csv`). See
