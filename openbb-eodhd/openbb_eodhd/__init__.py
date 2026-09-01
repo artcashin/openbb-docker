@@ -44,6 +44,14 @@ from openbb_eodhd.models.index import (
     EODHDIndexHistoricalFetcher,
 )
 from openbb_eodhd.models.insider import EODHDInsiderTradingFetcher
+from openbb_eodhd.models.macro import (
+    EODHDConsumerPriceIndexFetcher,
+    EODHDCountryProfileFetcher,
+    EODHDEconomicIndicatorsFetcher,
+    EODHDGdpNominalFetcher,
+    EODHDGdpRealFetcher,
+    EODHDUnemploymentFetcher,
+)
 from openbb_eodhd.models.market_cap import EODHDHistoricalMarketCapFetcher
 from openbb_eodhd.models.metrics import (
     EODHDFinancialRatiosFetcher,
@@ -120,6 +128,12 @@ __all__ = [
     "EODHDKeyExecutivesFetcher",
     "EODHDCompanyNewsFetcher",
     "EODHDEsgScoreFetcher",
+    "EODHDEconomicIndicatorsFetcher",
+    "EODHDGdpRealFetcher",
+    "EODHDGdpNominalFetcher",
+    "EODHDConsumerPriceIndexFetcher",
+    "EODHDUnemploymentFetcher",
+    "EODHDCountryProfileFetcher",
     "eodhd_provider",
 ]
 
@@ -137,7 +151,8 @@ eodhd_provider = Provider(
         "calendars (upcoming earnings, IPOs, splits, economic events); search, "
         "screener and index/forex reference data; ETF profiles and holdings; "
         "world news; US Treasury rates and yield curve; congressional trades; "
-        "and historical market cap."
+        "historical market cap; and macro indicators (GDP, CPI, unemployment, "
+        "country profiles)."
     ),
     # Becomes the credential field `eodhd_api_key` (env: EODHD_API_KEY).
     credentials=["api_key"],
@@ -188,6 +203,12 @@ eodhd_provider = Provider(
         "KeyExecutives": EODHDKeyExecutivesFetcher,
         "CompanyNews": EODHDCompanyNewsFetcher,
         "EsgScore": EODHDEsgScoreFetcher,  # deprecated: stale 2019 beta feed
+        "EconomicIndicators": EODHDEconomicIndicatorsFetcher,
+        "GdpReal": EODHDGdpRealFetcher,
+        "GdpNominal": EODHDGdpNominalFetcher,
+        "ConsumerPriceIndex": EODHDConsumerPriceIndexFetcher,
+        "Unemployment": EODHDUnemploymentFetcher,
+        "CountryProfile": EODHDCountryProfileFetcher,
     },
     repr_name="EOD Historical Data (EODHD)",
 )

@@ -216,9 +216,16 @@ verify every new provider registers and returns non-empty for `AAPL.US`.
    WorldNews, MarketSnapshots, EtfInfo/Holdings/Sectors/Countries,
    TrailingDividendYield. (The estimate additions — ForwardSalesEstimates,
    ForwardPeEstimates — ship with the Phase 1/2 estimates + metrics clusters.)
-4. **Beyond-FMP extras** — OptionsChains (verify marketplace subscription first;
-   document EOD/partial-greeks) and the macro cluster (EconomicIndicators,
-   CountryProfile, GdpReal, GdpNominal, ConsumerPriceIndex, Unemployment).
+4. **Beyond-FMP extras** — macro cluster **shipped 2026-09-01 (v9.5.0)**:
+   EconomicIndicators, CountryProfile (assembled, six calls/country), GdpReal
+   (= `gdp_growth_annual`, a growth-percent series), GdpNominal
+   (`gdp_current_usd`), ConsumerPriceIndex, Unemployment. Correction to the
+   macro-semantics risk note below: EODHD **does** carry the CPI index level
+   (`consumer_price_index`, 2010 = 100) alongside the inflation rate, so the
+   fetcher honors both `transform="index"` and `transform="yoy"`.
+   Still open: OptionsChains (verify marketplace subscription first; document
+   EOD/partial-greeks) and IndexConstituents — both 403 until the add-ons are
+   purchased.
 
 ## Testing
 
