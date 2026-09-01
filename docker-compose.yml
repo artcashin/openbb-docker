@@ -62,7 +62,9 @@ services:
   # OpenBB Platform REST API. Binds 127.0.0.1 so only Serve can reach it.
   openbb-api:
     build: .
-    image: openbb-local:1.0.0
+    # 4.7.2 = the skill-built image (OpenBB 4.7.2, openbb-eodhd 9.5.0 with the
+    # full FMP-parity fetcher set — 52 eodhd widgets).
+    image: openbb-local:4.7.2
     # ArcticDB publishes no aarch64 Linux wheels, so the image is amd64.
     # On Apple Silicon this runs under emulation -- correct, but slower.
     platform: linux/amd64
@@ -175,13 +177,13 @@ services:
   # eod-dump: the classic kdb+ day cycle's .u.end, as a sidecar. The kdb
   # service is this stack's tickerplant AND its RDB (in-memory trades, g# on
   # sym); at 00:05 UTC daily this flushes the ended UTC day into the Ep. 11
-  # ArcticDB/MinIO store -- our HDB -- one Arctic symbol per ticker, in the
-  # `ticks_live` library. Where .Q.hdpf would purge the RDB's RAM, this
-  # deliberately does not: live-grid's rolling window prunes the cache on
-  # its own cadence, and the chart's seam needs the trailing day queryable.
-  # Reuses the openbb-local image (pykx + arcticdb + the same ARCTICDB_S3_*
-  # env as every other consumer). Requires minio.env -- without the HDB half
-  # there is nowhere to flush, so this service refuses to start.
+  # Delta Lake/MinIO store -- our HDB -- one Delta table per (ticker, day),
+  # in the `ticks_live` library. Where .Q.hdpf would purge the RDB's RAM,
+  # this deliberately does not: live-grid's rolling window prunes the cache
+  # on its own cadence, and the chart's seam needs the trailing day
+  # queryable. Reuses the openbb-local image (pykx + deltalake + the same
+  # DELTA_S3_* env as every other consumer). Requires the env file -- without
+  # the HDB half there is nowhere to flush, so this service refuses to start.
   #
   # THE PRODUCTION FLUSH RUNS ON THE NAS, NOT HERE: a container on the NAS
   # (network-sharing openbb-minio, so it sits on the tailnet next to the
@@ -190,8 +192,9 @@ services:
   # tailnet. This compose service is the on-host alternative -- same
   # script, IPC source -- for a stack with no NAS.
   eod-dump:
+    # openbb-local:1.0.0 is the Ep. 11 Delta Lake image — built natively for
+    # this host's arch (no amd64 pin; deltalake/pyarrow ship aarch64 wheels).
     image: openbb-local:1.0.0
-    platform: linux/amd64
     container_name: openbb-eod-dump
     restart: unless-stopped
     networks:
@@ -201,8 +204,11 @@ services:
       - KDB_HOST=kdb
       - KDB_PORT=5000
       - QLIC=/opt/kx-license
+    # DELTA_S3_* for the store. Currently eod.env -> the local s3-local MinIO
+    # (NAS down since 2026-08-31); point back at minio.env when the tailnet
+    # store returns.
     env_file:
-      - path: ./minio.env
+      - path: ./eod.env
         required: true
     volumes:
       - ./scripts/eod_dump.py:/opt/eod_dump.py:ro
