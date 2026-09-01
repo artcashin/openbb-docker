@@ -222,7 +222,9 @@ services:
   # Endpoint path is /mcp (a request to /mcp/ 307-redirects there).
   openbb-mcp:
     build: .
-    image: openbb-local:6.0.0
+    # 4.7.2 = the skill-built image (OpenBB 4.7.2, openbb-eodhd 9.5.0), same
+    # as openbb-api — the MCP tool set tracks the same provider registry.
+    image: openbb-local:4.7.2
     # ArcticDB publishes no aarch64 Linux wheels, so the image is amd64.
     # On Apple Silicon this runs under emulation -- correct, but slower.
     platform: linux/amd64
