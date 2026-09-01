@@ -24,6 +24,7 @@ from app.figure import build_figure
 from app.leases import DEFAULT_TTL, LeaseRegistry
 from app.openbb_client import fetch_series
 from app.quotes import QuoteTable
+from app.symbol_meta import get_meta
 from app.ta.figure import delta as ta_delta
 from app.ta.macros import load_all as load_macros_all
 from app.ta.payload import (
@@ -252,6 +253,15 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
             return []
         client = _seed_client()
         return quotes.seed(symbols, client)
+
+    @app.get("/symbol_meta")
+    def symbol_meta(symbol: str = Query(default="")):
+        """Display metadata (logo, name, 52-week levels) — the favicon
+        pattern: consumers fetch once on mount, best-effort."""
+        symbols = _parse_symbols(symbol)
+        if not symbols:
+            return []
+        return get_meta(symbols, _seed_client())
 
     @app.get("/series")
     async def series(symbol: str = "AAPL", interval: str = "1d",
