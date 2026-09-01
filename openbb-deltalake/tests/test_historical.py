@@ -1,19 +1,26 @@
-"""Tests for OHLCV resampling and validation functions.
+"""Tests for OHLCV resampling/validation, and the DeltaLake fetchers' read path.
 
-These test the in-process logic only; no ArcticDB connection needed.
+The resample/validate tests exercise in-process logic only. The fetcher tests
+seed a real temporary Delta store (via the `store` fixture from conftest) and
+read back through `DeltaLake*HistoricalFetcher.aextract_data`.
 """
+
+import asyncio
 
 import numpy as np
 import pandas as pd
 import pytest
 from openbb_core.provider.abstract.data import Data
 from openbb_core.app.model.abstract.error import OpenBBError
+from openbb_core.provider.utils.errors import EmptyDataError
 
 from openbb_deltalake.models.historical import (
+    DeltaLakeEquityHistoricalFetcher,
     _pandas_ohlcv,
     _resample_spec,
     _validate,
 )
+from openbb_deltalake.store import DeltaStore
 
 
 # ---------------------------------------------------------------------------
@@ -198,3 +205,62 @@ class TestPandasOhlcvVwap:
         ticks.loc[ticks.index[:300], "size"] = 0.0
         out = _pandas_ohlcv(ticks, "5min", origin="epoch", vwap=True)
         assert np.isnan(out["vwap"].iloc[0])
+# ---------------------------------------------------------------------------
+# DeltaLakeEquityHistoricalFetcher.aextract_data (the read path, via a real
+# temporary Delta store seeded through DeltaStore.write — no lmdb:// / arctic
+# `lib` fixture involved, uri= is a plain tmp-path string).
+# ---------------------------------------------------------------------------
+
+
+def _ohlcv(dates):
+    return pd.DataFrame(
+        {
+            "open": [float(i + 1) for i in range(len(dates))],
+            "high": [float(i + 2) for i in range(len(dates))],
+            "low": [float(i) for i in range(len(dates))],
+            "close": [float(i) + 0.5 for i in range(len(dates))],
+            "volume": [100 * (i + 1) for i in range(len(dates))],
+        },
+        index=pd.to_datetime(dates),
+    )
+
+
+def _extract(store: DeltaStore, **params):
+    query = DeltaLakeEquityHistoricalFetcher.transform_query(
+        {"uri": store.base, "library": store.library, **params}
+    )
+    return asyncio.run(DeltaLakeEquityHistoricalFetcher.aextract_data(query, None))
+
+
+class TestExtractBars:
+    def test_multi_symbol(self, store: DeltaStore):
+        store.write("AAPL", _ohlcv(["2026-01-01", "2026-01-02"]))
+        store.write("MSFT", _ohlcv(["2026-01-01", "2026-01-02"]))
+        records = _extract(store, symbol="AAPL,MSFT")
+        assert len(records) == 4
+        assert {r["symbol"] for r in records} == {"AAPL", "MSFT"}
+
+    def test_missing_symbol_error_lists_unknown_symbols(self, store: DeltaStore):
+        store.write("AAPL", _ohlcv(["2026-01-01"]))
+        with pytest.raises(EmptyDataError, match=r"Unknown symbols: \['MSFT'\]"):
+            _extract(store, symbol="MSFT")
+
+    def test_whole_day_end_bound_includes_intraday_data(self, store: DeltaStore):
+        """A date-only end_date must include the WHOLE last day, not just
+        midnight — an exact-datetime end_date at midnight must not."""
+        store.write(
+            "AAPL",
+            _ohlcv(["2026-01-01 09:30", "2026-01-02 09:30", "2026-01-03 15:45"]),
+        )
+        whole_day = _extract(
+            store, symbol="AAPL", start_date="2026-01-01", end_date="2026-01-03"
+        )
+        assert len(whole_day) == 3
+
+        midnight_only = _extract(
+            store,
+            symbol="AAPL",
+            start_date="2026-01-01",
+            end_date="2026-01-03T00:00:00",
+        )
+        assert len(midnight_only) == 2

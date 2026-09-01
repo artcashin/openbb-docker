@@ -1,1 +1,1 @@
-"""ArcticDB models."""
+"""Delta Lake models."""

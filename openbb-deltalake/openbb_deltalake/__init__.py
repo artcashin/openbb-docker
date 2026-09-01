@@ -1,47 +1,44 @@
-"""ArcticDB integration for OpenBB (provider + OBBject accessor + generic store)."""
+"""Delta Lake integration for OpenBB (provider + OBBject accessor + generic store)."""
 
 from openbb_core.app.model.extension import Extension
 from openbb_core.provider.abstract.provider import Provider
 
-from openbb_deltalake.accessor import ArcticDBAccessor
+from openbb_deltalake.accessor import DeltaLakeAccessor
 from openbb_deltalake.models.historical import (
-    ArcticDBCryptoHistoricalFetcher,
-    ArcticDBCurrencyHistoricalFetcher,
-    ArcticDBEquityHistoricalFetcher,
-    ArcticDBEtfHistoricalFetcher,
-    ArcticDBIndexHistoricalFetcher,
+    DeltaLakeCryptoHistoricalFetcher,
+    DeltaLakeCurrencyHistoricalFetcher,
+    DeltaLakeEquityHistoricalFetcher,
+    DeltaLakeEtfHistoricalFetcher,
+    DeltaLakeIndexHistoricalFetcher,
 )
 from openbb_deltalake.store import DeltaStore, store
 
 __all__ = ["deltalake_provider", "ext", "DeltaStore", "store"]
 
-# --- Read path: provider extension (OHLCV standard models) -----------------
 deltalake_provider = Provider(
-    name="arcticdb",
-    website="https://arcticdb.io",
+    name="deltalake",
+    website="https://delta.io",
     description=(
-        "Serve bars stored in an ArcticDB library through the standard OpenBB "
+        "Serve bars stored in a Delta Lake library through the standard OpenBB "
         "interface (equity/etf/crypto/currency/index historical). Pair with the "
-        "`.arcticdb` OBBject accessor and the `openbb_deltalake.store` API to "
+        "`.deltalake` OBBject accessor and the `openbb_deltalake.store` API to "
         "persist and read back ANY data offline."
     ),
-    # No credentials: connection (URI/library) is configured via ARCTICDB_URI /
-    # ARCTICDB_LIBRARY env vars or per-call query params (declaring credentials
-    # would make them mandatory).
+    # No credentials: connection is configured via DELTA_URI / DELTA_S3_* /
+    # DELTA_LIBRARY env vars or per-call query params.
     credentials=None,
     fetcher_dict={
-        "EquityHistorical": ArcticDBEquityHistoricalFetcher,
-        "EtfHistorical": ArcticDBEtfHistoricalFetcher,
-        "CryptoHistorical": ArcticDBCryptoHistoricalFetcher,
-        "CurrencyHistorical": ArcticDBCurrencyHistoricalFetcher,
-        "IndexHistorical": ArcticDBIndexHistoricalFetcher,
+        "EquityHistorical": DeltaLakeEquityHistoricalFetcher,
+        "EtfHistorical": DeltaLakeEtfHistoricalFetcher,
+        "CryptoHistorical": DeltaLakeCryptoHistoricalFetcher,
+        "CurrencyHistorical": DeltaLakeCurrencyHistoricalFetcher,
+        "IndexHistorical": DeltaLakeIndexHistoricalFetcher,
     },
-    repr_name="ArcticDB",
+    repr_name="Delta Lake",
 )
 
-# --- Write path: OBBject accessor ------------------------------------------
 ext = Extension(
-    name="arcticdb",
-    description="Persist OBBject results to an ArcticDB library.",
+    name="deltalake",
+    description="Persist OBBject results to a Delta Lake library.",
 )
-ArcticDB = ext.obbject_accessor(ArcticDBAccessor)
+DeltaLake = ext.obbject_accessor(DeltaLakeAccessor)
