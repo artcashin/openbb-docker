@@ -4,7 +4,7 @@ The `provider="arcticdb"` path is bound to OpenBB's fixed OHLCV models. This
 store handles *any* shape of data — economy series, fundamentals, screeners,
 plain DataFrames — and is the generic counterpart to the `.arcticdb` accessor.
 
-    from openbb_arcticdb import store
+    from openbb_deltalake import store
     s = store(library="research")          # uri/library default to env/LMDB
     s.write("gdp", obb.economy.gdp.real(provider="oecd"))   # OBBject, DataFrame, or records
     s.write("notes", my_dataframe)
@@ -22,14 +22,14 @@ class ArcticStore:
     def __init__(self, uri: Optional[str] = None, library: Optional[str] = None):
         """Resolve the connection (uri/library) from args, env, or defaults."""
         # pylint: disable=import-outside-toplevel
-        from openbb_arcticdb.utils import resolve_config
+        from openbb_deltalake.utils import resolve_config
 
         self.uri, self.library = resolve_config(uri, library, None)
 
     # -- helpers ------------------------------------------------------------
     def _lib(self, create_if_missing: bool = True):
         # pylint: disable=import-outside-toplevel
-        from openbb_arcticdb.utils import get_library
+        from openbb_deltalake.utils import get_library
 
         return get_library(self.uri, self.library, create_if_missing=create_if_missing)
 
@@ -39,7 +39,7 @@ class ArcticStore:
         # pylint: disable=import-outside-toplevel
         from pandas import DataFrame
 
-        from openbb_arcticdb.utils import normalize_index
+        from openbb_deltalake.utils import normalize_index
 
         if hasattr(data, "to_dataframe"):  # OBBject
             df = data.to_dataframe()
@@ -84,7 +84,7 @@ class ArcticStore:
     ) -> dict[str, Any]:
         """Write any data as a new version of `key` (overwrites the symbol)."""
         # pylint: disable=import-outside-toplevel
-        from openbb_arcticdb.utils import redact_uri
+        from openbb_deltalake.utils import redact_uri
 
         df = self._to_frame(data)
         v = self._lib().write(
@@ -101,7 +101,7 @@ class ArcticStore:
     def append(self, key: str, data: Any) -> dict[str, Any]:
         """Append data to an existing symbol."""
         # pylint: disable=import-outside-toplevel
-        from openbb_arcticdb.utils import redact_uri
+        from openbb_deltalake.utils import redact_uri
 
         df = self._to_frame(data)
         v = self._lib().append(key, df)
@@ -130,7 +130,7 @@ class ArcticStore:
         `end` is treated as inclusive of the whole day).
         """
         # pylint: disable=import-outside-toplevel
-        from openbb_arcticdb.utils import to_bounds
+        from openbb_deltalake.utils import to_bounds
 
         lib = self._lib(create_if_missing=False)
         start_ts, end_ts = to_bounds(start_date, end_date)
@@ -160,7 +160,7 @@ class ArcticStore:
     def delete(self, key: str) -> dict[str, Any]:
         """Delete a symbol."""
         # pylint: disable=import-outside-toplevel
-        from openbb_arcticdb.utils import redact_uri
+        from openbb_deltalake.utils import redact_uri
 
         self._lib().delete(key)
         return {"uri": redact_uri(self.uri), "library": self.library, "deleted": key}

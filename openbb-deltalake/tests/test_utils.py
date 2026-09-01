@@ -5,7 +5,7 @@ from datetime import date, datetime
 import pandas as pd
 import pytest
 
-from openbb_arcticdb.utils import (
+from openbb_deltalake.utils import (
     get_library,
     normalize_index,
     parse_temporal,
@@ -176,7 +176,7 @@ class TestGetLibraryRedactsSecrets:
             with pytest.raises(FileNotFoundError) as exc:
                 get_library(S3_URI_WITH_SECRETS, "missing-lib", create_if_missing=False)
         finally:
-            from openbb_arcticdb.utils import _arctic_cache
+            from openbb_deltalake.utils import _arctic_cache
             _arctic_cache.pop(S3_URI_WITH_SECRETS, None)
 
         message = str(exc.value)

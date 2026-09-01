@@ -9,7 +9,7 @@ import pytest
 from openbb_core.provider.abstract.data import Data
 from openbb_core.app.model.abstract.error import OpenBBError
 
-from openbb_arcticdb.models.historical import (
+from openbb_deltalake.models.historical import (
     _pandas_ohlcv,
     _resample_spec,
     _validate,

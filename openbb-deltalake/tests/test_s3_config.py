@@ -2,7 +2,7 @@
 
 import pytest
 
-from openbb_arcticdb.utils import resolve_config, s3_uri_from_env
+from openbb_deltalake.utils import resolve_config, s3_uri_from_env
 
 FULL = {
     "ARCTICDB_S3_ENDPOINT": "minio.example.ts.net",

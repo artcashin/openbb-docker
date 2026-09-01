@@ -41,7 +41,7 @@ directions**:
 - **Generic read/write (any data)** — for non-OHLCV data (economy series,
   fundamentals, screeners, arbitrary DataFrames), use the `store` API:
   ```python
-  from openbb_arcticdb import store
+  from openbb_deltalake import store
   s = store(library="research")            # uri/library default to env/LMDB
   s.write("gdp", obb.economy.gdp.real(provider="oecd"))   # OBBject, DataFrame, or records
   s.write("notes", my_dataframe, metadata={"src": "manual"})

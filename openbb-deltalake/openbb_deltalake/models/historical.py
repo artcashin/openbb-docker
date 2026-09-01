@@ -5,7 +5,7 @@ standard OpenBB interface, for several asset classes:
 `obb.equity.price.historical(provider="arcticdb")`,
 `obb.crypto.price.historical(provider="arcticdb")`, etc.
 
-For arbitrary (non-OHLCV) data, use the generic `openbb_arcticdb.store` API.
+For arbitrary (non-OHLCV) data, use the generic `openbb_deltalake.store` API.
 """
 
 # pylint: disable=unused-argument
@@ -163,7 +163,7 @@ async def _extract_bars(query, credentials: Optional[dict]) -> list[dict]:
     # pylint: disable=import-outside-toplevel
     import asyncio
 
-    from openbb_arcticdb.utils import get_library, resolve_config, to_bounds
+    from openbb_deltalake.utils import get_library, resolve_config, to_bounds
 
     uri, library = resolve_config(
         getattr(query, "uri", None), getattr(query, "library", None), credentials
@@ -287,7 +287,7 @@ def _build_fetcher(label: str, qp_base, data_base):
         @classmethod
         def _coerce_temporal(cls, v):
             # pylint: disable=import-outside-toplevel
-            from openbb_arcticdb.utils import parse_temporal
+            from openbb_deltalake.utils import parse_temporal
 
             return parse_temporal(v)
 

@@ -30,7 +30,7 @@ def main() -> int:
     args = p.parse_args()
 
     from openbb import obb
-    from openbb_arcticdb import store
+    from openbb_deltalake import store
 
     start = (date.today() - timedelta(days=args.days)).isoformat()
     print(f"[1/4] Downloading {args.symbol} daily OHLCV since {start} (yfinance)...")

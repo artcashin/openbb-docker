@@ -3,7 +3,7 @@
 import pandas as pd
 import pytest
 
-from openbb_arcticdb.store import ArcticStore
+from openbb_deltalake.store import ArcticStore
 
 
 def _df():

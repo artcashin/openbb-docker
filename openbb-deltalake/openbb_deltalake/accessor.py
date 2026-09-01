@@ -11,7 +11,7 @@ persisted to ArcticDB and managed:
     res.arcticdb.delete("AAPL")
 
 All methods accept optional `library=` / `uri=` overrides. For reading arbitrary
-data back (and for use without an existing result), see `openbb_arcticdb.store`.
+data back (and for use without an existing result), see `openbb_deltalake.store`.
 """
 
 from typing import Any, Optional
@@ -76,6 +76,6 @@ class ArcticDBAccessor:
 def _make_store(uri: Optional[str], library: Optional[str]):
     """Build an ArcticStore, resolving config on first access."""
     # pylint: disable=import-outside-toplevel
-    from openbb_arcticdb.store import ArcticStore
+    from openbb_deltalake.store import ArcticStore
 
     return ArcticStore(uri=uri, library=library)

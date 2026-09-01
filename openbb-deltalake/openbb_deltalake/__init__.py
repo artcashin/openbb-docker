@@ -3,15 +3,15 @@
 from openbb_core.app.model.extension import Extension
 from openbb_core.provider.abstract.provider import Provider
 
-from openbb_arcticdb.accessor import ArcticDBAccessor
-from openbb_arcticdb.models.historical import (
+from openbb_deltalake.accessor import ArcticDBAccessor
+from openbb_deltalake.models.historical import (
     ArcticDBCryptoHistoricalFetcher,
     ArcticDBCurrencyHistoricalFetcher,
     ArcticDBEquityHistoricalFetcher,
     ArcticDBEtfHistoricalFetcher,
     ArcticDBIndexHistoricalFetcher,
 )
-from openbb_arcticdb.store import ArcticStore, store
+from openbb_deltalake.store import ArcticStore, store
 
 __all__ = ["arcticdb_provider", "ext", "ArcticStore", "store"]
 
@@ -22,7 +22,7 @@ arcticdb_provider = Provider(
     description=(
         "Serve bars stored in an ArcticDB library through the standard OpenBB "
         "interface (equity/etf/crypto/currency/index historical). Pair with the "
-        "`.arcticdb` OBBject accessor and the `openbb_arcticdb.store` API to "
+        "`.arcticdb` OBBject accessor and the `openbb_deltalake.store` API to "
         "persist and read back ANY data offline."
     ),
     # No credentials: connection (URI/library) is configured via ARCTICDB_URI /
