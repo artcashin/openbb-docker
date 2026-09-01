@@ -11,9 +11,9 @@ from openbb_deltalake.models.historical import (
     ArcticDBEtfHistoricalFetcher,
     ArcticDBIndexHistoricalFetcher,
 )
-from openbb_deltalake.store import ArcticStore, store
+from openbb_deltalake.store import DeltaStore, store
 
-__all__ = ["deltalake_provider", "ext", "ArcticStore", "store"]
+__all__ = ["deltalake_provider", "ext", "DeltaStore", "store"]
 
 # --- Read path: provider extension (OHLCV standard models) -----------------
 deltalake_provider = Provider(

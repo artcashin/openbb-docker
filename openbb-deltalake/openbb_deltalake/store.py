@@ -1,11 +1,11 @@
-"""Generic read/write API for arbitrary OpenBB / DataFrame data in ArcticDB.
+"""Generic read/write API for arbitrary OpenBB / DataFrame data in Delta Lake.
 
-The `provider="arcticdb"` path is bound to OpenBB's fixed OHLCV models. This
+The `provider="deltalake"` path is bound to OpenBB's fixed OHLCV models. This
 store handles *any* shape of data — economy series, fundamentals, screeners,
-plain DataFrames — and is the generic counterpart to the `.arcticdb` accessor.
+plain DataFrames — and is the generic counterpart to the `.deltalake` accessor.
 
     from openbb_deltalake import store
-    s = store(library="research")          # uri/library default to env/LMDB
+    s = store(library="research")          # uri/library default to env/local path
     s.write("gdp", obb.economy.gdp.real(provider="oecd"))   # OBBject, DataFrame, or records
     s.write("notes", my_dataframe)
     df  = s.read("gdp", output="dataframe")
@@ -16,28 +16,29 @@ plain DataFrames — and is the generic counterpart to the `.arcticdb` accessor.
 from typing import Any, Optional, Sequence
 
 
-class ArcticStore:
-    """Generic ArcticDB store for arbitrary tabular data."""
+class DeltaStore:
+    """Generic Delta Lake store for arbitrary tabular data."""
 
     def __init__(self, uri: Optional[str] = None, library: Optional[str] = None):
-        """Resolve the connection (uri/library) from args, env, or defaults."""
+        """Resolve the connection (base/library/storage_options) from args, env, or defaults."""
         # pylint: disable=import-outside-toplevel
         from openbb_deltalake.utils import resolve_config
 
-        self.uri, self.library = resolve_config(uri, library, None)
+        self.base, self.library, self.storage_options = resolve_config(uri, library, None)
 
     # -- helpers ------------------------------------------------------------
-    def _lib(self, create_if_missing: bool = True):
+    def _path(self, key: str) -> str:
         # pylint: disable=import-outside-toplevel
-        from openbb_deltalake.utils import get_library
+        from openbb_deltalake.utils import table_path
 
-        return get_library(self.uri, self.library, create_if_missing=create_if_missing)
+        return table_path(self.base, self.library, key)
 
     @staticmethod
     def _to_frame(data: Any):
-        """Accept an OBBject, DataFrame, or records and return a storable frame."""
+        """Accept an OBBject, DataFrame, or records; return a frame with the
+        DatetimeIndex (if any) moved into a 'date' column for Parquet."""
         # pylint: disable=import-outside-toplevel
-        from pandas import DataFrame
+        from pandas import DataFrame, DatetimeIndex, RangeIndex
 
         from openbb_deltalake.utils import normalize_index
 
@@ -48,8 +49,17 @@ class ArcticStore:
         else:  # list[dict] / dict / array-like
             df = DataFrame(data)
         if df is None or df.empty:
-            raise ValueError("No data to write to ArcticDB.")
-        return normalize_index(df)
+            raise ValueError("No data to write to the Delta store.")
+        df = normalize_index(df)
+        if isinstance(df.index, DatetimeIndex):
+            # Rename before reset_index: for an unnamed DatetimeIndex,
+            # reset_index() emits a column literally named "index", and a
+            # post-hoc rename({"date": "date"}) would be a no-op.
+            df.index = df.index.rename(df.index.name or "date")
+            df = df.reset_index()
+        else:
+            df = df.reset_index(drop=isinstance(df.index, RangeIndex))
+        return df
 
     @staticmethod
     def _to_obbject(df, key: Optional[str], metadata: Any, library: str):
@@ -69,47 +79,66 @@ class ArcticStore:
         ]
         return OBBject(
             results=results,
-            provider="arcticdb",
+            provider="deltalake",
             extra={"symbol": key, "library": library, "metadata": metadata},
         )
 
+    @staticmethod
+    def _commit_props(metadata: Optional[dict]):
+        # pylint: disable=import-outside-toplevel
+        import json
+
+        from deltalake import CommitProperties
+
+        if not metadata:
+            return None
+        return CommitProperties(
+            custom_metadata={"openbb_meta": json.dumps(metadata, default=str)}
+        )
+
+    def _table(self, key: str):
+        # pylint: disable=import-outside-toplevel
+        from deltalake import DeltaTable
+
+        return DeltaTable(self._path(key), storage_options=self.storage_options)
+
     # -- write --------------------------------------------------------------
-    def write(
-        self,
-        key: str,
-        data: Any,
-        *,
-        metadata: Optional[dict] = None,
-        prune_previous_versions: bool = False,
-    ) -> dict[str, Any]:
+    def write(self, key: str, data: Any, *, metadata: Optional[dict] = None) -> dict[str, Any]:
         """Write any data as a new version of `key` (overwrites the symbol)."""
         # pylint: disable=import-outside-toplevel
-        from openbb_deltalake.utils import redact_uri
+        from deltalake import write_deltalake
 
         df = self._to_frame(data)
-        v = self._lib().write(
-            key, df, metadata=metadata, prune_previous_versions=prune_previous_versions
+        write_deltalake(
+            self._path(key),
+            df,
+            mode="overwrite",
+            schema_mode="overwrite",
+            storage_options=self.storage_options,
+            commit_properties=self._commit_props(metadata),
         )
         return {
-            "uri": redact_uri(self.uri),
+            "base": self.base,
             "library": self.library,
             "symbol": key,
-            "version": getattr(v, "version", None),
+            "version": self._table(key).version(),
             "rows": int(len(df)),
         }
 
     def append(self, key: str, data: Any) -> dict[str, Any]:
-        """Append data to an existing symbol."""
+        """Append data to `key` (creates the table on first append)."""
         # pylint: disable=import-outside-toplevel
-        from openbb_deltalake.utils import redact_uri
+        from deltalake import write_deltalake
 
         df = self._to_frame(data)
-        v = self._lib().append(key, df)
+        write_deltalake(
+            self._path(key), df, mode="append", storage_options=self.storage_options
+        )
         return {
-            "uri": redact_uri(self.uri),
+            "base": self.base,
             "library": self.library,
             "symbol": key,
-            "version": getattr(v, "version", None),
+            "version": self._table(key).version(),
             "rows_appended": int(len(df)),
         }
 
@@ -124,52 +153,113 @@ class ArcticStore:
         as_of: Any = None,
         output: str = "obbject",
     ):
-        """Read `key`; returns an OBBject (default) or a DataFrame (`output='dataframe'`).
+        """Read `key`; OBBject by default, DataFrame with output='dataframe'.
 
-        `start_date` / `end_date` accept date, datetime, or string (a pure date
-        `end` is treated as inclusive of the whole day).
+        `as_of` is an int Delta version, or a date/datetime/string for
+        timestamp-based time travel.
         """
         # pylint: disable=import-outside-toplevel
+        from pandas.api.types import is_datetime64_any_dtype
+
         from openbb_deltalake.utils import to_bounds
 
-        lib = self._lib(create_if_missing=False)
+        if not self.has(key):
+            raise FileNotFoundError(
+                f"No Delta table for symbol '{key}' in library '{self.library}' "
+                f"at '{self.base}'. Write some data first."
+            )
+        dt = self._table(key)
+        if as_of is not None:
+            dt.load_as_version(as_of if isinstance(as_of, int) else str(as_of))
+        dataset = dt.to_pyarrow_dataset()
         start_ts, end_ts = to_bounds(start_date, end_date)
-        date_range = None if start_ts is None and end_ts is None else (start_ts, end_ts)
-        item = lib.read(
-            key,
-            date_range=date_range,
-            columns=list(columns) if columns else None,
-            as_of=as_of,
-        )
+        filt = _date_filter(dataset.schema, start_ts, end_ts)
+        cols = None
+        if columns:
+            cols = list(dict.fromkeys(["date", *columns])) \
+                if "date" in dataset.schema.names else list(columns)
+        df = dataset.to_table(columns=cols, filter=filt).to_pandas()
+        if "date" in df.columns and is_datetime64_any_dtype(df["date"]):
+            df = df.set_index("date").sort_index()
         if output == "dataframe":
-            return item.data
-        return self._to_obbject(item.data, key, item.metadata, self.library)
+            return df
+        # read_metadata() always reflects the LATEST commit, even when `as_of`
+        # points at an older version — accepted wrinkle (see SDD ledger).
+        return self._to_obbject(df, key, self.read_metadata(key), self.library)
 
     # -- catalog ------------------------------------------------------------
     def list_symbols(self) -> list[str]:
-        """List symbols in the library."""
-        return list(self._lib().list_symbols())
+        """List symbols (Delta tables) in the library."""
+        # pylint: disable=import-outside-toplevel
+        from pyarrow import fs as pafs
+
+        from openbb_deltalake.utils import fs_and_root
+
+        fsys, root = fs_and_root(self.base, self.storage_options)
+        sel = pafs.FileSelector(f"{root.rstrip('/')}/{self.library}", allow_not_found=True)
+        # ponytail: one _delta_log stat per child dir; fine for a per-episode
+        # catalog, switch to a manifest table if libraries grow into thousands.
+        out = []
+        for info in fsys.get_file_info(sel):
+            if info.type != pafs.FileType.Directory:
+                continue
+            log = fsys.get_file_info(f"{info.path}/_delta_log")
+            if log.type != pafs.FileType.NotFound:
+                out.append(info.base_name)
+        return sorted(out)
 
     def has(self, key: str) -> bool:
-        """Whether `key` exists (False if the library doesn't exist yet)."""
-        try:
-            return self._lib(create_if_missing=False).has_symbol(key)
-        except FileNotFoundError:
-            return False
+        """Whether a Delta table exists for `key`."""
+        # pylint: disable=import-outside-toplevel
+        from deltalake import DeltaTable
+
+        return DeltaTable.is_deltatable(self._path(key), storage_options=self.storage_options)
 
     def delete(self, key: str) -> dict[str, Any]:
-        """Delete a symbol."""
+        """Delete a symbol's table entirely."""
         # pylint: disable=import-outside-toplevel
-        from openbb_deltalake.utils import redact_uri
+        from openbb_deltalake.utils import fs_and_root
 
-        self._lib().delete(key)
-        return {"uri": redact_uri(self.uri), "library": self.library, "deleted": key}
+        fsys, root = fs_and_root(self.base, self.storage_options)
+        fsys.delete_dir(f"{root.rstrip('/')}/{self.library}/{key}")
+        return {"base": self.base, "library": self.library, "deleted": key}
 
     def read_metadata(self, key: str) -> Any:
-        """Read just the metadata stored alongside `key`."""
-        return self._lib(create_if_missing=False).read_metadata(key).metadata
+        """Metadata from the newest commit that carries `openbb_meta`."""
+        # pylint: disable=import-outside-toplevel
+        import json
+
+        for entry in self._table(key).history():
+            raw = entry.get("openbb_meta")
+            if raw is not None:
+                return json.loads(raw)
+        return None
 
 
-def store(uri: Optional[str] = None, library: Optional[str] = None) -> ArcticStore:
+def _date_filter(schema, start_ts, end_ts):
+    """Build a pyarrow dataset filter on the 'date' column, matching its tz."""
+    if "date" not in schema.names or (start_ts is None and end_ts is None):
+        return None
+    # pylint: disable=import-outside-toplevel
+    import pyarrow.dataset as ds
+
+    field_type = schema.field("date").type
+    tz = getattr(field_type, "tz", None)
+
+    def _bound(ts):
+        if tz is None:
+            return ts.tz_localize(None) if ts.tzinfo else ts
+        return ts.tz_localize(tz) if ts.tzinfo is None else ts.tz_convert(tz)
+
+    expr = None
+    if start_ts is not None:
+        expr = ds.field("date") >= _bound(start_ts).to_pydatetime()
+    if end_ts is not None:
+        e = ds.field("date") <= _bound(end_ts).to_pydatetime()
+        expr = e if expr is None else expr & e
+    return expr
+
+
+def store(uri: Optional[str] = None, library: Optional[str] = None) -> DeltaStore:
     """Convenience factory: `store(library="research")`."""
-    return ArcticStore(uri=uri, library=library)
+    return DeltaStore(uri=uri, library=library)

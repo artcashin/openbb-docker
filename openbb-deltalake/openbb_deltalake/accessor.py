@@ -74,8 +74,8 @@ class ArcticDBAccessor:
 
 
 def _make_store(uri: Optional[str], library: Optional[str]):
-    """Build an ArcticStore, resolving config on first access."""
+    """Build a DeltaStore, resolving config on first access."""
     # pylint: disable=import-outside-toplevel
-    from openbb_deltalake.store import ArcticStore
+    from openbb_deltalake.store import DeltaStore
 
-    return ArcticStore(uri=uri, library=library)
+    return DeltaStore(uri=uri, library=library)
