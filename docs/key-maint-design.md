@@ -103,7 +103,8 @@ wrong. The `/keys` response includes `"tier"` so clients can label the view.
 - A static **registry** (`app/registry.py`) maps each known env var to:
   display name, provider URL, known public demo values (e.g. EODHD `demo`,
   Alpha Vantage `demo`), and a probe spec. Non-credential vars in the file
-  (`KDB_HOST`, `ARCTICDB_*`, ...) are listed in an explicit ignore set.
+  (`KDB_HOST`, `DELTA_S3_*`, `DELTA_LIBRARY`, `DELTA_URI`, ...) are listed in
+  an explicit ignore set.
 - Coverage rules: registry entry with no line in the file → `status:
   "missing"`. `*_API_KEY`/`*_TOKEN`/`*_SECRET` line with no registry entry →
   generic row (no demo detection, no probe). A pytest asserts every

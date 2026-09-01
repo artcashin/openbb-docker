@@ -1,28 +1,29 @@
-# openbb-arcticdb
+# openbb-deltalake
 
-[ArcticDB](https://arcticdb.io) integration for the OpenBB Platform — **both
+[Delta Lake](https://delta.io) integration for the OpenBB Platform, via
+[delta-rs](https://github.com/delta-io/delta-rs) (Apache 2.0) — **both
 directions**:
 
-- **Write** — persist any OBBject result to an ArcticDB library:
+- **Write** — persist any OBBject result to a Delta Lake library:
   ```python
   res = obb.equity.price.historical("AAPL", provider="yfinance")
-  res.arcticdb.write("AAPL")                       # -> default library
-  res.arcticdb.write("AAPL", library="prices", metadata={"src": "yfinance"})
-  res.arcticdb.append("AAPL")                      # append new rows
-  res.arcticdb.list_symbols(library="prices")
+  res.deltalake.write("AAPL")                       # -> default library
+  res.deltalake.write("AAPL", library="prices", metadata={"src": "yfinance"})
+  res.deltalake.append("AAPL")                      # append new rows
+  res.deltalake.list_symbols(library="prices")
   ```
 - **Read (OHLCV)** — serve stored bars back through the normal OpenBB interface
   for **equity, ETF, crypto, currency, and index** historical:
   ```python
-  obb.equity.price.historical("AAPL", provider="arcticdb")
-  obb.crypto.price.historical("BTCUSD", provider="arcticdb", start_date="2026-01-01")
+  obb.equity.price.historical("AAPL", provider="deltalake")
+  obb.crypto.price.historical("BTCUSD", provider="deltalake", start_date="2026-01-01")
   ```
 - **Tick → OHLCV on read** — pass `interval` to resample a stored tick symbol
-  (a `price` column + optional `size`/`volume`) into OHLCV bars. ArcticDB filters
-  by `date_range` on the server; the resample itself is done client-side with
-  pandas.
+  (a `price` column + optional `size`/`volume`) into OHLCV bars. The date
+  filter is pushed down to Parquet row-group stats; the resample itself is
+  done client-side with pandas.
   ```python
-  obb.equity.price.historical("XYZ", provider="arcticdb", library="ticks",
+  obb.equity.price.historical("XYZ", provider="deltalake", library="ticks",
                               interval="1m", start_date="2026-06-01", end_date="2026-06-02")
   ```
   Supported intervals (lowercase `m` = minute, per OpenBB):
@@ -33,63 +34,77 @@ directions**:
   OpenBB silently strips because `1d` is its global default). For raw, non-OHLCV
   rows use `store.read("XYZ", library="ticks")`.
 - **`pandas_anchor`** (bool, default `False`) — bucket anchoring. `False`
-  (default) uses ArcticDB's epoch anchor; `True` uses the pandas default anchor
-  (`origin='start_day'`). Mainly visible on intraday intervals that don't evenly divide a day
-  (e.g. `5h`: start-of-day edges vs epoch edges). Implemented as a midnight
-  Timestamp origin because ArcticDB rejects the `start_day` string alongside a
-  `date_range`.
+  (default) uses an epoch origin; `True` uses the pandas default anchor
+  (`origin='start_day'`). Mainly visible on intraday intervals that don't evenly
+  divide a day (e.g. `5h`: start-of-day edges vs epoch edges).
 - **Generic read/write (any data)** — for non-OHLCV data (economy series,
   fundamentals, screeners, arbitrary DataFrames), use the `store` API:
   ```python
   from openbb_deltalake import store
-  s = store(library="research")            # uri/library default to env/LMDB
+  s = store(library="research")            # uri/library default to env/local directory
   s.write("gdp", obb.economy.gdp.real(provider="oecd"))   # OBBject, DataFrame, or records
   s.write("notes", my_dataframe, metadata={"src": "manual"})
   obj = s.read("gdp")                       # OBBject (default): .to_df(), charting, ...
   df  = s.read("gdp", output="dataframe", start_date="2026-01-01", columns=["value"])
   s.list_symbols(); s.has("gdp"); s.read_metadata("gdp"); s.delete("gdp"); s.append("gdp", more)
   ```
+- **Time travel** — `store.read()` takes `as_of`: an **int Delta version**, or
+  a **date/datetime/ISO-string timestamp** for time-based travel:
+  ```python
+  s.read("gdp", as_of=3)                    # version 3
+  s.read("gdp", as_of="2026-08-15")         # state as of that day
+  ```
+  (`read_metadata()` always reflects the *latest* commit, even when `as_of`
+  points at an older version.) The OHLCV `provider="deltalake"` read path does
+  not expose `as_of` — it always reads the current version; use the `store`
+  API above for time travel.
 
 The round-trip lets you pull once from a live provider, store it, then re-read
 offline with no API calls or rate limits — versioned and time-travel capable.
+Writing moves a DatetimeIndex into a `date` column for Parquet; reading sets
+it back as the index when present, so a value that went in with a date index
+comes back with one.
 
-The `.arcticdb` accessor (on any OBBject) mirrors the write side:
-`res.arcticdb.write/append/list_symbols/read_metadata/delete(...)`.
+The `.deltalake` accessor (on any OBBject) mirrors the write side:
+`res.deltalake.write/append/list_symbols/read_metadata/delete(...)`.
+
+Timezone convention: tick data is stored tz-aware (source timestamps, e.g.
+US-Eastern), daily bars as naive midnight timestamps — range-filter bounds
+adapt to the stored column's tz automatically, but keeping the convention
+avoids off-by-hours query bounds.
 
 ## Configuration
 
 No OpenBB credentials are required. The connection is resolved with this
-precedence: **per-call query param > OpenBB credential > `ARCTICDB_URI` >
-`ARCTICDB_S3_*` (assembled) > LMDB default**.
+precedence: **per-call query param > OpenBB credential > `DELTA_URI` >
+`DELTA_S3_*` (assembled) > local directory default**.
 
-- `ARCTICDB_URI`     — e.g. `lmdb:///root/.openbb_platform/arcticdb` (local file
-  store, default) or an S3/Azure URI, e.g.:
-  ```
-  s3s://minio.example.ts.net:openbb?port=9000&access=<key>&secret=<secret>&use_virtual_addressing=false
-  ```
-  Note the shape: host and bucket are joined with `:`, and `port` is a query
-  parameter — `host:port:bucket` is not valid ArcticDB syntax. Use `s3s://`
-  for TLS, `s3://` for plain HTTP.
-- `ARCTICDB_LIBRARY` — defaults to `openbb`
+- `DELTA_URI`     — e.g. `/root/.openbb_platform/deltalake` (local directory
+  store, default) or an S3 URI, e.g. `s3://openbb`.
+- `DELTA_LIBRARY` — defaults to `openbb`
 
-If `ARCTICDB_URI` isn't set, the extension will assemble an S3 URI from these
+If `DELTA_URI` isn't set, the extension will assemble an S3 URI from these
 parts instead — handy for pointing both the container and a laptop-side CLI
 at the same MinIO from one credentials file:
 
-- `ARCTICDB_S3_ENDPOINT` — host (no scheme), e.g. `minio.example.ts.net`
-- `ARCTICDB_S3_BUCKET`   — bucket name
-- `ARCTICDB_S3_ACCESS`   — access key
-- `ARCTICDB_S3_SECRET`   — secret key
-- `ARCTICDB_S3_PORT`     — optional, defaults to `9000`
-- `ARCTICDB_S3_SECURE`   — optional, `true` (default, → `s3s://`) or `false`
-  (→ `s3://`)
+- `DELTA_S3_ENDPOINT` — host (no scheme), e.g. `minio.example.ts.net`
+- `DELTA_S3_BUCKET`   — bucket name
+- `DELTA_S3_ACCESS`   — access key
+- `DELTA_S3_SECRET`   — secret key
+- `DELTA_S3_PORT`     — optional, defaults to `9000`
+- `DELTA_S3_SECURE`   — optional, `true` (default, → HTTPS) or `false`
+  (→ plain HTTP)
 
-All four required parts must be set or the assembly is skipped entirely
-(falls through to the LMDB default) rather than producing a URI that would
-fail deep inside ArcticDB. Credentials are URL-encoded automatically.
+All four required parts (`DELTA_S3_ENDPOINT`/`BUCKET`/`ACCESS`/`SECRET`) must
+be set or the assembly is skipped entirely (falls through to the local
+directory default) rather than producing a connection that would fail deep
+inside delta-rs.
 
-The default LMDB store lives under `OPENBB_HOME`, so in the container it sits on
-the persistent `openbb-data` volume automatically.
+The default local store lives under `OPENBB_HOME`
+(`~/.openbb_platform/deltalake/<library>/<symbol>/` if unset), so in the
+container it sits on the persistent `openbb-data` volume automatically. It is
+a plain directory of Parquet files plus a `_delta_log` — no LMDB, no embedded
+database.
 
 ## Supported
 
@@ -97,14 +112,14 @@ the persistent `openbb-data` volume automatically.
   `CurrencyHistorical`, `IndexHistorical` (OHLCV standard models), with an
   `interval` param that resamples stored tick/fine data into OHLCV on read
 - Generic `store` API: `write`, `append`, `read` (OBBject or DataFrame, with
-  `start_date`/`end_date`/`columns`), `list_symbols`, `has`, `delete`,
+  `start_date`/`end_date`/`columns`/`as_of`), `list_symbols`, `has`, `delete`,
   `read_metadata` — for any data shape
-- `.arcticdb` OBBject accessor: `write`, `append`, `list_symbols`,
+- `.deltalake` OBBject accessor: `write`, `append`, `list_symbols`,
   `read_metadata`, `delete`
 
 ## Note
 
-The package registers the name `arcticdb` as both a provider and an OBBject
+The package registers the name `deltalake` as both a provider and an OBBject
 accessor (intentional). OpenBB emits a harmless one-line warning
-("Skipping 'arcticdb', name already in user.") when credentials are first
+("Skipping 'deltalake', name already in user.") when credentials are first
 loaded; it does not affect functionality.

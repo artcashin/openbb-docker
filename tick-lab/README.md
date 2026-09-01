@@ -27,9 +27,15 @@ python -m venv .venv
 ```
 
 Requires Python 3.10+. `deltalake` is a native-extension package; on Apple
-Silicon this resolves a macOS `arm64` wheel natively (unlike the Docker image
-this store also feeds — see [`docs/arcticdb-minio-design.md`](../docs/arcticdb-minio-design.md#the-amd64-pin-and-what-it-means-on-apple-silicon)
-for why that one runs emulated).
+Silicon this resolves a macOS `arm64` wheel natively, same as the Docker
+image this store also feeds — Delta Lake ships native `aarch64` wheels, so
+neither side runs emulated. That wasn't always true: the original store
+design (since superseded — see the
+[Delta Lake spec](../docs/superpowers/specs/2026-09-01-deltalake-store-design.md))
+ran ArcticDB, which pinned the image to `linux/amd64` and ran under emulation
+on Apple Silicon. See
+[`docs/arcticdb-minio-design.md`](../docs/arcticdb-minio-design.md#the-amd64-pin-and-what-it-means-on-apple-silicon)
+for that history.
 
 ## Configure
 
@@ -50,9 +56,14 @@ DELTA_S3_SECRET=      # = MINIO_ROOT_PASSWORD in minio.env
 ```
 
 One `minio.env` feeds both the container and this CLI, so they can never
-drift onto different buckets or credentials. See
+drift onto different buckets or credentials. The store itself is a directory
+of Parquet files plus a transaction log — open it with anything that reads
+Delta (DuckDB, Polars, pandas). The shared-naming-convention rationale
+predates the `DELTA_S3_*` rename; see
 [`docs/arcticdb-minio-design.md`](../docs/arcticdb-minio-design.md#arcticdb_s3--one-file-two-consumers)
-for why the two sides share a naming convention instead of each inventing
+(the original store design, since superseded by Delta Lake — variable names
+there are the pre-rename `ARCTICDB_S3_*` equivalents of today's `DELTA_S3_*`)
+for why the two sides share one naming convention instead of each inventing
 their own.
 
 `.env` is git-ignored. `chmod 600` it, same as every other credential file
