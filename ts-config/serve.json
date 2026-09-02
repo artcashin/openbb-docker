@@ -22,5 +22,39 @@
         }
       }
     }
+  },
+  "Services": {
+    "svc:openbb-api": {
+      "TCP": {
+        "443": {
+          "HTTPS": true
+        }
+      },
+      "Web": {
+        "openbb-api.<your-tailnet>.ts.net:443": {
+          "Handlers": {
+            "/": {
+              "Proxy": "http://openbb-api:6900"
+            }
+          }
+        }
+      }
+    },
+    "svc:openbb-keys": {
+      "TCP": {
+        "443": {
+          "HTTPS": true
+        }
+      },
+      "Web": {
+        "openbb-keys.<your-tailnet>.ts.net:443": {
+          "Handlers": {
+            "/": {
+              "Proxy": "http://key-maint:8447"
+            }
+          }
+        }
+      }
+    }
   }
 }
