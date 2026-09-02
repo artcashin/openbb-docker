@@ -222,4 +222,115 @@ class TestLifecycle:
         m = make_manager(fake_ws_client_factory)
         status = m.status()
         assert set(status.keys()) == {"us", "crypto", "forex"}
-        assert status["us"] == {"symbols": [], "running": False}
+        assert status["us"] == {"symbols": [], "running": False, "last_tick_age_s": None}
+
+
+class TestLiveness:
+    """_check_liveness: zombie feeds (connected, silent) get rebuilt."""
+
+    MARKET_OPEN = __import__("datetime").datetime(2026, 9, 2, 15, 0, tzinfo=__import__("datetime").timezone.utc)
+    MARKET_CLOSED = __import__("datetime").datetime(2026, 9, 2, 2, 0, tzinfo=__import__("datetime").timezone.utc)
+    # 2026-09-05 is a Saturday -- same time-of-day as MARKET_OPEN, so this
+    # isolates the weekday gate from the hour-of-day gate.
+    MARKET_SATURDAY = __import__("datetime").datetime(2026, 9, 5, 15, 0, tzinfo=__import__("datetime").timezone.utc)
+
+    def make(self, factory):
+        t = {"now": 1000.0}
+        m = FeedManager(
+            "k", QuoteTable(), client_factory=factory, rebuild_delay=0.0,
+            clock=lambda: t["now"],
+        )
+        return m, t
+
+    def test_silent_us_feed_rebuilds_during_market_hours(self, fake_ws_client_factory):
+        m, t = self.make(fake_ws_client_factory)
+        m.register("c1", ["AAPL"])
+        asyncio.run(m._sync_feeds())
+        t["now"] += feeds_mod.STALE_AFTER + 1
+        asyncio.run(m._check_liveness(when=self.MARKET_OPEN))
+        assert m._rebuild_pending
+        asyncio.run(m._sync_feeds())
+        fake_ws_client_factory.built[0].stop.assert_called_once()
+        assert len(fake_ws_client_factory.built) == 2  # fresh client constructed
+
+    def test_buffer_activity_prevents_rebuild(self, fake_ws_client_factory):
+        m, t = self.make(fake_ws_client_factory)
+        m.register("c1", ["AAPL"])
+        asyncio.run(m._sync_feeds())
+        m._rebuild_pending = False  # register() set it; setup noise, not the signal
+        t["now"] += feeds_mod.STALE_AFTER + 1
+        fake_ws_client_factory.built[0].data_list.append(json.dumps({"s": "AAPL", "p": 1.0}))
+        m._drain_all()  # stamps _last_tick
+        asyncio.run(m._check_liveness(when=self.MARKET_OPEN))
+        assert not m._rebuild_pending
+
+    def test_no_rebuild_outside_market_hours(self, fake_ws_client_factory):
+        m, t = self.make(fake_ws_client_factory)
+        m.register("c1", ["AAPL"])
+        asyncio.run(m._sync_feeds())
+        m._rebuild_pending = False  # register() set it; setup noise, not the signal
+        t["now"] += feeds_mod.STALE_AFTER + 1
+        asyncio.run(m._check_liveness(when=self.MARKET_CLOSED))
+        assert not m._rebuild_pending
+
+    def test_crypto_expected_around_the_clock(self, fake_ws_client_factory):
+        m, t = self.make(fake_ws_client_factory)
+        m.register("c1", ["BTC-USD"])
+        asyncio.run(m._sync_feeds())
+        t["now"] += feeds_mod.STALE_AFTER + 1
+        asyncio.run(m._check_liveness(when=self.MARKET_CLOSED))
+        assert m._rebuild_pending
+
+    def test_rebuild_rate_limited_to_one_per_stale_period(self, fake_ws_client_factory):
+        m, t = self.make(fake_ws_client_factory)
+        m.register("c1", ["BTC-USD"])
+        asyncio.run(m._sync_feeds())
+        t["now"] += feeds_mod.STALE_AFTER + 1
+        asyncio.run(m._check_liveness(when=self.MARKET_OPEN))
+        assert m._rebuild_pending
+        m._rebuild_pending = False
+        t["now"] += feeds_mod.LIVENESS_INTERVAL + 1  # next check window, still silent
+        asyncio.run(m._check_liveness(when=self.MARKET_OPEN))
+        assert not m._rebuild_pending  # _last_tick was reset; not stale again yet
+
+    def test_status_exposes_last_tick_age(self, fake_ws_client_factory):
+        m, t = self.make(fake_ws_client_factory)
+        assert m.status()["us"]["last_tick_age_s"] is None
+        m.register("c1", ["AAPL"])
+        asyncio.run(m._sync_feeds())
+        t["now"] += 12.5
+        assert m.status()["us"]["last_tick_age_s"] == 12.5
+
+    def test_zombie_dropped_when_last_subscriber_unregisters_before_sync(
+        self, fake_ws_client_factory
+    ):
+        """A zombie whose only subscriber leaves between detection and the
+        next _sync_feeds must not get stranded in _clients forever.
+
+        _sync_feeds only acts when `want != _active`; if _check_liveness only
+        cleared _active (not _clients) and `want` is now also empty, both
+        sides read empty and _sync_feeds no-ops, leaving the stopped-in-name-
+        only client in _clients to be re-detected as stale on every future
+        pass. _check_liveness must stop and drop it itself.
+        """
+        m, t = self.make(fake_ws_client_factory)
+        m.register("c1", ["AAPL"])
+        asyncio.run(m._sync_feeds())
+        fake_ws_client_factory.built[0].data_list.append(json.dumps({"s": "AAPL", "p": 1.0}))
+        m._drain_all()  # stamps _last_tick
+        t["now"] += feeds_mod.STALE_AFTER + 1
+        m.unregister("c1")  # last subscriber gone before the next sync
+        asyncio.run(m._check_liveness(when=self.MARKET_OPEN))
+        asyncio.run(m._sync_feeds())
+        fake_ws_client_factory.built[0].stop.assert_called_once()
+        assert "us" not in m._clients
+
+    def test_weekday_gate_excludes_saturday_within_market_hours(self, fake_ws_client_factory):
+        assert not feeds_mod._expect_ticks("us", self.MARKET_SATURDAY)
+        m, t = self.make(fake_ws_client_factory)
+        m.register("c1", ["AAPL"])
+        asyncio.run(m._sync_feeds())
+        m._rebuild_pending = False  # register() set it; setup noise, not the signal
+        t["now"] += feeds_mod.STALE_AFTER + 1
+        asyncio.run(m._check_liveness(when=self.MARKET_SATURDAY))
+        assert not m._rebuild_pending

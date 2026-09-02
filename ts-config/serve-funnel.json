@@ -55,5 +55,49 @@
   },
   "AllowFunnel": {
     "${TS_CERT_DOMAIN}:443": true
+  },
+  "Services": {
+    "svc:openbb-api": {
+      "TCP": {
+        "443": {
+          "HTTPS": true
+        },
+        "8443": {
+          "HTTPS": true
+        }
+      },
+      "Web": {
+        "openbb-api.<your-tailnet>.ts.net:443": {
+          "Handlers": {
+            "/": {
+              "Proxy": "http://openbb-api:6900"
+            }
+          }
+        },
+        "openbb-api.<your-tailnet>.ts.net:8443": {
+          "Handlers": {
+            "/": {
+              "Proxy": "http://openbb-mcp:6901"
+            }
+          }
+        }
+      }
+    },
+    "svc:openbb-keys": {
+      "TCP": {
+        "443": {
+          "HTTPS": true
+        }
+      },
+      "Web": {
+        "openbb-keys.<your-tailnet>.ts.net:443": {
+          "Handlers": {
+            "/": {
+              "Proxy": "http://key-maint:8447"
+            }
+          }
+        }
+      }
+    }
   }
 }
