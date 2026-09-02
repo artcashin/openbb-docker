@@ -3,12 +3,37 @@
 import asyncio
 import json
 import logging
+import os
 import signal
+import time
+from datetime import datetime, timezone
 
 from app.classify import FEEDS, split_by_feed
 from app.quotes import QuoteTable
 
 log = logging.getLogger("live-grid")
+
+LIVENESS_INTERVAL = 60.0  # seconds between zombie-feed checks
+STALE_AFTER = float(os.getenv("LIVE_GRID_FEED_STALE_S", "300"))
+
+
+def _expect_ticks(feed: str, when: datetime | None = None) -> bool:
+    """Whether a healthy feed should be delivering ticks right now.
+
+    crypto trades around the clock. For us, weekdays 14:30-20:00 UTC is
+    inside NYSE regular hours whether the US is on EST or EDT, so silence
+    there is never the market's fault.
+    """
+    # ponytail: ignores US market holidays (worst case: one spurious rebuild
+    # per STALE_AFTER on a holiday) and never expects forex ticks (feed is
+    # unused on this deployment). Add a holiday calendar / forex sessions if
+    # either ever matters.
+    if feed == "crypto":
+        return True
+    if feed != "us":
+        return False
+    now = when if when is not None else datetime.now(timezone.utc)
+    return now.weekday() < 5 and (14, 30) <= (now.hour, now.minute) < (20, 0)
 
 
 def _build_client(api_key: str, feed: str, symbols: list[str]):
@@ -51,6 +76,7 @@ class FeedManager:
         client_factory=_build_client,
         drain_interval: float = 0.2,
         rebuild_delay: float = 1.0,
+        clock=time.monotonic,
     ) -> None:
         self._api_key = api_key
         self.quotes = quotes
@@ -63,6 +89,9 @@ class FeedManager:
         self._active: dict[str, frozenset[str]] = {}  # feed -> subscribed set
         self._rebuild_pending = False
         self._last_rebuild = float("-inf")
+        self._clock = clock
+        self._last_tick: dict[str, float] = {}  # feed -> clock() at last buffer activity
+        self._last_liveness = float("-inf")
 
     # -- subscription tracking ------------------------------------------------
     def register(self, conn_id: str, symbols: list[str]) -> None:
@@ -90,10 +119,16 @@ class FeedManager:
         return out
 
     def status(self) -> dict:
+        now = self._clock()
         return {
             feed: {
                 "symbols": sorted(self._active.get(feed, frozenset())),
                 "running": bool(getattr(self._clients.get(feed), "running", False)),
+                # Age of the last buffer activity -- the honest liveness
+                # signal; `running` is only the SDK's connection flag.
+                "last_tick_age_s": (
+                    round(now - self._last_tick[feed], 1) if feed in self._last_tick else None
+                ),
             }
             for feed in FEEDS
         }
@@ -122,6 +157,8 @@ class FeedManager:
                     new = self._client_factory(self._api_key, feed, sorted(want))
                     new.start()
                     self._clients[feed] = new
+                    # Fresh client, fresh grace period for the liveness check.
+                    self._last_tick[feed] = self._clock()
                 except Exception as exc:  # noqa: BLE001 -- feed stays down, app stays up
                     log.warning(
                         "failed to start EODHD %s feed for %s: %s", feed, sorted(want), exc
@@ -139,6 +176,8 @@ class FeedManager:
             n = len(buf)
             raw = buf[:n]
             del buf[:n]
+            # Buffer activity is connection-level liveness, parseable or not.
+            self._last_tick[feed] = self._clock()
             for item in raw:
                 try:
                     msg = json.loads(item) if isinstance(item, str) else item
@@ -152,6 +191,47 @@ class FeedManager:
                 for conn_id, by_feed in self._conns.items():
                     if sym in by_feed[feed]:
                         self._dirty[conn_id].add(sym)
+
+    async def _check_liveness(self, when: datetime | None = None) -> None:
+        """Detect a zombie feed: connected, 'running', delivering nothing.
+
+        Observed 2026-09-01: a second consumer on the same EODHD key left the
+        us feed connected but silent for ~20 hours while status() reported
+        running=True. The SDK's flag also survives its own "Max reconnect
+        attempts reached" give-up. A feed with no buffer activity for
+        STALE_AFTER during expected market activity is stopped and dropped
+        here directly -- _sync_feeds is the only other place that mutates
+        _active, and it no-ops when `want` already equals `_active` (e.g. the
+        feed's last subscriber unregistered between detection and the next
+        sync), which would otherwise strand the zombie client in _clients
+        forever. Dropping it here means _sync_feeds sees the feed as absent
+        and rebuilds only if there is still a non-empty `want`. Resetting
+        _last_tick bounds the churn to one rebuild per STALE_AFTER even if
+        the feed stays silent.
+        """
+        now = self._clock()
+        if now - self._last_liveness < LIVENESS_INTERVAL:
+            return
+        self._last_liveness = now
+        for feed in list(self._clients):
+            if not _expect_ticks(feed, when):
+                continue
+            age = now - self._last_tick.get(feed, now)
+            if age < STALE_AFTER:
+                continue
+            log.warning(
+                "%s feed silent for %.0fs during expected activity -- rebuilding", feed, age
+            )
+            client = self._clients.pop(feed, None)
+            if client is not None:
+                # stop() joins the SDK's reader thread -- offload it like
+                # _sync_feeds does. A wedged SDK is exactly the case this
+                # feature exists for; blocking the event loop here would
+                # stall tick draining and syncs for every other feed.
+                await asyncio.to_thread(_stop_quietly, client)
+            self._active.pop(feed, None)
+            self._last_tick[feed] = now
+            self._rebuild_pending = True
 
     async def stop_all(self) -> None:
         for feed in list(self._clients):
@@ -171,5 +251,6 @@ class FeedManager:
                         self._last_rebuild = now
                         await self._sync_feeds()
                 self._drain_all()
+                await self._check_liveness()
         finally:
             await self.stop_all()

@@ -124,11 +124,11 @@ services:
 
   # key-maint: the transport-tiered "key status" widget backend (Ep. 3).
   # One process, two servers: a network server on :8447 (published by Serve on
-  # :10000 — public ONLY if you funnel it, and it enforces the same Basic auth
-  # as the API) and an admin server on a unix socket whose 0700 host directory
-  # is what raises a caller to tier 3 (filesystem access via SSH — no port, but
-  # the same Basic auth still applies: the socket replaces a second credential,
-  # not the first).
+  # :10000 and as the Tailscale Service svc:openbb-keys — tailnet-only; the
+  # :10000 funnel that once existed was deliberately removed. It enforces the
+  # same Basic auth as the API) and an admin server on a unix socket whose
+  # 0700 host directory IS the tier-3 authorization (filesystem access via
+  # SSH — no port, no header).
   key-maint:
     build: ./key-maint
     image: openbb-key-maint:9.0.0
@@ -181,6 +181,11 @@ services:
       # the default watchlist for testing).
       - path: ./credentials.env
         required: false
+      # The auth middleware and /chart's calls to openbb-api both use the SAME
+      # Basic-auth credentials the API enforces. Without this file
+      # OPENBB_API_USERNAME is unset and every request is refused.
+      - path: ./api-auth.env
+        required: true
 
   # rss-ticker (Ep. 8): the news wire — polls RSS feeds, streams new articles
   # over a websocket, serves a Bloomberg-style news window widget. Source lives
