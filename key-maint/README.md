@@ -9,8 +9,8 @@ three postures:
 
 | Tier | How you connect | Sees |
 |---|---|---|
-| 1 | Public internet via Tailscale Funnel, `https://openbb.<your-tailnet>.ts.net:10000` | key status + demo flag |
-| 2 | Same URL from a tailnet device | + `run_tests` live probes |
+| 1 *(retired)* | Public internet via Tailscale Funnel on `:10000` — the funnel was deliberately removed; the service is tailnet-only now | key status + demo flag |
+| 2 | `https://openbb.<your-tailnet>.ts.net:10000` or `https://openbb-keys.<your-tailnet>.ts.net` from a tailnet device | + `run_tests` live probes |
 | 3 | Unix socket on the host, via an SSH exec session | + the key values themselves |
 
 All tiers require the main API's Basic auth (`api-auth.env`) — tier 3
@@ -25,13 +25,15 @@ admin password to store, leak or rotate.
 1. One-time, beside the compose file:
    `mkdir -p key-maint-admin && chmod 700 key-maint-admin`
 2. `docker compose up -d --build key-maint`
-3. Serve publishes the network server on `:10000` (see `ts-config/serve.json`);
-   the funnel variant additionally opens that port to the internet — tier 1
-   exists only if you choose that.
+3. Serve publishes the network server on `:10000` and as the Tailscale
+   Service `svc:openbb-keys` (see `ts-config/serve.json`) — tailnet-only.
+   Neither serve config funnels it; tier 1 exists only if you add an
+   `AllowFunnel` entry for `:10000` yourself.
 
 ## Use
 
-- **Widget:** add `https://openbb.<your-tailnet>.ts.net:10000` as a backend in
+- **Widget:** add `https://openbb-keys.<your-tailnet>.ts.net` (Tailscale
+  Service) or `https://openbb.<your-tailnet>.ts.net:10000` as a backend in
   BDOBB or OpenBB Workspace (same Authorization header as the main API) — the
   key status widget appears in the library.
 - **Tier 3 (values):** run curl on the host over SSH — works regardless of the
