@@ -1,11 +1,33 @@
 {
   "TCP": {
-    "443": { "HTTPS": true }
+    "443": {
+      "HTTPS": true
+    }
   },
   "Web": {
     "${TS_CERT_DOMAIN}:443": {
       "Handlers": {
-        "/": { "Proxy": "http://openbb-api:6900" }
+        "/": {
+          "Proxy": "http://openbb-api:6900"
+        }
+      }
+    }
+  },
+  "Services": {
+    "svc:openbb-api": {
+      "TCP": {
+        "443": {
+          "HTTPS": true
+        }
+      },
+      "Web": {
+        "openbb-api.<your-tailnet>.ts.net:443": {
+          "Handlers": {
+            "/": {
+              "Proxy": "http://openbb-api:6900"
+            }
+          }
+        }
       }
     }
   }
