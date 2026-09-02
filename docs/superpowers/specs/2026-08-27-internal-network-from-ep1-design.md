@@ -28,7 +28,7 @@ service:tailscale`: the children are bound to the *sandbox* the sidecar owned
 when they started. A restart creates a new one and the children hold the corpse
 — mutually reachable on loopback, invisible to Serve, every container still
 reporting `Up`. Three other stacks on the same NAS run watchdog scripts for
-this; `/share/Gitea/gitea-netns-reconcile.sh` documents the identical failure
+this; `<nas-path>/gitea-netns-reconcile.sh` documents the identical failure
 from a different trigger.
 
 Fixing it at Ep. 11 means a cutover: four layers that cannot be half-applied, a
@@ -98,7 +98,7 @@ consequences are load-bearing enough to state:
 
 This is the claim Ep. 1 is built on, so the change deserves to be exact rather
 than reassuring. `scripts/verify-isolation.sh` probes
-`http://openbb.<tailnet>:6900/` from a second tailnet device.
+`http://openbb.<your-tailnet>:6900/` from a second tailnet device.
 
 | reachable from | today (shared namespace) | on the bridge |
 |---|---|---|
@@ -185,7 +185,7 @@ Ep. 1 has two containers, so this is a check rather than a rehearsal. In
 priority order:
 
 1. **tailscaled works dual-homed** (D3 — the unknown). The node comes up, Serve
-   gets its certificate, `https://openbb.<tailnet>/widgets.json` answers.
+   gets its certificate, `https://openbb.<your-tailnet>/widgets.json` answers.
 2. **Serve delivers to a service name** (D2). Acceptance of the config is not
    delivery; the 200 above is the proof.
 3. **`scripts/verify-isolation.sh` still passes from a second tailnet device.**
@@ -213,8 +213,8 @@ network path, which does not depend on which API image sits behind it.
 | # | check | result |
 |---|---|---|
 | 1 | tailscaled dual-homed (**D3**) | **PASS.** Came up with the bridge as `eth0: 172.29.28.2/22`, `Bringing router up`, `netfilter running in iptables mode`. No routing, iptables or permission errors before or after authorization. Node joined as `<ep1-node-ip> openbb-ep1`. |
-| 2 | Serve delivers to a service name (**D2**) | **PASS.** `tailscale serve status` reports `/ proxy http://openbb-api:6900`; from a second tailnet device `https://openbb-ep1.<tailnet>/widgets.json` returned **200** with the widget manifest. Delivery, not merely acceptance. |
-| 3 | the raw port is sealed | **PASS.** `http://openbb-ep1.<tailnet>:6900/` refused from a second tailnet device. |
+| 2 | Serve delivers to a service name (**D2**) | **PASS.** `tailscale serve status` reports `/ proxy http://openbb-api:6900`; from a second tailnet device `https://openbb-ep1.<your-tailnet>/widgets.json` returned **200** with the widget manifest. Delivery, not merely acceptance. |
+| 3 | the raw port is sealed | **PASS.** `http://openbb-ep1.<your-tailnet>:6900/` refused from a second tailnet device. |
 | 4 | a sidecar restart strands nobody | **PASS**, twice. After `docker restart ep1-ts`, `ep1-api`'s `StartedAt` and bridge IP were unchanged, the restarted sidecar still reached it by service name, and `https://.../widgets.json` still returned 200 with `:6900` still refused. |
 | 5 | the documented regression is bounded | **PASS.** From the Docker host, `http://172.29.28.3:6900/widgets.json` → **200**, confirming the cost the README now states. From a second tailnet device the same address was unreachable, confirming the bridge is not routed off-host. |
 

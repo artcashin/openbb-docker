@@ -29,7 +29,7 @@ owned when they started. A restart creates a new one and the children hold the
 corpse — mutually reachable on loopback, invisible to Serve, every container
 still reporting `Up`.
 
-The same failure is documented in `/share/Gitea/gitea-netns-reconcile.sh` from a
+The same failure is documented in `<nas-path>/gitea-netns-reconcile.sh` from a
 different trigger (WAN not up after a reboot). Three stacks on this NAS run
 watchdogs that restart stranded children on a timer. This design removes the
 coupling instead.
