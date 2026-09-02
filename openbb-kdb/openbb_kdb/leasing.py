@@ -6,6 +6,7 @@ be taken costs freshness, never an error. That invariant is the reason this
 module exists separately from the fetcher.
 """
 
+import base64
 import logging
 import os
 
@@ -15,11 +16,21 @@ DEFAULT_URL = "http://127.0.0.1:6903/subscribe"
 TIMEOUT_S = 1.0
 
 
+def _auth_headers() -> dict[str, str]:
+    """Basic-auth header for live-grid, or {} if creds aren't configured."""
+    user = os.getenv("OPENBB_API_USERNAME")
+    pw = os.getenv("OPENBB_API_PASSWORD")
+    if not user or not pw:
+        return {}
+    token = base64.b64encode(f"{user}:{pw}".encode()).decode()
+    return {"Authorization": f"Basic {token}"}
+
+
 async def _post(url: str, json: dict, timeout: float):
     import httpx
 
     async with httpx.AsyncClient(timeout=timeout) as client:
-        response = await client.post(url, json=json)
+        response = await client.post(url, json=json, headers=_auth_headers())
         response.raise_for_status()
         return response.json()
 
@@ -51,7 +62,7 @@ async def _get(url: str, params: dict, timeout: float):
     import httpx
 
     async with httpx.AsyncClient(timeout=timeout) as client:
-        response = await client.get(url, params=params)
+        response = await client.get(url, params=params, headers=_auth_headers())
         response.raise_for_status()
         return response.json()
 

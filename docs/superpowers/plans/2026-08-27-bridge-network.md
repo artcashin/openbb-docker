@@ -23,7 +23,7 @@
 - `ts-config/serve.json` keeps its `TCP` block and all six ports unchanged. Only `Proxy` targets change.
 - `deps.env` is shared across services. It cannot change until every consumer has moved, which is why Task 4 is one window.
 - The NAS's `<nas-checkout>/docker-compose.yml` is hand-maintained and diverges from the repo's. Task 2 changes the repo; Task 4 applies the equivalent to the NAS by hand.
-- Every NAS command runs with `PATH=/share/ZFS1_DATA/.qpkg/container-station/bin:$PATH`, and `HOME`/`DOCKER_CONFIG` pointed at a writable dir. The NAS has no `git` and no `python3`.
+- Every NAS command runs with `PATH=<nas-path>/container-station/bin:$PATH`, and `HOME`/`DOCKER_CONFIG` pointed at a writable dir. The NAS has no `git` and no `python3`.
 - Rollback is always three files plus `docker compose up -d`. No task rebuilds an image except Task 1.
 
 ## File structure
@@ -161,7 +161,7 @@ the NAS from the merged commit before proceeding:
 
 ```bash
 ssh nas
-export PATH="/share/ZFS1_DATA/.qpkg/container-station/bin:$PATH"
+export PATH="<nas-path>/container-station/bin:$PATH"
 export HOME=<nas-checkout>/.build DOCKER_CONFIG=$HOME/.docker
 mkdir -p "$DOCKER_CONFIG"
 cd <nas-checkout> && DOCKER_BUILDKIT=0 docker build -t openbb-key-maint:latest ./key-maint
@@ -352,7 +352,7 @@ to come up or reports no address, STOP — this is the design's stated unknown
 
 ```bash
 docker exec rehearsal-ts tailscale serve status
-curl -s -o /dev/null -w '%{http_code}\n' https://<rehearsal-host>.<tailnet>.ts.net:6903/widgets.json
+curl -s -o /dev/null -w '%{http_code}\n' https://<host>.<your-tailnet>.ts.net:6903/widgets.json
 ```
 Expected: the serve status lists `proxy http://live-grid:6903`, and the curl
 returns `200`. A `502` means Serve resolved the name but could not connect —
@@ -361,7 +361,7 @@ check the service is binding `0.0.0.0` and not `127.0.0.1`.
 - [ ] **Step 6: Prove criterion 3 — services reach each other by name**
 
 ```bash
-curl -s -u <user>:<pass> 'https://<rehearsal-host>.<tailnet>.ts.net/api/v1/equity/price/quote?symbol=AAPL&provider=kdb' \
+curl -s -u <user>:<pass> 'https://<host>.<your-tailnet>.ts.net/api/v1/equity/price/quote?symbol=AAPL&provider=kdb' \
   | head -c 200
 ```
 Expected: a JSON body with `results`. This exercises openbb-api → kdb over the
@@ -373,8 +373,8 @@ most likely to behave differently.
 ```bash
 docker restart rehearsal-ts
 sleep 40
-curl -s -o /dev/null -w 'live-grid  %{http_code}\n' https://<rehearsal-host>.<tailnet>.ts.net:6903/widgets.json
-curl -s -o /dev/null -w 'api        %{http_code}\n' https://<rehearsal-host>.<tailnet>.ts.net/widgets.json
+curl -s -o /dev/null -w 'live-grid  %{http_code}\n' https://<host>.<your-tailnet>.ts.net:6903/widgets.json
+curl -s -o /dev/null -w 'api        %{http_code}\n' https://<host>.<your-tailnet>.ts.net/widgets.json
 ```
 Expected: `6903 -> 200` and `api -> 401` (unauthenticated). **This is the whole
 point of the migration.** Under the old model this sequence produced 502 on

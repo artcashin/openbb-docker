@@ -2,7 +2,7 @@
 
 import pytest
 
-from openbb_kdb.leasing import lease
+from openbb_kdb.leasing import _auth_headers, lease
 
 
 @pytest.mark.asyncio
@@ -40,3 +40,15 @@ async def test_lease_sends_the_symbol_upper_cased():
 
     await lease("aapl", post=capture)
     assert seen["symbols"] == ["AAPL"]
+
+
+def test_auth_headers_present_when_env_vars_set(monkeypatch):
+    monkeypatch.setenv("OPENBB_API_USERNAME", "user")
+    monkeypatch.setenv("OPENBB_API_PASSWORD", "pw")
+    assert _auth_headers() == {"Authorization": "Basic dXNlcjpwdw=="}
+
+
+def test_auth_headers_absent_when_env_vars_unset(monkeypatch):
+    monkeypatch.delenv("OPENBB_API_USERNAME", raising=False)
+    monkeypatch.delenv("OPENBB_API_PASSWORD", raising=False)
+    assert _auth_headers() == {}
