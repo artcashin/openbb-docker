@@ -20,7 +20,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "httpx", "ruff"]
+dev = ["pytest", "pytest-asyncio", "httpx", "ruff"]
 
 [tool.setuptools]
 packages = ["app"]

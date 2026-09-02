@@ -3,6 +3,12 @@
 **Date:** 2026-08-04
 **Status:** Approved
 
+> **Post-deployment update (2026-08-04):** the `:10000` funnel described
+> below was later deliberately removed — key-maint is **tailnet-only** now,
+> reachable at `:10000` on the node and via the Tailscale Service
+> `svc:openbb-keys` (443 → 8447). Tier 1 (public) is retired; the tier
+> mechanics below are otherwise unchanged. See `ts-config/serve.json`.
+
 ## Purpose
 
 A small FastAPI service (`key-maint/`, mirroring `live-grid/`'s layout) that
