@@ -58,6 +58,10 @@ docker compose up -d --force-recreate tailscale
 Only port 443 is funneled. Anything else the node ever serves stays
 tailnet-only.
 
+(An earlier revision also funneled `:10000`, the key-maint widget backend.
+That was deliberately removed; key status is tailnet-only, on `:10000` and
+as the Tailscale Service `svc:openbb-keys`.)
+
 ## The serve config is applied wholesale
 
 `serve.json` is the only durable serve state this node has. Two things
