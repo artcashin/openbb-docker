@@ -1,3 +1,8 @@
+> **SUPERSEDED** by `2026-08-27-internal-network-from-ep1-design.md`, which
+> builds the internal network from Ep. 1 instead of migrating to it at Ep. 11.
+> This document remains the reference for migrating the **running NAS**, which
+> is on Ep. 11 and is a separate problem from what the series ships.
+
 # Removing the network-namespace coupling — design
 
 Move the openbb stack's seven services off `network_mode: service:tailscale`
