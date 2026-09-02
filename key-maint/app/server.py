@@ -15,7 +15,7 @@ from app.auth import make_guard
 from app.credfile import load_with_warnings, parse_text, set_value
 from app.probes import probe_one_provider, run_probes
 from app.registry import PROVIDERS
-from app.rows import build_rows
+from app.rows import build_rows, build_summary
 
 _CGNAT = ipaddress.ip_network("100.64.0.0/10")
 
@@ -54,6 +54,23 @@ WIDGETS = {
         "gridData": {"w": 30, "h": 14},
         "data": {"dataKey": "rows"},
         # No raw view: it would expose every value the tier returns.
+        "raw": False,
+        "params": [],
+    },
+    # Third view of the same endpoint (Ep. 3). Workspace renders "markdown"
+    # natively, so a dashboard gets a prose panel without another service:
+    # /keys already carries the data, the tier gate, and the auth.
+    "provider_api_keys_summary": {
+        "name": "Provider API Keys (summary)",
+        "description": "Which provider keys are configured, which are missing, "
+        "and which are still on a public demo key.",
+        "category": "Admin",
+        "type": "markdown",
+        "endpoint": "keys",
+        "gridData": {"w": 15, "h": 8},
+        "data": {"dataKey": "summary"},
+        # Same reason as the panel above: tier 3 returns credential values in
+        # the rows this summary is built from, so never offer the raw payload.
         "raw": False,
         "params": [],
     },
@@ -100,7 +117,9 @@ def create_app(role: str, cred_file: str, auth_file: str) -> FastAPI:
         if run_tests and tier >= 2 and values is not None:
             tests = await run_probes(values)
         rows = build_rows(values, tier, tests, malformed=malformed)
-        return JSONResponse({"tier": tier, "rows": rows})
+        return JSONResponse(
+            {"tier": tier, "rows": rows, "summary": build_summary(rows)}
+        )
 
     @app.get("/keys/{env_var}/test")
     async def test_key(env_var: str, request: Request) -> Response:
