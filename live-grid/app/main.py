@@ -17,7 +17,9 @@ from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware import Middleware
 
+from app.auth import BasicAuthMiddleware
 from app.classify import FEEDS, classify
 from app.feeds import FeedManager
 from app.figure import build_figure
@@ -203,6 +205,16 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
         app.add_middleware(CORSMiddleware, allow_private_network=True, **cors_kwargs)
     except TypeError:  # older starlette without PNA support
         app.add_middleware(CORSMiddleware, **cors_kwargs)
+
+    # APPEND, do not add_middleware. Starlette's add_middleware inserts at
+    # index 0 and index 0 is OUTERMOST, so calling it here would put auth
+    # outside CORS. A browser preflight carries no credentials by definition,
+    # so it would get a bare 401 with no Access-Control-Allow-* headers and
+    # every cross-origin caller -- including OpenBB Workspace -- would be
+    # locked out. curl never sends a preflight, so no amount of curl testing
+    # catches it. Appending makes auth INNERMOST, which still covers every
+    # path: middleware wraps the whole app, not a router.
+    app.user_middleware.append(Middleware(BasicAuthMiddleware))
 
     def _seed_client():
         nonlocal seed_client

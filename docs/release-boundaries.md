@@ -39,8 +39,20 @@ as ep 9 / ep 10 / ep 12 respectively.
 
 ## Rules
 
-- **Never retag or delete an existing `vN.*` tag** — restore-episode
-  resolves episodes to tags and pulls the per-version GHCR images.
+- **Episode content is never rewritten on an existing `vN.*` tag** —
+  restore-episode resolves episodes to tags and pulls the per-version GHCR
+  images, and an article's code must stay the code the article describes.
+- **Fundamentals are retrofitted by retag.** Cross-cutting infrastructure
+  (the internal bridge, the CFTC lifespan guard, the serve/funnel config,
+  live-grid auth) is cherry-picked onto every tag where the service exists,
+  the annotated tag is re-pointed with its message preserved, the old
+  commit is kept as `backup/pre-<layer>-vN.M.P`, and the force-push lets
+  `release.yml` rebuild that version's images. Each tag carries only the
+  slice that existed at its episode: serve.json starts with 443 → openbb-api
+  in v1 and gains one handler or Service per episode. This rule was
+  originally written as "never retag"; it was relaxed once the bridge and
+  CFTC layers had already been applied this way and the backups made it
+  safe.
 - Branch `release/vN.M` from the `vN.<M-1>` tag, land only that episode's
   content, and let `release.yml` cut the tag/images from the branch.
 - The `eodhd-fmp-parity` branch is the ep-9 *working* branch but currently

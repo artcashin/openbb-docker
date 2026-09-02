@@ -365,11 +365,11 @@ services:
 
   # key-maint: the transport-tiered "key status" widget backend (Ep. 3).
   # One process, two servers: a network server on loopback :8447 (published by
-  # Serve on :10000 — public ONLY if you funnel it, and it enforces the same
-  # Basic auth as the API) and an admin server on a unix socket whose 0700
-  # host directory is what raises a caller to tier 3 (filesystem access via
-  # SSH — no port, but the same Basic auth still applies: the socket replaces a
-  # second credential, not the first).
+  # Serve on :10000 and as the Tailscale Service svc:openbb-keys — tailnet-only;
+  # the :10000 funnel that once existed was deliberately removed. It enforces
+  # the same Basic auth as the API) and an admin server on a unix socket whose
+  # 0700 host directory IS the tier-3 authorization (filesystem access via
+  # SSH — no port, no header).
   key-maint:
     build: ./key-maint
     image: openbb-key-maint:latest
