@@ -79,3 +79,37 @@ def build_rows(
             for entry in malformed
         )
     return rows
+
+
+def build_summary(rows: list[dict]) -> str:
+    """Key state as markdown, for the summary widget.
+
+    Counts and provider names only, deliberately. Tier-3 rows carry the
+    credential itself in row["value"]; this must never render it, which is
+    also why its widget declares no raw view.
+    """
+    by_status: dict[str, list[str]] = {}
+    for row in rows:
+        by_status.setdefault(str(row.get("status", "unknown")), []).append(
+            str(row.get("provider", "?"))
+        )
+    total = len(rows)
+    n_set = len(by_status.get("set", []))
+    lines = [f"**{n_set} of {total} provider keys configured**", ""]
+    for status, label in (
+        ("missing", "Missing"),
+        ("empty", "Present but empty"),
+        ("unknown", "Unreadable"),
+    ):
+        names = sorted(by_status.get(status, []))
+        if names:
+            lines.append(f"- **{label} ({len(names)}):** {', '.join(names)}")
+    demo = sorted(str(r.get("provider", "?")) for r in rows if r.get("demo"))
+    if demo:
+        lines.append(
+            f"- **Public demo key ({len(demo)}):** {', '.join(demo)}"
+            " -- rate-limited and shared; replace before relying on it."
+        )
+    if n_set == total and not demo:
+        lines.append("- Every provider is configured with a private key.")
+    return "\n".join(lines)

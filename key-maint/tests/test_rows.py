@@ -1,5 +1,5 @@
 from app.probes import TestResult
-from app.rows import build_rows
+from app.rows import build_rows, build_summary
 
 VALUES = {"EODHD_API_KEY": "demo", "FMP_API_KEY": "realkey99", "FRED_API_KEY": ""}
 
@@ -71,3 +71,47 @@ class TestMalformed:
             "demo": False,
         }
         assert "value" not in rows[-1]
+
+
+class TestSummary:
+    def test_never_renders_a_credential_value(self):
+        """The reason this widget declares no raw view.
+
+        At tier 3 build_rows() puts the credential itself in row["value"].
+        The summary is built from those rows, so a careless f-string here
+        would publish every key to any dashboard that adds the widget.
+        """
+        # Distinctive values on purpose. The shared VALUES fixture sets EODHD
+        # to the literal string "demo", which collides with the summary's own
+        # "Public demo key" line and would fail this assertion without a leak.
+        secrets = {
+            "EODHD_API_KEY": "SECRET-eodhd-a1b2c3",
+            "FMP_API_KEY": "SECRET-fmp-d4e5f6",
+        }
+        rows = build_rows(secrets, tier=3, tests=None)
+        assert any("value" in r for r in rows), "tier 3 should carry values"
+        summary = build_summary(rows)
+        for secret in secrets.values():
+            assert secret not in summary
+
+    def test_counts_and_names_the_missing(self):
+        summary = build_summary(build_rows(VALUES, tier=1, tests=None))
+        assert "Missing" in summary
+        # FRED is present but blank -- that is "empty", not "missing".
+        assert "Present but empty" in summary
+
+    def test_flags_a_public_demo_key(self):
+        summary = build_summary(build_rows(VALUES, tier=1, tests=None))
+        assert "Public demo key" in summary
+
+    def test_unreadable_credentials_file_is_reported(self):
+        summary = build_summary(build_rows(None, tier=1, tests=None))
+        assert "Unreadable" in summary
+
+    def test_all_private_keys_says_so(self):
+        from app.registry import PROVIDERS
+
+        every = {var: "private-value" for var in PROVIDERS}
+        summary = build_summary(build_rows(every, tier=1, tests=None))
+        assert "Every provider is configured" in summary
+        assert "private-value" not in summary
