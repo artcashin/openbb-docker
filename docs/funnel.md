@@ -58,6 +58,30 @@ docker compose up -d --force-recreate tailscale
 Only port 443 is funneled. Anything else the node ever serves stays
 tailnet-only.
 
+## The serve config is applied wholesale
+
+`serve.json` is the only durable serve state this node has. Two things
+about it are load-bearing, and both were learned the hard way.
+
+- **Every apply replaces the node's entire serve state.** containerboot
+  re-applies the file at startup and on every edit, with no merge. Anything
+  configured with the `tailscale serve` / `tailscale advertise` CLI that is
+  not in the file is silently erased at that moment. The Tailscale Services
+  in the `Services` section were first set up by CLI on the host; the next
+  apply wiped them and their hostnames went dark until they were written
+  into this file. That is why `Services` lives here, and why the rule is:
+  nothing by CLI, everything in `serve.json`.
+- **Service hostnames are literal.** `${TS_CERT_DOMAIN}` expands to the
+  node's own name, so it cannot express a Service's hostname. Replace
+  `openbb-api.<your-tailnet>.ts.net` (and the others) with your real
+  tailnet name before deploying. Services also need admin-side setup — a
+  tagged node, the service defined and approved in the admin console; until
+  then the `${TS_CERT_DOMAIN}` handlers keep working on their own.
+
+Edits live-apply with no restart, but a malformed file kills the sidecar.
+Write to `serve.json.new`, run `jq empty` on it, then `mv` it over
+`serve.json`.
+
 ## 4. Verify from OFF the tailnet
 
 From a device that is not on your tailnet (a phone on cellular works). As in
