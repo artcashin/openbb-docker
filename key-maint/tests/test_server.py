@@ -355,3 +355,25 @@ class TestPanelWidget:
         assert body["provider_api_keys_panel"]["endpoint"] == "keys"
         # Raw view would be a one-click path to every value the tier exposes.
         assert body["provider_api_keys_panel"].get("raw") is False
+
+
+class TestMarkdownSummaryWidget:
+    def test_widgets_json_declares_it_as_markdown_on_the_keys_endpoint(self, files):
+        w = client(files, "network").get("/widgets.json", headers=AUTH).json()
+        widget = w["provider_api_keys_summary"]
+        assert widget["type"] == "markdown"
+        # Third view of an endpoint that already exists -- no new route, and it
+        # inherits /keys' auth and tier gate.
+        assert widget["endpoint"] == "keys"
+        assert widget["data"]["dataKey"] == "summary"
+
+    def test_it_offers_no_raw_view(self, files):
+        w = client(files, "network").get("/widgets.json", headers=AUTH).json()
+        # tier 3 returns credential values in the rows this summary is built
+        # from; a raw view would hand them to any dashboard.
+        assert w["provider_api_keys_summary"]["raw"] is False
+
+    def test_keys_response_carries_the_summary_the_widget_reads(self, files):
+        body = client(files, "admin").get("/keys", headers=AUTH).json()
+        assert isinstance(body["summary"], str) and body["summary"]
+        assert "provider keys configured" in body["summary"]
