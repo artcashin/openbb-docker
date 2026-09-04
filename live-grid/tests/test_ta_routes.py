@@ -196,6 +196,47 @@ def test_ta_series_ws_and_ta_chart_ws_agree_on_values(monkeypatch):
     assert from_series == from_figure
 
 
+def test_ta_series_ws_annotation_change_forces_a_series_not_a_delta(monkeypatch):
+    """Marks live only on a `series` push -- a delta carries no `marks` key.
+    Without watching them, an EODHD fetch that starts failing mid-stream
+    would leave a client showing stale marks indefinitely (the /ta_chart_ws
+    equivalent of this is test_a_degradation_appearing_mid_stream_forces_a_
+    figure_not_a_delta, reused here: same growing-bars/flaky-fetch trick to
+    force an EODHD cache miss on push 2)."""
+    from app.ta.sources import EodhdSource
+
+    def bar(day):
+        return {"date": f"2024-01-{day:02d}", "open": 1.0, "high": 2.0,
+                "low": 0.5, "close": 1.5, "adjusted_close": 1.5, "volume": 10}
+
+    pushes = []
+
+    async def fake_series(*args, **kwargs):
+        # A new closed bar each push: that is what re-opens the EODHD cache key.
+        pushes.append(1)
+        return [bar(d) for d in range(2, 6 + len(pushes))], None
+
+    fetches = []
+
+    async def flaky(self, query):
+        fetches.append(query)
+        if len(fetches) == 1:
+            return [{"date": f"2024-01-{d:02d}", "sma": 1.0} for d in range(2, 8)]
+        raise RuntimeError("503 Service Unavailable")
+
+    monkeypatch.setattr("app.main.build_series", fake_series)
+    monkeypatch.setattr(EodhdSource, "_http_fetch", flaky)
+    monkeypatch.setenv("TA_PUSH_INTERVAL_MS", "0")
+
+    url = "/ta_series_ws?symbol=AAPL&source=eodhd&indicators=sma:period=3"
+    with client().websocket_connect(url) as ws:
+        first, second = ws.receive_json(), ws.receive_json()
+
+    assert first["type"] == "series"
+    assert second["type"] == "series", "an annotation change must not arrive as a delta"
+    assert second["marks"], "the failed EODHD fetch should have produced a mark"
+
+
 def test_ta_series_ws_closes_on_an_unknown_macro():
     with pytest.raises(WebSocketDisconnect):
         with client().websocket_connect("/ta_series_ws?symbol=AAPL&macro=nope") as ws:

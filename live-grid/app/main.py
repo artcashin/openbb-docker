@@ -457,6 +457,7 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
         )
         interval_s = float(os.getenv("TA_PUSH_INTERVAL_MS", "1000")) / 1000.0
         previous: list[str] = []
+        previous_marks: tuple[str, ...] = ()
         rev = 0
         try:
             while True:
@@ -483,10 +484,17 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
                 if bars_error is not None:
                     subtitle += f"  ·  bars unavailable: {bars_error}"
                 dates = [str(d) for d in frame["date"].to_list()] if frame.height else []
+                # `marks` lives only on a `series` push -- `series_delta` carries
+                # no marks key -- so a change in the annotation set (e.g. an
+                # EODHD fetch starting to fail mid-stream) must force a full
+                # push too, the same way it does in ta_chart_ws's title.
+                marks = tuple(sorted({a.column for a in annotations}))
                 # A full push whenever a delta could not carry the truth: the
-                # first frame, a repainting indicator, and any error state --
-                # the subtitle only travels on a full push.
-                if rev == 0 or any_repaints(panes) or bars_error is not None:
+                # first frame, a repainting indicator, any error state, and a
+                # changed mark set -- the subtitle and marks only travel on a
+                # full push.
+                if (rev == 0 or any_repaints(panes) or bars_error is not None
+                        or marks != previous_marks):
                     payload = build_series_payload(
                         frame, panes, params.symbol, subtitle, annotations
                     )
@@ -494,7 +502,7 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
                 else:
                     payload = series_delta(frame, panes, revised_from(previous, dates))
                     await ws.send_json({"type": "delta", "rev": rev, **payload})
-                previous, rev = dates, rev + 1
+                previous, previous_marks, rev = dates, marks, rev + 1
                 elapsed = asyncio.get_running_loop().time() - started
                 await asyncio.sleep(max(0.0, interval_s - elapsed))
         except WebSocketDisconnect:
