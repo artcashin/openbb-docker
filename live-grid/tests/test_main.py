@@ -366,6 +366,26 @@ def test_the_range_bars_flanking_columns_hug_their_bar():
     assert defs["week52_high"]["align"] == "left"
 
 
+def test_each_range_bar_reads_as_low_label_high():
+    """The three columns of a range read as one group -- `Low  Day  High` and
+    `Low  52 week  High` -- so the flanking numbers are named by the bar
+    between them rather than repeating its name twice on either side.
+
+    Duplicate header text across the two groups is deliberate and safe:
+    headerName is display only (the client builds its header string from it
+    and falls back to `field`), and columns are keyed by `field` throughout.
+    """
+    body = make_client().get("/widgets.json").json()
+    names = {c["field"]: c.get("headerName")
+             for c in body["live_grid"]["data"]["table"]["columnsDefs"]}
+    assert [names["day_low"], names["day_range"], names["day_high"]] == [
+        "Low", "Day", "High"
+    ]
+    assert [names["week52_low"], names["week52_range"], names["week52_high"]] == [
+        "Low", "52 week", "High"
+    ]
+
+
 def test_the_money_columns_opt_out_of_abbreviation():
     """"80.7411K" is not a price -- it hides which dollar BTC is trading at.
     Volume keeps the default: there the magnitude is the point."""
