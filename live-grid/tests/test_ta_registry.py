@@ -84,8 +84,8 @@ def test_rsi_carries_thirty_seventy_guides():
     assert get("rsi").guides == [30.0, 70.0]
 
 
-def test_tier_one_is_twenty_three_indicators_with_twelve_eodhd_maps():
-    assert len(REGISTRY) == 23, sorted(REGISTRY)  # 22 tier-1 + avwap
+def test_registry_is_twenty_five_indicators_with_twelve_eodhd_maps():
+    assert len(REGISTRY) == 25, sorted(REGISTRY)  # 22 tier-1 + avwap + hma + trix
     mapped = [n for n, i in REGISTRY.items() if i.eodhd is not None]
     assert len(mapped) == 12, sorted(mapped)  # cci is local-only (see registry)
 
