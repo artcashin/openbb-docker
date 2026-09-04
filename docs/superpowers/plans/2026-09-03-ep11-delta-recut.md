@@ -1179,3 +1179,73 @@ bash scripts/scrub-check.sh
 git add stores-explorer/ && git commit -m "feat(stores-explorer): publish the Ep. 11 example dashboard as apps.json"
 git tag v11.3.0
 ```
+
+---
+
+## Task 7 result, and the bug the unit tests could not find
+
+Steps 1–6 done: compose comments and env pointers on `DELTA_*`, `obb-arctic`
+renamed to `obb-delta`, `obb-up` corrected, the release workflow's arch gate
+removed, and every remaining ArcticDB mention in the tree is now deliberate
+history (why `describe.py` exists, why `read_trailing` exists, the README's
+"Why Delta Lake, not ArcticDB", and the upgrade notes).
+
+Two fixes worth naming:
+
+- **`obb-delta` passes its library as `DELTA_LIBRARY_ARG`, not `DELTA_LIBRARY`.**
+  The script always sets the variable, so reusing the real config name would
+  inject an empty `DELTA_LIBRARY` into the container and override the
+  configured library rather than defaulting it.
+- **Both host scripts pointed at a `credentials.env` S3 block that does not
+  exist** in `credentials.env.example`. `DELTA_S3_*` lives in `minio.env`.
+
+The arch gate was removed only after checking PyPI: pykx 4.1.0 publishes
+`manylinux2014_aarch64` and `manylinux_2_28_aarch64`, deltalake 1.6.3
+publishes `manylinux_2_28_aarch64`. ArcticDB really was the sole blocker.
+
+### The live walk found a real bug
+
+531 unit tests passed against tmp-path Delta tables. The first run against a
+real MinIO failed immediately:
+
+```
+pyarrow.lib.ArrowInvalid: Expected a local filesystem path, got a URI:
+  's3://openbb/ticks/AAPL/part-00000-....snappy.parquet'
+```
+
+`read_trailing` built its paths from `self._path()`, which returns an
+`s3://` URI on a MinIO-backed store. `pyarrow.dataset` accepts that shape
+only with an explicit `filesystem=`; on a local path it works, so **no
+tmp-path test could ever have caught it** — and the only configuration that
+matters in production is the one that failed. Fixed by routing through
+`fs_and_root`, the same handle `list_symbols`/`delete` already use, and
+pinned by `test_trailing_read_passes_a_filesystem_not_a_uri`, which asserts a
+filesystem is passed and no path carries a scheme.
+
+**Rule:** a store abstraction that works on both local and S3 paths must be
+exercised against S3 before it is believed. Local-path tests verify the logic,
+never the addressing.
+
+### Verified live against MinIO
+
+Throwaway container on 127.0.0.1:19000, isolated from the running stack:
+
+| Check | Result |
+|---|---|
+| `DeltaStore` writes to MinIO | base `s3://openbb`, credentials as storage_options |
+| `describe` from the log | `row_count=300`, correct date range, zero rows read |
+| `list_libraries` prefix scan over S3 | `['quotes', 'ticks']` |
+| Time travel | 4 versions; `as_of=0` returns superseded data |
+| Bounded tail | touched **1 file**, returned 10 rows |
+| EODHD L2 cache round-trip | persists through MinIO |
+| **Cold start after a cache write** | **ZERO EODHD calls** — the quota claim, proven |
+| Cache retention | 4 refreshes → history of **1 version** |
+
+### Step 7 (retagging) NOT done — deliberately
+
+`v11.0.0`, `v11.1.0` and `v11.1.1` are all pushed to `origin`, so moving them
+is a force-push of published tags. Three reasons to leave it to the operator:
+the work is on an unmerged branch, so tags would point outside `main`; the
+repo has a `backup/pre-<change>-v11.x` convention that says backup tags are
+taken before release tags move; and a re-cut should be tagged after it has run
+in the real stack, not before.

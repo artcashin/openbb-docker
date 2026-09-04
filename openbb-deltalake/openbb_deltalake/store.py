@@ -228,6 +228,7 @@ class DeltaStore:
         import pyarrow.dataset as ds
 
         from openbb_deltalake.describe import trailing_fragment_paths
+        from openbb_deltalake.utils import fs_and_root
 
         if as_of is not None:
             return self.read(key, as_of=as_of, output="dataframe").tail(n_rows)
@@ -236,9 +237,16 @@ class DeltaStore:
         if not paths:
             return self.read(key, output="dataframe").tail(n_rows)
 
-        base = self._path(key).rstrip("/")
+        # An explicit filesystem, not a URI. pyarrow.dataset refuses an
+        # "s3://..." path outright ("Expected a local filesystem path, got a
+        # URI"), so passing self._path() through worked on a local tmp store
+        # and failed on MinIO -- which is the only configuration that matters
+        # in production. fs_and_root gives the handle and the scheme-less root
+        # that list_symbols/delete already use.
+        fsys, root = fs_and_root(self.base, self.storage_options)
+        prefix = f"{root.rstrip('/')}/{self.library}/{key}"
         frame = ds.dataset(
-            [f"{base}/{p}" for p in paths], format="parquet"
+            [f"{prefix}/{p}" for p in paths], format="parquet", filesystem=fsys
         ).to_table().to_pandas()
         if "date" in frame.columns:
             frame = frame.sort_values("date").set_index("date")

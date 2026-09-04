@@ -62,3 +62,28 @@ def test_trailing_fragments_do_not_cover_the_whole_table(tmp_path):
     store = DeltaStore(uri=str(tmp_path), library="ticks")
     picked = D.trailing_fragment_paths(store, "AAPL", n_rows=50)
     assert len(picked) == 1, "50 rows must not need all five files"
+
+
+def test_trailing_read_passes_a_filesystem_not_a_uri(store, monkeypatch):
+    """Regression: pyarrow.dataset refuses an "s3://..." path.
+
+    Building paths from `self._path()` worked against a local tmp store and
+    failed against MinIO with "Expected a local filesystem path, got a URI" --
+    a bug no tmp-path test could see. read_trailing must therefore hand
+    pyarrow an explicit filesystem plus scheme-less paths.
+    """
+    import pyarrow.dataset as ds
+
+    seen = {}
+    real = ds.dataset
+
+    def spy(paths, **kw):
+        seen["paths"] = paths
+        seen["filesystem"] = kw.get("filesystem")
+        return real(paths, **kw)
+
+    monkeypatch.setattr(ds, "dataset", spy)
+    store.read_trailing("AAPL", n_rows=10)
+
+    assert seen["filesystem"] is not None, "read_trailing must pass a filesystem"
+    assert not any(str(p).startswith(("s3://", "file://")) for p in seen["paths"]), seen["paths"]
