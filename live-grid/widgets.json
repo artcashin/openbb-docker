@@ -63,7 +63,8 @@
      {
       "field": "day_low",
       "headerName": "Day Low",
-      "enableCellChangeWs": false
+      "enableCellChangeWs": false,
+      "align": "right"
      },
      {
       "field": "day_range",
@@ -81,12 +82,14 @@
      {
       "field": "day_high",
       "headerName": "Day High",
-      "enableCellChangeWs": false
+      "enableCellChangeWs": false,
+      "align": "left"
      },
      {
       "field": "week52_low",
       "headerName": "52w Low",
-      "enableCellChangeWs": false
+      "enableCellChangeWs": false,
+      "align": "right"
      },
      {
       "field": "week52_range",
@@ -104,7 +107,8 @@
      {
       "field": "week52_high",
       "headerName": "52w High",
-      "enableCellChangeWs": false
+      "enableCellChangeWs": false,
+      "align": "left"
      },
      {
       "field": "volume",

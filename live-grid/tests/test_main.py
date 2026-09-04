@@ -290,3 +290,15 @@ def test_websocket_registers_params_and_streams_dirty_rows(monkeypatch):
             if row["price"] == 151.0:
                 break
         assert row is not None and row["price"] == 151.0
+
+
+def test_the_range_bars_flanking_columns_hug_their_bar():
+    """A low right-aligned and a high left-aligned put both numbers against
+    the bar they describe, rather than at opposite ends of the row with the
+    bar stranded between them."""
+    body = make_client().get("/widgets.json").json()
+    defs = {c["field"]: c for c in body["live_grid"]["data"]["table"]["columnsDefs"]}
+    assert defs["day_low"]["align"] == "right"
+    assert defs["day_high"]["align"] == "left"
+    assert defs["week52_low"]["align"] == "right"
+    assert defs["week52_high"]["align"] == "left"
