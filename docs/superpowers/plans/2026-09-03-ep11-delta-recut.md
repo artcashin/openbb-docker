@@ -1047,6 +1047,19 @@ any fallback to a full read fails the test rather than merely being slower.
 
 ---
 
+### Task 7's widgets.json rename moved into Task 5
+
+`stores-explorer`'s own tests assert the widget contract, so the
+`arctic_explorer` → `delta_explorer` rename had to land with the routes rather
+than a task later — Task 5 cannot be green while `widgets.json` still names the
+old widget. Task 7 keeps the compose/env changes and the retagging.
+
+The `/apps.json` route is deliberately NOT added yet: it reads a file Task 8
+writes, and a route serving a missing file is a 500 waiting to happen. Route
+and file land together in Task 8.
+
+---
+
 ### Task 8: The Example Dashboard (`v11.3.0`)
 
 Added after Tasks 1–2 landed. bdobb-v2 already fetches `apps.json` from every

@@ -1,4 +1,4 @@
-# stores-explorer: read-only widget backend browsing the shared ArcticDB/kdb+
+# stores-explorer: read-only widget backend browsing the shared Delta Lake/kdb+
 # store (Ep. 11) -- the widget's door into the vault, pairing with
 # stores-mcp (the analyst's door). Loopback-only; Tailscale Serve publishes
 # it (see repo compose).
@@ -11,7 +11,7 @@ FROM python:3.12-slim
 ENV PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1
 WORKDIR /srv
 
-# mcp_stores's discovery functions (arctic_list_libraries, arctic_read,
+# mcp_stores's discovery functions (delta_list_libraries, delta_read,
 # kdb_select, ...) -- installed before stores-explorer itself, since
 # stores-explorer's own pyproject.toml depends on it and it is not
 # published to PyPI. Installs as a bare top-level `server` module (its
