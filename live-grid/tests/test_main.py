@@ -72,7 +72,8 @@ def test_widgets_json_declares_the_live_grid_contract():
     assert w["wsEndpoint"] == "live_grid_ws"
     assert w["data"]["wsRowIdColumn"] == "symbol"
     fields = [c["field"] for c in w["data"]["table"]["columnsDefs"]]
-    assert fields[0] == "symbol"
+    # The logo leads, then the symbol it belongs to.
+    assert fields[:2] == ["logo_url", "symbol"]
     # snapshot-only column must never update over the socket
     vol = next(c for c in w["data"]["table"]["columnsDefs"] if c["field"] == "volume")
     assert vol["enableCellChangeWs"] is False
@@ -92,11 +93,18 @@ def test_widgets_json_declares_the_live_chart_contract():
     ]
 
 
-def test_live_grid_declares_the_six_visible_columns_and_hides_the_rest(monkeypatch):
+def test_live_grid_declares_its_visible_columns_and_hides_the_rest(monkeypatch):
     body = make_client().get("/widgets.json").json()
     cols = body["live_grid"]["data"]["table"]["columnsDefs"]
     visible = [c["field"] for c in cols if not c.get("hide")]
-    assert visible == ["symbol", "price", "change", "day_range", "week52_range", "volume"]
+    # Each range bar is flanked by its own low and high, so the numbers line
+    # up down the grid and sort -- the bar itself labels nothing.
+    assert visible == [
+        "logo_url", "symbol", "price", "change",
+        "day_low", "day_range", "day_high",
+        "week52_low", "week52_range", "week52_high",
+        "volume",
+    ]
     hidden = {c["field"]: c for c in cols if c.get("hide")}
     assert all(c["hide"] is True for c in hidden.values())
 
@@ -118,12 +126,17 @@ def test_live_grid_declares_the_six_visible_columns_and_hides_the_rest(monkeypat
         )
 
 
-def test_the_symbol_column_declares_the_logo_render_fn():
+def test_the_logo_is_its_own_column_carrying_the_url_as_its_value():
     body = make_client().get("/widgets.json").json()
     cols = body["live_grid"]["data"]["table"]["columnsDefs"]
+    (logo,) = [c for c in cols if c["field"] == "logo_url"]
+    assert "logo" in logo["renderFn"]
+    # No urlKey: the column's own value IS the URL, so pointing at a second
+    # field would be indirection with nothing on the other end of it.
+    assert "urlKey" not in logo.get("renderFnParams", {})
+    # And the symbol column beside it stays plain text.
     (sym,) = [c for c in cols if c["field"] == "symbol"]
-    assert "logo" in sym["renderFn"]
-    assert sym["renderFnParams"]["urlKey"] == "logo_url"
+    assert "logo" not in sym.get("renderFn", [])
 
 
 def test_both_range_bars_use_one_render_fn_differing_only_in_params():
@@ -131,8 +144,15 @@ def test_both_range_bars_use_one_render_fn_differing_only_in_params():
     defs = {c["field"]: c for c in body["live_grid"]["data"]["table"]["columnsDefs"]}
     day, week = defs["day_range"], defs["week52_range"]
     assert day["renderFn"] == week["renderFn"] == ["rangeBar"]
-    assert day["renderFnParams"] == {"lowKey": "day_low", "highKey": "day_high"}
-    assert week["renderFnParams"] == {"lowKey": "week52_low", "highKey": "week52_high"}
+    assert day["renderFnParams"] == {
+        "lowKey": "day_low", "highKey": "day_high", "palette": "day",
+    }
+    assert week["renderFnParams"] == {
+        "lowKey": "week52_low", "highKey": "week52_high", "palette": "week52",
+    }
+    # The palettes MUST differ: the two bars sit side by side in one row, and
+    # identical colours read as one repeated column rather than two bands.
+    assert day["renderFnParams"]["palette"] != week["renderFnParams"]["palette"]
 
 
 def test_the_bars_and_volume_opt_out_of_the_change_flash():
