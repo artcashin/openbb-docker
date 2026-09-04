@@ -32,14 +32,15 @@
       "renderFn": [
        "logo"
       ],
-      "width": 40,
+      "width": 44,
       "enableCellChangeWs": false,
       "pinned": "left"
      },
      {
       "field": "symbol",
       "headerName": "Symbol",
-      "pinned": "left"
+      "pinned": "left",
+      "width": 84
      },
      {
       "field": "price",
@@ -51,7 +52,8 @@
        "colorValueKey": "change"
       },
       "align": "right",
-      "abbreviate": false
+      "abbreviate": false,
+      "width": 104
      },
      {
       "field": "change",
@@ -60,7 +62,8 @@
        "greenRed"
       ],
       "align": "right",
-      "abbreviate": false
+      "abbreviate": false,
+      "width": 96
      },
      {
       "field": "change_percent",
@@ -69,14 +72,16 @@
        "greenRed"
       ],
       "formatterFn": "normalizedPercent",
-      "align": "right"
+      "align": "right",
+      "width": 92
      },
      {
       "field": "day_low",
       "headerName": "Day Low",
       "enableCellChangeWs": false,
       "align": "right",
-      "abbreviate": false
+      "abbreviate": false,
+      "width": 100
      },
      {
       "field": "day_range",
@@ -90,21 +95,24 @@
        "palette": "day",
        "valueKey": "price"
       },
-      "enableCellChangeWs": false
+      "enableCellChangeWs": false,
+      "width": 116
      },
      {
       "field": "day_high",
       "headerName": "Day High",
       "enableCellChangeWs": false,
       "align": "left",
-      "abbreviate": false
+      "abbreviate": false,
+      "width": 100
      },
      {
       "field": "week52_low",
       "headerName": "52w Low",
       "enableCellChangeWs": false,
       "align": "right",
-      "abbreviate": false
+      "abbreviate": false,
+      "width": 100
      },
      {
       "field": "week52_range",
@@ -118,44 +126,52 @@
        "palette": "week52",
        "valueKey": "price"
       },
-      "enableCellChangeWs": false
+      "enableCellChangeWs": false,
+      "width": 116
      },
      {
       "field": "week52_high",
       "headerName": "52w High",
       "enableCellChangeWs": false,
       "align": "left",
-      "abbreviate": false
+      "abbreviate": false,
+      "width": 100
      },
      {
       "field": "volume",
       "headerName": "Volume",
-      "enableCellChangeWs": false
+      "enableCellChangeWs": false,
+      "width": 104
      },
      {
       "field": "bid",
       "headerName": "Bid",
-      "hide": true
+      "hide": true,
+      "width": 100
      },
      {
       "field": "ask",
       "headerName": "Ask",
-      "hide": true
+      "hide": true,
+      "width": 100
      },
      {
       "field": "last_size",
       "headerName": "Last Size",
-      "hide": true
+      "hide": true,
+      "width": 100
      },
      {
       "field": "updated_at",
       "headerName": "Updated",
-      "hide": true
+      "hide": true,
+      "width": 100
      },
      {
       "field": "day_open",
       "headerName": "Open",
-      "hide": true
+      "hide": true,
+      "width": 100
      }
     ]
    }
