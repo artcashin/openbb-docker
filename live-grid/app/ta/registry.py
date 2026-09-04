@@ -9,6 +9,7 @@ indicator that is silently wrong somewhere.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -254,6 +255,66 @@ register(Indicator(
     render={"wma": _line("#56b6c2")},
     eodhd=EodhdMap("wma", {"period": "period"}, {"wma": "wma"}, "adjusted",
                    "EODHD wma is adjusted close."),
+))
+
+# --- Hull moving average ----------------------------------------------------
+
+
+def _wma_expr(expr: pl.Expr, length: int) -> pl.Expr:
+    # rolling_mean(weights=...) panics on any null in the array (not just the
+    # window) as of polars 1.44 -- fine for a raw price column, not for a
+    # nested WMA-of-WMA input that is null through its own warmup. Fill nulls
+    # so it doesn't panic, then null the result wherever the window itself
+    # wasn't fully covered by real values -- identical output to a direct
+    # weighted rolling_mean whenever the input has no nulls.
+    weights = [float(i) for i in range(1, length + 1)]
+    weighted = expr.fill_null(0.0).rolling_mean(length, weights=weights)
+    enough = expr.is_not_null().cast(pl.Int32).rolling_sum(length) == length
+    return pl.when(enough).then(weighted).otherwise(None)
+
+
+def _hma_build(p: dict, b: dict[str, Base]) -> list[pl.Expr]:
+    n = p["period"]
+    price = pl.col(price_col("adjusted"))
+    raw = 2 * _wma_expr(price, max(round(n / 2), 1)) - _wma_expr(price, n)
+    return [_wma_expr(raw, max(round(math.sqrt(n)), 1)).alias("hma")]
+
+
+register(Indicator(
+    name="hma", label="Hull Moving Average", params={"period": 9}, pane="price",
+    price_basis="adjusted",
+    convention=(
+        "WMA(2*WMA(adj_close, round(n/2)) - WMA(adj_close, n), round(sqrt(n))). "
+        "Both derived lengths are rounded to nearest, not truncated."
+    ),
+    deps=lambda p: [],  # a rolling mean OF a rolling mean is not a flat Base
+    build=_hma_build,
+    render={"hma": _line("#56b6c2")},
+    # No eodhd map: no Hull Moving Average function on EODHD's endpoint.
+))
+
+# --- TRIX --------------------------------------------------------------------
+
+
+def _trix_build(p: dict, b: dict[str, Base]) -> list[pl.Expr]:
+    alpha = 2 / (p["period"] + 1)  # matches the plain `ema` indicator
+    smoothed = pl.col(price_col("adjusted"))
+    for _ in range(3):
+        smoothed = smoothed.ewm_mean(alpha=alpha, adjust=False, ignore_nulls=True)
+    return [(100 * smoothed.pct_change(1)).alias("trix")]
+
+
+register(Indicator(
+    name="trix", label="TRIX", params={"period": 18}, pane="own",
+    price_basis="adjusted", guides=[0.0],
+    convention=(
+        "1-bar percent change of a triple EMA(period) on adjusted close, "
+        "alpha = 2/(period+1) matching the plain `ema` indicator."
+    ),
+    deps=lambda p: [],  # EMA-of-EMA-of-EMA is not a flat Base
+    build=_trix_build,
+    render={"trix": _line("#c678dd")},
+    # No eodhd map: no TRIX function on EODHD's endpoint.
 ))
 
 # --- Keltner channels -------------------------------------------------------
