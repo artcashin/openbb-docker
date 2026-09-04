@@ -813,7 +813,9 @@ register(Indicator(
     convention=(
         "Weighted blend of buying-pressure / true-range sum-ratios at three "
         "windows, weights 4:2:1, divisor 7. BP = close - min(low, prior close). "
-        "Ratio of sums, not mean of ratios."
+        "Ratio of sums, not mean of ratios. fill_nan(None) suffices here: "
+        "TR_t == 0 forces close_t == close_{t-1}, which forces buying_t == 0 "
+        "too, so a zero-TR window is always 0/0 (NaN), never x/0."
     ),
     deps=lambda p: [Base("tr", "raw", 0)],
     build=_uo_build,
@@ -829,8 +831,12 @@ def _vortex_build(p: dict, b: dict[str, Base]) -> list[pl.Expr]:
     total = pl.col("tr:raw:0").rolling_sum(n)
     up = (pl.col("high") - pl.col("low").shift(1)).abs().rolling_sum(n)
     down = (pl.col("low") - pl.col("high").shift(1)).abs().rolling_sum(n)
-    return [(up / total).fill_nan(None).alias("vi_plus"),
-            (down / total).fill_nan(None).alias("vi_minus")]
+    # up/down read the PRIOR bar's low/high, not the prior close, so a window
+    # with zero summed true range can still have a nonzero numerator here --
+    # unlike uo and chop, x/0 with x != 0 is +inf, which fill_nan cannot
+    # catch. Guard the denominator directly, like chop does.
+    return [pl.when(total > 0).then(up / total).otherwise(None).alias("vi_plus"),
+            pl.when(total > 0).then(down / total).otherwise(None).alias("vi_minus")]
 
 
 register(Indicator(
@@ -865,7 +871,9 @@ register(Indicator(
     convention=(
         "100 * log10(sum(TR, n) / (highest high - lowest low)) / log10(n) on "
         "raw OHLC. A range/trendiness gauge, not a directional one -- high is "
-        "choppy, low is trending."
+        "choppy, low is trending. span == 0 forces every in-window bar to the "
+        "same price, so span > 0 implies the summed true range is too -- the "
+        "`span > 0` guard fully closes the divide-by-zero case."
     ),
     deps=lambda p: [Base("tr", "raw", 0), Base("max", "high", p["period"]),
                     Base("min", "low", p["period"])],

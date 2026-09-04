@@ -261,3 +261,30 @@ def test_chop_produces_real_numbers_not_nan():
 def test_the_tr_family_declares_no_eodhd_map():
     for name in ("uo", "vortex", "chop"):
         assert REGISTRY[name].eodhd is None, name
+
+
+def test_vortex_nulls_a_zero_true_range_window_rather_than_dividing_by_zero():
+    """up/down read the PRIOR bar's low/high, not the prior close, so a
+    window can have a nonzero numerator over a zero-TR denominator: one
+    normal bar followed by `period` bars pinned flat at its own close. Every
+    in-window bar has TR == 0 (each is O=H=L=C equal to the prior bar's
+    close), but the window's first up/down term reads back across the
+    boundary to the normal bar's low/high, so the numerator is 5, not 0.
+    x/0 with x != 0 is +inf in polars, not NaN -- fill_nan cannot catch it,
+    so this must be a real None, not merely "not NaN" (inf would pass that)."""
+    n = 14
+    dates = [f"2026-01-{d:02d}" for d in range(1, n + 2)]
+    flat = 100.0
+    df = pl.DataFrame({
+        "date": dates,
+        "open": [100.0] + [flat] * n,
+        "high": [105.0] + [flat] * n,
+        "low": [95.0] + [flat] * n,
+        "close": [100.0] + [flat] * n,
+        "adj_close": [100.0] + [flat] * n,
+        "volume": [100.0] * (n + 1),
+        "vwap": [100.0] + [flat] * n,
+    }).with_columns(pl.col("date").str.to_date())
+    out = compute(df, [resolve("vortex", period=n)])
+    assert out[col("vortex", "vi_plus", period=n)][-1] is None
+    assert out[col("vortex", "vi_minus", period=n)][-1] is None
