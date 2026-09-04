@@ -789,3 +789,87 @@ register(Indicator(
     render={"cmf": _line("#61afef")},
     # No eodhd map: no Chaikin Money Flow function on EODHD's endpoint.
 ))
+
+# --- Ultimate oscillator ----------------------------------------------------
+
+
+def _uo_build(p: dict, b: dict[str, Base]) -> list[pl.Expr]:
+    buying = pl.col("close") - pl.min_horizontal(pl.col("low"), pl.col("close").shift(1))
+    true_range = pl.col("tr:raw:0")
+
+    def ratio(n: int) -> pl.Expr:
+        # Ratio of sums, NOT mean of ratios: the two agree only when true
+        # range is constant, and it never is.
+        return buying.rolling_sum(n) / true_range.rolling_sum(n)
+
+    blended = 100 * (4 * ratio(p["fast"]) + 2 * ratio(p["mid"]) + ratio(p["slow"])) / 7
+    return [blended.fill_nan(None).alias("uo")]
+
+
+register(Indicator(
+    name="uo", label="Ultimate Oscillator",
+    params={"fast": 7, "mid": 14, "slow": 28}, pane="own",
+    price_basis="raw", guides=[30.0, 70.0],
+    convention=(
+        "Weighted blend of buying-pressure / true-range sum-ratios at three "
+        "windows, weights 4:2:1, divisor 7. BP = close - min(low, prior close). "
+        "Ratio of sums, not mean of ratios."
+    ),
+    deps=lambda p: [Base("tr", "raw", 0)],
+    build=_uo_build,
+    render={"uo": _line("#e5c07b")},
+    # No eodhd map: no Ultimate Oscillator function on EODHD's endpoint.
+))
+
+# --- Vortex indicator -------------------------------------------------------
+
+
+def _vortex_build(p: dict, b: dict[str, Base]) -> list[pl.Expr]:
+    n = p["period"]
+    total = pl.col("tr:raw:0").rolling_sum(n)
+    up = (pl.col("high") - pl.col("low").shift(1)).abs().rolling_sum(n)
+    down = (pl.col("low") - pl.col("high").shift(1)).abs().rolling_sum(n)
+    return [(up / total).fill_nan(None).alias("vi_plus"),
+            (down / total).fill_nan(None).alias("vi_minus")]
+
+
+register(Indicator(
+    name="vortex", label="Vortex Indicator", params={"period": 14}, pane="own",
+    price_basis="raw",
+    convention=(
+        "VM+ = |high - prior low|, VM- = |low - prior high|, each summed over "
+        "`period` bars and divided by summed true range. The tr base is "
+        "period-independent, keyed tr:raw:0."
+    ),
+    deps=lambda p: [Base("tr", "raw", 0)],
+    build=_vortex_build,
+    render={"vi_plus": _line("#98c379"), "vi_minus": _line("#e06c75")},
+    # No eodhd map: no Vortex Indicator function on EODHD's endpoint.
+))
+
+# --- Choppiness index -------------------------------------------------------
+
+
+def _chop_build(p: dict, b: dict[str, Base]) -> list[pl.Expr]:
+    n = p["period"]
+    span = pl.col(f"max:high:{n}") - pl.col(f"min:low:{n}")
+    ratio = pl.col("tr:raw:0").rolling_sum(n) / span
+    return [pl.when(span > 0)
+              .then(100 * ratio.log(base=10) / math.log10(n))
+              .otherwise(None).alias("chop")]
+
+
+register(Indicator(
+    name="chop", label="Choppiness Index", params={"period": 14}, pane="own",
+    price_basis="raw", guides=[38.2, 61.8],
+    convention=(
+        "100 * log10(sum(TR, n) / (highest high - lowest low)) / log10(n) on "
+        "raw OHLC. A range/trendiness gauge, not a directional one -- high is "
+        "choppy, low is trending."
+    ),
+    deps=lambda p: [Base("tr", "raw", 0), Base("max", "high", p["period"]),
+                    Base("min", "low", p["period"])],
+    build=_chop_build,
+    render={"chop": _line("#d19a66")},
+    # No eodhd map: no Choppiness Index function on EODHD's endpoint.
+))

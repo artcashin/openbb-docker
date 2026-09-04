@@ -4,7 +4,7 @@ import math
 import polars as pl
 import pytest
 
-from app.ta.compute import compute
+from app.ta.compute import collect_bases, compute
 from app.ta.registry import REGISTRY, resolve
 from tests.ta_helpers import col, fixture_frame
 
@@ -162,4 +162,102 @@ def test_cmf_treats_a_flat_bar_as_zero_flow_not_nan():
 
 def test_the_three_declare_no_eodhd_map():
     for name in ("ao", "mfi", "cmf"):
+        assert REGISTRY[name].eodhd is None, name
+
+
+def test_the_three_share_one_true_range_base():
+    reqs = [resolve("uo"), resolve("vortex", period=14), resolve("chop", period=14),
+            resolve("atr", period=14)]
+    bases = collect_bases(reqs)
+    assert sum(1 for key in bases if key.startswith("tr:")) == 1
+
+
+def test_uo_is_bounded_and_weights_four_two_one():
+    df = fixture_frame()
+    out = [v for v in compute(df, [resolve("uo")])[col("uo")] if v is not None]
+    assert out and all(0.0 <= v <= 100.0 for v in out)
+
+
+def test_uo_uses_ratio_of_sums_not_mean_of_ratios():
+    """The two agree only when TR is constant, so a varying fixture separates
+    them. Hand-compute the last value from the ratio-of-sums definition."""
+    df = fixture_frame()
+    frame = df.with_columns([
+        (pl.col("close") - pl.min_horizontal(pl.col("low"), pl.col("close").shift(1)))
+        .alias("bp"),
+        pl.max_horizontal(
+            pl.col("high") - pl.col("low"),
+            (pl.col("high") - pl.col("close").shift(1)).abs(),
+            (pl.col("low") - pl.col("close").shift(1)).abs(),
+        ).alias("tr"),
+    ])
+    def avg(n: int) -> float:
+        tail = frame.tail(n)
+        return tail["bp"].sum() / tail["tr"].sum()
+    expected = 100 * (4 * avg(7) + 2 * avg(14) + avg(28)) / 7
+    assert compute(df, [resolve("uo")])[col("uo")][-1] == approx(expected)
+
+
+def test_vortex_matches_a_hand_rolled_ratio_of_sums():
+    df = fixture_frame()
+    n = 14
+    frame = df.with_columns([
+        (pl.col("high") - pl.col("low").shift(1)).abs().alias("vmp"),
+        (pl.col("low") - pl.col("high").shift(1)).abs().alias("vmm"),
+        pl.max_horizontal(
+            pl.col("high") - pl.col("low"),
+            (pl.col("high") - pl.col("close").shift(1)).abs(),
+            (pl.col("low") - pl.col("close").shift(1)).abs(),
+        ).alias("tr"),
+    ]).tail(n)
+    total = frame["tr"].sum()
+    out = compute(df, [resolve("vortex", period=n)])
+    assert out[col("vortex", "vi_plus", period=n)][-1] == approx(frame["vmp"].sum() / total)
+    assert out[col("vortex", "vi_minus", period=n)][-1] == approx(frame["vmm"].sum() / total)
+
+
+def test_vortex_does_not_swap_its_two_legs():
+    """vi_plus reads |high - PRIOR low|. Swapping the two shifts is the
+    classic mistake and leaves both legs in range, so bounds cannot see it."""
+    rising = pl.DataFrame({
+        "date": [f"2026-01-{d:02d}" for d in range(1, 21)],
+        "open": [100.0 + i for i in range(20)],
+        "high": [101.0 + i for i in range(20)],
+        "low": [99.0 + i for i in range(20)],
+        "close": [100.0 + i for i in range(20)],
+        "adj_close": [100.0 + i for i in range(20)],
+        "volume": [100.0] * 20, "vwap": [100.0 + i for i in range(20)],
+    }).with_columns(pl.col("date").str.to_date())
+    out = compute(rising, [resolve("vortex", period=14)])
+    up = out[col("vortex", "vi_plus", period=14)][-1]
+    down = out[col("vortex", "vi_minus", period=14)][-1]
+    assert up > down, "a monotonically rising series must favour vi_plus"
+
+
+def test_chop_matches_its_hand_rolled_definition():
+    df = fixture_frame()
+    n = 14
+    tail = df.with_columns(
+        pl.max_horizontal(
+            pl.col("high") - pl.col("low"),
+            (pl.col("high") - pl.col("close").shift(1)).abs(),
+            (pl.col("low") - pl.col("close").shift(1)).abs(),
+        ).alias("tr")
+    ).tail(n)
+    span = tail["high"].max() - tail["low"].min()
+    expected = 100 * math.log10(tail["tr"].sum() / span) / math.log10(n)
+    assert compute(df, [resolve("chop", period=n)])[col("chop", period=n)][-1] == approx(expected)
+
+
+def test_chop_produces_real_numbers_not_nan():
+    df = fixture_frame()
+    out = [v for v in compute(df, [resolve("chop", period=14)])[col("chop", period=14)]
+           if v is not None]
+    assert out, "chop produced nothing"
+    # `is not None` is true for NaN, so say NaN.
+    assert all(not math.isnan(v) for v in out)
+
+
+def test_the_tr_family_declares_no_eodhd_map():
+    for name in ("uo", "vortex", "chop"):
         assert REGISTRY[name].eodhd is None, name
