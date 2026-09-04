@@ -217,6 +217,33 @@ class DeltaStore:
                 out.append(info.base_name)
         return sorted(out)
 
+    def read_trailing(self, key: str, n_rows: int, as_of: Any = None):
+        """The newest n_rows, reading only the files the log says hold them.
+
+        ArcticDB bounded an unfiltered read with `Library.tail`; Delta has no
+        tail, so the bound comes from the transaction log's per-file stats.
+        Falls back to a full read only when the log carries no usable bounds.
+        """
+        # pylint: disable=import-outside-toplevel
+        import pyarrow.dataset as ds
+
+        from openbb_deltalake.describe import trailing_fragment_paths
+
+        if as_of is not None:
+            return self.read(key, as_of=as_of, output="dataframe").tail(n_rows)
+
+        paths = trailing_fragment_paths(self, key, n_rows)
+        if not paths:
+            return self.read(key, output="dataframe").tail(n_rows)
+
+        base = self._path(key).rstrip("/")
+        frame = ds.dataset(
+            [f"{base}/{p}" for p in paths], format="parquet"
+        ).to_table().to_pandas()
+        if "date" in frame.columns:
+            frame = frame.sort_values("date").set_index("date")
+        return frame.tail(n_rows)
+
     def has(self, key: str) -> bool:
         """Whether a Delta table exists for `key`."""
         # pylint: disable=import-outside-toplevel

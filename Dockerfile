@@ -180,11 +180,11 @@ print('api_app factory OK:', len(layers), 'CORS layer(s), all private-network en
 
 WORKDIR /workspace
 
-# stores-mcp (Ep. 11): read-only ArcticDB/kdb+ discovery/query MCP server.
+# stores-mcp (Ep. 11): read-only Delta Lake/kdb+ discovery/query MCP server.
 # Runs `python /opt/mcp_stores/server.py` (see docker-compose.yml's
 # stores-mcp service) directly against this image -- nothing extra to
-# install: fastmcp came in with openbb-mcp-server above, arcticdb/pandas with
-# openbb-arcticdb, pykx with openbb-kdb. Just the two files.
+# install: fastmcp came in with openbb-mcp-server above, deltalake/pyarrow/
+# pandas with openbb-deltalake, pykx with openbb-kdb. Just the two files.
 COPY mcp_stores/server.py mcp_stores/test_server.py /opt/mcp_stores/
 
 # Self-provision persistent mount points so the image is drop-in on any host
