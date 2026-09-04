@@ -101,14 +101,17 @@ def test_live_grid_declares_its_visible_columns_and_hides_the_rest(monkeypatch):
     # every declared field the payload carries in columnsDefs order, so this
     # list is the grid's left-to-right reading order.
     #
-    # RSI and vs-VWAP sit immediately after the price columns and BEFORE the
-    # two ranges. They are meters -- each is its own single value -- whereas
-    # each range is a three-column group flanked by its own low and high, so
-    # putting the single values first keeps the two groups intact at the
-    # right rather than splitting them around a lone column.
+    # RSI and the VWAP trio sit immediately after the price columns and
+    # BEFORE the two ranges. They are single values, whereas each range is a
+    # three-column group flanked by its own low and high, so putting the
+    # singles first keeps the two groups intact at the right rather than
+    # splitting them around a lone column.
+    #
+    # Within the trio the order is the reading order: the anchored VWAP
+    # itself, then how far price sits from it, then where it was anchored.
     assert visible == [
         "logo_url", "symbol", "price", "change", "change_percent",
-        "rsi", "avwap_dev",
+        "rsi", "avwap", "avwap_dev", "vwap_start",
         "day_low", "day_range", "day_high",
         "week52_low", "week52_range", "week52_high",
         "volume",

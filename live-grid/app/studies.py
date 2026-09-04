@@ -68,7 +68,7 @@ def _valid_iso(raw: str) -> bool:
 
 
 def parse_anchors(raw: str, default: str) -> tuple[str, dict[str, str]]:
-    """The VWAP Start column's wire format: `SYM=ISO,SYM=ISO`.
+    """The Anchor column's wire format: `SYM=ISO,SYM=ISO`.
 
     Returns the grid-wide anchor and the per-symbol overrides. An unkeyed
     chunk sets the grid-wide one, so "anchor everything at the open" is one
@@ -109,7 +109,7 @@ def window_start(anchor_iso: str, today: date) -> str:
     `WINDOW_DAYS` of warmup or `studies_for` refuses to report it. And the
     anchor itself needs to fall INSIDE the window: an anchor older than every
     bar fetched filters nothing, so `avwap` would report a cumulative mean
-    from the window's first bar while the VWAP Start cell still claimed the
+    from the window's first bar while the Anchor cell still claimed the
     time the user typed. That is the same authoritative-and-wrong failure as
     an RSI off four bars, so the window stretches to cover the anchor rather
     than quietly redefining it.
@@ -164,7 +164,7 @@ def studies_for(symbol: str, bars: list[dict], anchor: str | None = None) -> dic
         "rsi": None if rsi is None else float(rsi),
         "avwap": None if avwap is None else float(avwap),
         "avwap_dev": None if dev is None else float(dev),
-        # The anchor ACTUALLY used, echoed back so the VWAP Start cell shows
+        # The anchor ACTUALLY used, echoed back so the Anchor cell shows
         # what the number beside it was computed from. A client that echoed
         # its own request instead would keep displaying a time the server had
         # dropped as unparseable or never received.
