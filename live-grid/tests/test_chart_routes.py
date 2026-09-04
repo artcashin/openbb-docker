@@ -1,6 +1,6 @@
 """Chart routes on live-grid, including the tick/history join."""
 
-from datetime import datetime
+from datetime import date, datetime
 
 import pytest
 from fastapi.testclient import TestClient
@@ -97,6 +97,36 @@ def test_series_works_with_no_recorder(monkeypatch):
     no_recorder_client = TestClient(create_app(api_key="test-key"))
     body = no_recorder_client.get("/series", params={"symbol": "AAPL"}).json()
     assert body["cache"]["rows_from_ticks"] == 0
+
+
+def test_live_grid_studies_requests_a_short_lookback_not_a_year(monkeypatch):
+    """Pins the window /live_grid_studies asks build_series for.
+
+    A year of one-minute bars per symbol, fired at once for a fifty-symbol
+    watchlist, is what made this route expensive -- RSI(14) needs about
+    fifteen bars. This also pins the span, not just that it's "short": a
+    future edit that quietly widens it back toward a year would slide the
+    anchored VWAP's anchor by that much too (anchor=None runs cumulative
+    from the window's first bar).
+    """
+    captured = {}
+
+    async def fake_history(symbol, interval, start, end, provider="kdb"):
+        captured["interval"] = interval
+        captured["start"] = start
+        captured["end"] = end
+        return ([bar("2025-06-10T13:58:00"), bar("2025-06-10T13:59:00")],
+                {"cache": "hit", "rows_from_cache": 2, "rows_from_upstream": 0,
+                 "gaps_fetched": 0, "upstream_ms": 0.0, "kdb_ms": 1.0})
+
+    monkeypatch.setattr("app.main.fetch_series", fake_history)
+    monkeypatch.setenv("LIVE_GRID_CHART", "false")
+    no_recorder_client = TestClient(create_app(api_key="test-key"))
+    no_recorder_client.get("/live_grid_studies", params={"symbol": "AAPL"})
+
+    assert captured["interval"] == "1m"
+    span = (date.fromisoformat(captured["end"]) - date.fromisoformat(captured["start"])).days
+    assert span == 5
 
 
 def _extract_braced_block(text, marker):
