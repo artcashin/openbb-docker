@@ -1277,3 +1277,49 @@ the work is on an unmerged branch, so tags would point outside `main`; the
 repo has a `backup/pre-<change>-v11.x` convention that says backup tags are
 taken before release tags move; and a re-cut should be tagged after it has run
 in the real stack, not before.
+
+
+---
+
+## Task 8 result
+
+`stores-explorer/apps.json` ships the example dashboard and `GET /apps.json`
+serves it. Three cards, one backend: the Delta store's ticks, the EODHD
+fundamentals cache that now persists into it, and the kdb+ tape.
+
+`library` is set on each card because those names are structural
+(`eodhd_fundamentals_cache` is named by `_fundamentals.py`; a ticks library is
+what `tick-lab load` writes). `symbol` and `table` are deliberately empty — a
+hardcoded symbol would be wrong on every install but the author's, and the
+cascading picker fills them from whatever the store actually holds.
+
+### Verified against bdobb's own parser, not just asserted
+
+A malformed `apps.json` is *silently dropped* by bdobb — `parseAppsJson`
+returns an issue and the backend simply shows no apps — so a passing
+server-side test proves nothing about whether the dashboard actually lands.
+The file was therefore run through bdobb-v2's real `parseAppsJson` and
+`importApps` (throwaway vitest spec, since a permanent one would couple the
+repos):
+
+| Check | Result |
+|---|---|
+| `parseAppsJson` | 1 app, **no issue reported** |
+| `importApps` | 1 dashboard, 3 cards |
+| Backend resolution | all 3 cards resolved to the backend publishing their widget |
+| Cards | 2 × `delta_explorer`, libraries `['eodhd_fundamentals_cache', 'ticks']` |
+
+Two things that surfaced while doing it, both worth knowing:
+
+- **`WidgetDef.gridData` is required, not optional.** `importApps` reads
+  `served?.gridData.w` — optional on `served`, unconditional on `gridData`.
+  That is safe only because `widgetsJson.ts` always sets it via `toGridData`.
+  A widget reaching the registry by any other path would crash the import.
+- Duplicate widget ids in one tab are fine: `importApps` loops the layout and
+  builds a card per entry, with no dedupe on `i`. The two `delta_explorer`
+  cards are supported behaviour, not a happy accident.
+
+### Not tagged
+
+`v11.3.0` is not tagged, for the same reason `v11.0.0`–`v11.2.0` are not: the
+work is on an unmerged branch and the tags are published. See Task 7.

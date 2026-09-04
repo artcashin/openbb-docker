@@ -35,6 +35,7 @@ from server import (
 )
 
 WIDGETS_PATH = Path(__file__).resolve().parent.parent / "widgets.json"
+APPS_PATH = Path(__file__).resolve().parent.parent / "apps.json"
 
 
 def create_app(
@@ -71,6 +72,17 @@ def create_app(
     @app.get("/widgets.json")
     def widgets() -> JSONResponse:
         return JSONResponse(json.loads(WIDGETS_PATH.read_text()))
+
+    @app.get("/apps.json")
+    def apps() -> JSONResponse:
+        """The Ep. 11 example dashboard.
+
+        bdobb fetches this per backend during discovery and resolves each card
+        by WIDGET id, not by the backend's per-install UUID -- which is what
+        lets a shipped dashboard land on whichever backend serves these
+        widgets, with no import step and no bdobb-side code.
+        """
+        return JSONResponse(json.loads(APPS_PATH.read_text()))
 
     @app.get("/delta/libraries")
     def delta_libraries() -> list[str]:

@@ -266,3 +266,43 @@ def test_kdb_schema_error_does_not_leak_credentials():
     assert "topsecret123" not in body
     assert "s3://minio.example.ts.net" not in body
     assert "<redacted>" in body
+
+
+# ---------- apps.json: the Ep. 11 example dashboard ----------
+
+def test_apps_json_publishes_the_example_dashboard():
+    body = make_client().get("/apps.json").json()
+    assert isinstance(body, list) and len(body) == 1
+    app_ = body[0]
+    # bdobb's parseAppsJson guarantees only `name` and `tabs`; both must exist.
+    assert app_["name"] == "Ep. 11 — The Shared Store"
+    assert app_["tabs"]
+
+    layout = list(app_["tabs"].values())[0]["layout"]
+    widget_ids = [item["i"] for item in layout]
+    assert widget_ids.count("delta_explorer") == 2   # the ticks, and the cache itself
+    assert "kdb_explorer" in widget_ids
+
+    libraries = {item["state"]["params"].get("library") for item in layout}
+    assert "eodhd_fundamentals_cache" in libraries
+
+
+def test_apps_json_only_names_widgets_this_service_publishes():
+    """The assertion that matters over time: rename a widget in widgets.json
+    without following it here and this fails, rather than shipping a dashboard
+    of cards that silently never resolve."""
+    client = make_client()
+    published = set(client.get("/widgets.json").json())
+    layout = list(client.get("/apps.json").json()[0]["tabs"].values())[0]["layout"]
+    assert {item["i"] for item in layout} <= published
+
+
+def test_apps_json_cards_leave_per_install_values_empty():
+    """library is structural and IS set; symbol/table are not. A hardcoded
+    symbol would be wrong on every install but the author's -- the cascading
+    picker fills them from what the store actually holds."""
+    layout = list(make_client().get("/apps.json").json()[0]["tabs"].values())[0]["layout"]
+    for item in layout:
+        params = item["state"]["params"]
+        assert params.get("symbol", "") == ""
+        assert params.get("table", "") == ""
