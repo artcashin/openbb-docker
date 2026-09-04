@@ -1,6 +1,8 @@
 """The eleven next-tier indicators added at v12.0.0."""
 
 import math
+from datetime import datetime
+
 import polars as pl
 import pytest
 
@@ -321,3 +323,55 @@ def test_ichimoku_declares_its_displacements_on_the_render_dict():
 
 def test_ichimoku_has_no_eodhd_map():
     assert REGISTRY["ichimoku"].eodhd is None
+
+
+def _two_sessions() -> pl.DataFrame:
+    rows = []
+    for day, (low, high, last) in enumerate([(10.0, 20.0, 15.0), (30.0, 40.0, 35.0)], 1):
+        for hour, price in enumerate([low, high, last]):
+            rows.append({
+                "date": datetime(2026, 1, day, 9 + hour),
+                "open": price, "high": price, "low": price, "close": price,
+                "adj_close": price, "volume": 100.0, "vwap": price,
+            })
+    return pl.DataFrame(rows)
+
+
+def test_pivots_use_the_prior_sessions_hlc_never_the_current_one():
+    out = compute(_two_sessions(), [resolve("pivots_standard")])
+    pp = out[col("pivots_standard", "PP")].to_list()
+    assert all(v is None for v in pp[:3]), "day one has no prior session"
+    # Day one: H=20, L=10, C=15 -> PP = 45/3 = 15
+    assert all(v == approx(15.0) for v in pp[3:])
+
+
+def test_pivots_derive_all_six_levels_from_pp():
+    out = compute(_two_sessions(), [resolve("pivots_standard")])
+    last = {name: out[col("pivots_standard", name)][-1]
+            for name in ("PP", "R1", "S1", "R2", "S2", "R3", "S3")}
+    high, low = 20.0, 10.0
+    assert last["R1"] == approx(2 * 15.0 - low)
+    assert last["S1"] == approx(2 * 15.0 - high)
+    assert last["R2"] == approx(15.0 + (high - low))
+    assert last["S2"] == approx(15.0 - (high - low))
+    assert last["R3"] == approx(high + 2 * (15.0 - low))
+    assert last["S3"] == approx(low - 2 * (high - 15.0))
+
+
+def test_pivots_are_sessioned_not_iterative():
+    assert REGISTRY["pivots_standard"].sessioned is True
+    assert REGISTRY["pivots_standard"].iterative is False
+    assert REGISTRY["pivots_standard"].eodhd is None
+
+
+def test_a_sessioned_and_a_flat_indicator_together_still_share_one_base():
+    """The regression the batched design exists to prevent: adding the
+    sessioned path must not move Base materialisation per-request. This lives
+    here rather than with the mechanism because it needs a REGISTERED
+    sessioned indicator to go through compute()."""
+    reqs = [resolve("pivots_standard"), resolve("atr", period=14),
+            resolve("chop", period=14)]
+    bases = collect_bases(reqs)
+    assert sum(1 for key in bases if key.startswith("tr:")) == 1
+    frame = compute(_two_sessions(), reqs)
+    assert "tr:raw:0" not in frame.columns, "base columns are dropped by compute()"

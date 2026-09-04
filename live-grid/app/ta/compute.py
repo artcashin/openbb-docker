@@ -78,8 +78,11 @@ def compute_with_bases(
     seen: set[str] = set()
     exprs: list[pl.Expr] = []
     for req in reqs:
+        indicator = get(req.name)
+        if indicator.sessioned:
+            continue  # sessioned builds run against the session frame, below
         suffix = col_suffix(req)
-        for expr in get(req.name).build(req.params, bases):
+        for expr in indicator.build(req.params, bases):
             name = expr.meta.output_name() + suffix
             if name in seen:
                 continue  # the same indicator, same params, requested twice

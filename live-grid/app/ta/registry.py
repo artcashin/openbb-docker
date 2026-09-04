@@ -955,3 +955,44 @@ register(Indicator(
     },
     # No eodhd map: no Ichimoku function on EODHD's endpoint.
 ))
+
+# --- Pivot points (classic / floor) -----------------------------------------
+
+
+def _pivots_session_agg(p: dict) -> dict:
+    return {"H": pl.col("high").max(), "L": pl.col("low").min(),
+            "C": pl.col("close").last()}
+
+
+def _pivots_build(p: dict, b: dict) -> list[pl.Expr]:
+    # Runs against the collapsed, already-shifted session frame, so H/L/C here
+    # are the PRIOR session's.
+    pivot = (pl.col("H") + pl.col("L") + pl.col("C")) / 3
+    return [
+        pivot.alias("PP"),
+        (2 * pivot - pl.col("L")).alias("R1"),
+        (2 * pivot - pl.col("H")).alias("S1"),
+        (pivot + (pl.col("H") - pl.col("L"))).alias("R2"),
+        (pivot - (pl.col("H") - pl.col("L"))).alias("S2"),
+        (pl.col("H") + 2 * (pivot - pl.col("L"))).alias("R3"),
+        (pl.col("L") - 2 * (pl.col("H") - pivot)).alias("S3"),
+    ]
+
+
+register(Indicator(
+    name="pivots_standard", label="Pivot Points Standard",
+    params={"anchor": "1d", "session_shift": 1}, pane="price", price_basis="raw",
+    convention=(
+        "Classic floor pivots from the PRIOR session's high/low/close, held "
+        "flat across the current session. group_by_dynamic(every=anchor) -> "
+        "shift(session_shift) -> join_asof(backward). The first session has no "
+        "prior and is null, not zero."
+    ),
+    deps=lambda p: [],
+    build=_pivots_build,
+    sessioned=True,
+    session_agg=_pivots_session_agg,
+    render={name: _line("#9aa0a6")
+            for name in ("PP", "R1", "S1", "R2", "S2", "R3", "S3")},
+    # No eodhd map: no Pivot Points function on EODHD's endpoint.
+))
