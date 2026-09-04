@@ -92,6 +92,55 @@ def test_widgets_json_declares_the_live_chart_contract():
     ]
 
 
+def test_live_grid_declares_the_six_visible_columns():
+    body = make_client().get("/widgets.json").json()
+    cols = body["live_grid"]["data"]["table"]["columnsDefs"]
+    visible = [c["field"] for c in cols if not c.get("hide")]
+    assert visible == ["symbol", "price", "change", "day_range", "week52_range", "volume"]
+    hidden = {c["field"]: c for c in cols if c.get("hide")}
+    assert set(hidden) == {"bid", "ask", "last_size", "updated_at"}
+    assert all(c["hide"] is True for c in hidden.values())
+
+
+def test_the_symbol_column_declares_the_logo_render_fn():
+    body = make_client().get("/widgets.json").json()
+    cols = body["live_grid"]["data"]["table"]["columnsDefs"]
+    (sym,) = [c for c in cols if c["field"] == "symbol"]
+    assert "logo" in sym["renderFn"]
+    assert sym["renderFnParams"]["urlKey"] == "logo_url"
+
+
+def test_both_range_bars_use_one_render_fn_differing_only_in_params():
+    body = make_client().get("/widgets.json").json()
+    defs = {c["field"]: c for c in body["live_grid"]["data"]["table"]["columnsDefs"]}
+    day, week = defs["day_range"], defs["week52_range"]
+    assert day["renderFn"] == week["renderFn"] == ["rangeBar"]
+    assert day["renderFnParams"] == {"lowKey": "day_low", "highKey": "day_high"}
+    assert week["renderFnParams"] == {"lowKey": "week52_low", "highKey": "week52_high"}
+
+
+def test_the_bars_and_volume_opt_out_of_the_change_flash():
+    body = make_client().get("/widgets.json").json()
+    defs = {c["field"]: c for c in body["live_grid"]["data"]["table"]["columnsDefs"]}
+    for field in ("day_range", "week52_range", "volume"):
+        assert defs[field]["enableCellChangeWs"] is False
+
+
+def test_price_keeps_the_change_flash():
+    body = make_client().get("/widgets.json").json()
+    defs = {c["field"]: c for c in body["live_grid"]["data"]["table"]["columnsDefs"]}
+    assert "showCellChange" in defs["price"]["renderFn"]
+    assert defs["price"].get("enableCellChangeWs") is not False
+
+
+def test_kdb_ticks_is_a_plain_table_widget():
+    body = make_client().get("/widgets.json").json()
+    w = body["kdb_ticks"]
+    assert w["type"] == "table"
+    assert w["endpoint"] == "ticks"
+    assert [p["paramName"] for p in w["params"]] == ["symbol", "limit"]
+
+
 def test_live_grid_seeds_rows_in_request_order(monkeypatch):
     rest = FakeRest({"AAPL.US": {"close": "150", "previousClose": "100", "volume": "7"}})
     rows = make_client(monkeypatch, seed_client=rest).get("/live_grid?symbol=AAPL,BTC-USD").json()

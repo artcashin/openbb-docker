@@ -20,15 +20,48 @@
       "table": {
         "showAll": false,
         "columnsDefs": [
-          { "field": "symbol", "headerName": "Symbol", "pinned": "left" },
-          { "field": "price", "headerName": "Price", "renderFn": "showCellChange", "renderFnParams": { "colorValueKey": "change" } },
-          { "field": "change", "headerName": "Chg" },
-          { "field": "change_percent", "headerName": "Chg %", "renderFn": "greenRed", "formatterFn": "percent" },
-          { "field": "bid", "headerName": "Bid" },
-          { "field": "ask", "headerName": "Ask" },
-          { "field": "last_size", "headerName": "Last Size" },
-          { "field": "volume", "headerName": "Volume", "enableCellChangeWs": false },
-          { "field": "updated_at", "headerName": "Updated" }
+          {
+            "field": "symbol",
+            "headerName": "Symbol",
+            "pinned": "left",
+            "renderFn": ["logo"],
+            "renderFnParams": { "urlKey": "logo_url" }
+          },
+          {
+            "field": "price",
+            "headerName": "Last",
+            "renderFn": ["showCellChange"],
+            "renderFnParams": { "colorValueKey": "change" }
+          },
+          {
+            "field": "change",
+            "headerName": "Chg",
+            "renderFn": ["greenRed"],
+            "renderFnParams": { "percentKey": "change_percent" }
+          },
+          {
+            "field": "day_range",
+            "headerName": "Day",
+            "renderFn": ["rangeBar"],
+            "renderFnParams": { "lowKey": "day_low", "highKey": "day_high" },
+            "enableCellChangeWs": false
+          },
+          {
+            "field": "week52_range",
+            "headerName": "52 Week",
+            "renderFn": ["rangeBar"],
+            "renderFnParams": { "lowKey": "week52_low", "highKey": "week52_high" },
+            "enableCellChangeWs": false
+          },
+          {
+            "field": "volume",
+            "headerName": "Volume",
+            "enableCellChangeWs": false
+          },
+          { "field": "bid", "headerName": "Bid", "hide": true },
+          { "field": "ask", "headerName": "Ask", "hide": true },
+          { "field": "last_size", "headerName": "Last Size", "hide": true },
+          { "field": "updated_at", "headerName": "Updated", "hide": true }
         ]
       }
     },
@@ -43,6 +76,30 @@
       }
     ],
     "source": ["EODHD"]
+  },
+  "kdb_ticks": {
+    "name": "Tick History",
+    "description": "Recent trades for one symbol out of the kdb+ tick cache. The cache is in-memory and holds a rolling day: a restarted kdb reads as empty.",
+    "category": "Live",
+    "type": "table",
+    "endpoint": "ticks",
+    "gridData": { "w": 20, "h": 12 },
+    "params": [
+      { "paramName": "symbol", "value": "AAPL", "label": "Symbol", "type": "text" },
+      { "paramName": "limit", "value": "200", "label": "Rows", "type": "number" }
+    ],
+    "data": {
+      "dataKey": "ticks",
+      "table": {
+        "showAll": false,
+        "columnsDefs": [
+          { "field": "time", "headerName": "Time" },
+          { "field": "price", "headerName": "Price" },
+          { "field": "size", "headerName": "Size" }
+        ]
+      }
+    },
+    "source": ["kdb+"]
   },
   "kdb_cache_chart": {
     "name": "Cached Price Chart",
