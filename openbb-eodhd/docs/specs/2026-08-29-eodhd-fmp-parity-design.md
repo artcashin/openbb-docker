@@ -192,6 +192,21 @@ Low value and approximate; excluded from the default scope per design review:
 | CalendarEvents | no corporate-events calendar (earnings/div/ipo/splits are separate) | FMP |
 | RiskPremium | FMP = equity risk premium by country; EODHD only sovereign (different) | FMP |
 
+## Extension version semantics
+
+The `openbb-eodhd` package version states **what the extension covers**, not
+which chapter it shipped in:
+
+| Extension version | Meaning | Fetchers |
+|---|---|---|
+| **9.0.0** | Base integration — fundamentals and OHLCV mapped onto the OpenBB model | 16 |
+| **9.1.0 – 9.4.0** | Intermediate parity phases (ownership/insider/estimates, company core, calendars/discovery) | — |
+| **9.5.0** | **Full FMP parity** — every standard model FMP registers that EODHD can back | 52 |
+
+A tree carrying all 52 fetchers is 9.5.0 by definition. Keep `pyproject.toml`
+and this document moving together: if the fetcher set changes, the version and
+this table change in the same commit.
+
 ## Phasing
 
 Each phase: model files + tests + register in `__init__.py` + container rebuild +
@@ -283,3 +298,75 @@ which is where this design's ArcticDB L2 tier gets rebuilt on Delta Lake.
 - **Standalone github repo drift:** `github.com/artcashin/openbb-eodhd` is a stale
   0.1.0; the live source is this in-repo copy (v9.0.0). Decide whether to re-sync the
   standalone repo or leave it (out of scope here).
+
+## Addendum (2026-09-03): commodities — considered, dropped
+
+Initially recorded as an episode-9 stretch goal after confirming EODHD's
+`get_historical_commodity_prices` returns real, live data (WTI tested, full
+monthly history to 1986) and that `CommoditySpotPrices` exists as a standard
+model in `openbb_core`. Retracted on closer check, same day.
+
+**The verification was incomplete the first time.** "No installed provider
+backs it" was checked against `openbb_core`'s standard-model files, not
+against actual fetcher registrations. `openbb_fred` — already installed in
+this stack — registers `FredCommoditySpotPricesFetcher` against exactly this
+standard model. The data is available today, no build required.
+
+**And EODHD's version is that same FRED data, one hop removed.** The
+response's own metadata carries `"source": "fred"` — EODHD is reselling the
+FRED series through its marketplace endpoint, not publishing anything
+original. Building an EODHD-backed fetcher for it would mean two paths to the
+identical numbers, with the EODHD path adding its own marketplace auth and
+rate limits as a second thing that can fail for zero additional data. Get it
+from `fred` directly; there's nothing here for `openbb-eodhd` to add.
+
+## Addendum (2026-09-03): sentiment — investigated, no new fetcher needed
+
+CompanyNews and WorldNews shipped in the Company Core phase (v9.4.0, 2026-09-01) with
+an extra `sentiment` field (EODHD's polarity/pos/neu/neg dict) on every article. After
+release, EODHD's separate `/sentiment` endpoint (daily aggregated score per symbol)
+looked like a plausible follow-on widget — it wasn't in the original FMP-parity scope
+because FMP doesn't register anything like it, so it would have been a "Beyond FMP"
+addition, the same category as the macro cluster.
+
+**Sweep for precedent.** Grepped every installed OpenBB provider package plus
+`openbb_core` for a standard model shaped like "sentiment, keyed by symbol and date."
+Three hits, none a match:
+
+- `TopRetailData` (`openbb_core.provider.standard_models.top_retail`) — `date`,
+  `symbol`, `activity`, `sentiment` (-1..1). Closest shape, but it's retail order-flow
+  imbalance (`nasdaq` provider, tracking ~$30B/day of individual-investor trades), not
+  news-derived sentiment. Forcing EODHD's article-count/polarity data into `activity`/
+  `sentiment` would misrepresent what the numbers mean.
+- Intrinio's `CompanyNewsData`/`WorldNewsData` add `sentiment` (positive/neutral/
+  negative) + `sentiment_confidence` directly onto the **news** standard models —
+  no separate sentiment model or router. This is the real precedent, and
+  `openbb-eodhd` already followed it independently (the polarity dict added in
+  v9.4.0), before this sweep confirmed it was the established pattern.
+- `UofMichiganData` — macro consumer-confidence survey, unrelated.
+
+**Verified `/sentiment` adds no data over `/news`.** Pulled EODHD's raw `/news` for
+AAPL.US across the same window already sampled from `/sentiment`, and compared
+independently, per day:
+
+| Date | Articles pulled | Mean article `sentiment.polarity` | `/sentiment` count | `/sentiment` normalized |
+|---|---|---|---|---|
+| 2026-09-02 | 57 | 0.651 | 57 | 0.6511 |
+| 2026-09-01 | 66 | 0.615 | 66 | 0.6151 |
+| 2026-08-31 | 59 | 0.595 | 59 | 0.5947 |
+
+Every day where the full article count was captured matches to three decimals —
+`/sentiment`'s `count` is the day's article count and its `normalized` score is the
+plain mean of that day's `sentiment.polarity` values already returned by `/news`.
+It is a server-side convenience recomputation of data `openbb-eodhd` already exposes,
+not an independent signal.
+
+**Decision: no new fetcher, no new standard model, no fork of `openbb_core` /
+`openbb_news`.** The per-article `sentiment` field on `EODHDCompanyNewsData` /
+`EODHDWorldNewsData` (shipped v9.4.0) is the complete data. A daily aggregate, if a
+dashboard wants one, is a groupby-mean over data already in hand — a chart-side
+computation, not a new API call or provider capability. Also checked whether Intrinio
+exposes sentiment as its own widget distinct from its news widget: it does not —
+`openbb_news`'s router defines only `company` and `world` commands, no sentiment
+command, confirming sentiment-as-a-news-field (not sentiment-as-its-own-widget) is
+the pattern across the platform, not just an EODHD shortcut.
