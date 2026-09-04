@@ -177,26 +177,31 @@
      },
      {
       "field": "bid",
+      "width": 84,
       "headerName": "Bid",
       "hide": true
      },
      {
       "field": "ask",
+      "width": 84,
       "headerName": "Ask",
       "hide": true
      },
      {
       "field": "last_size",
+      "width": 80,
       "headerName": "Last Size",
       "hide": true
      },
      {
       "field": "updated_at",
+      "width": 132,
       "headerName": "Updated",
       "hide": true
      },
      {
       "field": "day_open",
+      "width": 88,
       "headerName": "Open",
       "hide": true
      }
