@@ -1,13 +1,16 @@
 """Per-symbol RSI(14) and anchored VWAP for the live grid's studies column.
 
-One `compute()` call over one frame produces both indicators, so the `Base`
-dedup in `compute_with_bases` applies -- no true range materialised twice --
-and the grid's RSI cannot drift from the chart's: both come from the same
-registry entry, `Base("wilder", ..., alpha=1/n)`, not the prototype's Cutler
-SMA. The AVWAP anchor is left None (cumulative from the first bar carrying
-trade data): a watchlist mixes US equities, crypto and forex, which do not
-share one session open, so there is no single "session open" default that
-means the same thing for every row.
+One `compute()` call over one frame -- one frame built, one pass, one set of
+columns out -- so the grid's RSI cannot drift from the chart's: both read the
+same registry entry (`app.ta.registry`'s `rsi`, Wilder's smoothing with
+alpha=1/n), not the prototype's Cutler SMA. Note this is NOT a `Base` dedup:
+both `rsi` and `avwap` declare `deps=lambda p: []`, so neither contributes a
+shared `Base` and there is nothing to deduplicate between them -- the win
+here is one frame and one round trip, not shared sub-series. The AVWAP
+anchor is left None (cumulative from the first bar carrying trade data): a
+watchlist mixes US equities, crypto and forex, which do not share one
+session open, so there is no single "session open" default that means the
+same thing for every row.
 
 Null discipline: a symbol with no trade data has no RSI and no AVWAP. Both
 are None, never 0 and never 50 -- a scanner sorted on this column must not
