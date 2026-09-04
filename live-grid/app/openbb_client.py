@@ -28,10 +28,19 @@ _HISTORICAL_PATH = {
 
 
 def history_endpoint(symbol: str) -> str:
-    """The Platform route for this symbol's asset class."""
-    from app.classify import classify
+    """The Platform route for this symbol's asset class.
 
-    return _HISTORICAL_PATH[classify(symbol)]
+    Raises for a symbol no feed here carries (TALA.TO), rather than
+    KeyError-ing on the lookup -- the caller can then say which symbol.
+    """
+    from app.classify import UNSUPPORTED, classify
+
+    feed = classify(symbol)
+    if feed == UNSUPPORTED:
+        raise ValueError(
+            f"no historical route for {symbol!r}: its exchange has no feed here"
+        )
+    return _HISTORICAL_PATH[feed]
 
 
 async def fetch_series(

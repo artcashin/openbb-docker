@@ -588,6 +588,12 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
 
     _GROUP_NAMES = {"us": "Equity", "crypto": "Crypto", "forex": "Forex"}
 
+    #: Added to the payload ONLY when it has members. The page renders the
+    #: three feed sections unconditionally, so a permanently empty fourth
+    #: would be noise -- but a watchlist symbol no feed carries must not sit
+    #: in Equity looking merely quiet, either.
+    _UNROUTABLE_GROUP = "Unroutable"
+
     def _apply_watchlist() -> None:
         """Register every pinned symbol with the feed manager, up to the cap.
 
@@ -642,7 +648,11 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
         leased = leases.symbols()
         groups: dict[str, list[str]] = {name: [] for name in _GROUP_NAMES.values()}
         for sym in pinned:
-            groups[_GROUP_NAMES[classify(sym)]].append(sym)
+            name = _GROUP_NAMES.get(classify(sym))
+            if name is None:
+                groups.setdefault(_UNROUTABLE_GROUP, []).append(sym)
+            else:
+                groups[name].append(sym)
         return {
             "service": "EODHD",
             "cap": max_symbols,
