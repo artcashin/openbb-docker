@@ -284,7 +284,7 @@ def test_apps_json_publishes_the_example_dashboard():
     assert isinstance(body, list) and len(body) == 1
     app_ = body[0]
     # bdobb's parseAppsJson guarantees only `name` and `tabs`; both must exist.
-    assert app_["name"] == "Ep. 11 — The Shared Store"
+    assert app_["name"] == "Example - Version 11.0.0"
     assert app_["tabs"]
 
     layout = list(app_["tabs"].values())[0]["layout"]

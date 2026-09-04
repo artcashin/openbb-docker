@@ -150,6 +150,30 @@ def main():
     # openbb-platform-api adds its own CORS layer after this factory returns.
     # Innermost still covers every path: middleware wraps the whole app, not a
     # router.
+    # /apps.json, ours -- registered here so openbb-platform-api's
+    # `has_root_apps` check finds it and does NOT install its own.
+    #
+    # Two reasons to take it over. Its version EXTENDS the file with OpenBB's
+    # bundled default apps (IMF Explorer, FOMC Documents, ...), which is not
+    # what this deployment publishes; and it drops any app unless some tab has
+    # EVERY widget in this server's own widgets.json, which silently discards
+    # apps built on other backends' widgets or on bdobb's built-ins. bdobb
+    # resolves a card by widget id across every configured backend, so that
+    # filter throws away apps that would have worked.
+    @app.get("/apps.json")
+    async def workspace_apps():  # pylint: disable=unused-variable
+        """The apps this deployment publishes, verbatim."""
+        # pylint: disable=import-outside-toplevel
+        import json as _json
+        from pathlib import Path as _Path
+
+        from fastapi.responses import JSONResponse as _JSONResponse
+
+        path = _Path(os.environ.get("WORKSPACE_APPS_PATH", "/root/OpenBBUserData/workspace_apps.json"))
+        if not path.exists():
+            return _JSONResponse(content=[])
+        return _JSONResponse(content=_json.loads(path.read_text(encoding="utf-8")))
+
     app.user_middleware.append(
         Middleware(BaseHTTPMiddleware, dispatch=_require_basic_auth)
     )

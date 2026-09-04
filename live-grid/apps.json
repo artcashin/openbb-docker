@@ -1,0 +1,121 @@
+[
+ {
+  "name": "Example - Version 10.0.0",
+  "description": "",
+  "img": "",
+  "img_dark": "",
+  "img_light": "",
+  "allowCustomization": true,
+  "tabs": {
+   "01429724-fa23-42fa-8a7c-41abe8c091d0": {
+    "id": "01429724-fa23-42fa-8a7c-41abe8c091d0",
+    "name": "Live",
+    "layout": [
+     {
+      "i": "live_grid",
+      "x": 0,
+      "y": 0,
+      "w": 40,
+      "h": 12,
+      "state": {
+       "params": {
+        "symbol": "AAPL,MSFT,NVDA,TSLA,BTC-USD,ETH-USD,EURUSD"
+       },
+       "chartView": {
+        "enabled": false,
+        "chartType": "line"
+       }
+      }
+     },
+     {
+      "i": "subscriptions",
+      "x": 0,
+      "y": 12,
+      "w": 20,
+      "h": 14
+     },
+     {
+      "i": "kdb_ticks",
+      "x": 20,
+      "y": 12,
+      "w": 20,
+      "h": 14,
+      "state": {
+       "params": {
+        "symbol": "AAPL",
+        "limit": "200"
+       },
+       "chartView": {
+        "enabled": false,
+        "chartType": "line"
+       }
+      }
+     }
+    ]
+   }
+  },
+  "groups": [],
+  "prompts": []
+ },
+ {
+  "name": "Example - Version 12.0.0",
+  "description": "",
+  "img": "",
+  "img_dark": "",
+  "img_light": "",
+  "allowCustomization": true,
+  "tabs": {
+   "2922d395-6f1e-435d-8440-c1dfa9458889": {
+    "id": "2922d395-6f1e-435d-8440-c1dfa9458889",
+    "name": "Advanced chart",
+    "layout": [
+     {
+      "i": "advanced_chart",
+      "x": 0,
+      "y": 0,
+      "w": 40,
+      "h": 24,
+      "state": {
+       "params": {
+        "symbol": "BTC-USD",
+        "interval": "1m",
+        "macro": "classic-momentum",
+        "indicators": "supertrend:period=10,ichimoku",
+        "source": "local",
+        "basis": "adjusted"
+       },
+       "chartView": {
+        "enabled": false,
+        "chartType": "line"
+       }
+      }
+     }
+    ]
+   },
+   "1b2ecb35-3ffd-4f6d-adde-3cdd2f82c2b0": {
+    "id": "1b2ecb35-3ffd-4f6d-adde-3cdd2f82c2b0",
+    "name": "Live quotes",
+    "layout": [
+     {
+      "i": "live_grid",
+      "x": 0,
+      "y": 0,
+      "w": 40,
+      "h": 24,
+      "state": {
+       "params": {
+        "symbol": "NVDA,AAPL,MSFT,TSLA,BTC-USD"
+       },
+       "chartView": {
+        "enabled": false,
+        "chartType": "line"
+       }
+      }
+     }
+    ]
+   }
+  },
+  "groups": [],
+  "prompts": []
+ }
+]
