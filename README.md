@@ -15,7 +15,7 @@ from later chapters is.
 | v8.0.0 | Ep. 8 — All the News That Fits, We Print | rss-ticker news wire joins the stack |
 | v9.0.0 | Ep. 9 — The Tape | EODHD provider extension + live-grid streaming service |
 | v10.0.0 | Ep. 10 — The Cache | kdb+ read-through cache (`provider="kdb"`) + tick recording and a unified chart in `live-grid` |
-| v11.0.0 | Ep. 11 — The Shared Store | MinIO as its own tailnet node + ArcticDB (`provider="arcticdb"`) + `tick-lab` + the `live_chart` widget |
+| v11.0.0 | Ep. 11 — The Shared Store | MinIO as its own tailnet node + Delta Lake (`provider="deltalake"`) + `tick-lab` + the `live_chart` widget |
 | v11.1.0 | Ep. 11 — The Shared Store | `tick-lab`'s EODHD-through-the-API reference adapter — the per-minute 2023 comparison yfinance cannot serve |
 | v11.1.1 | Ep. 11 — The Shared Store | `tick-lab`'s in-process OpenBB reference adapter (`--reference eodhd-local`) — the same call made locally, and what it costs versus `eodhd-api` |
 
@@ -58,27 +58,55 @@ Nothing is published to the host; `:9000` is reachable on the tailnet and,
 as a documented limit of the posture, from the Docker bridge — in this
 deployment, that means never from the LAN, but that depends on the reader's
 host networking, not on anything this compose file guarantees. The
-**openbb-arcticdb provider extension** (`provider="arcticdb"`) puts that
+**openbb-deltalake provider extension** (`provider="deltalake"`) puts that
 store behind the Platform's normal historical-price interface, tick data
-included (pass `interval` to resample ticks into OHLCV on read).
+included (pass `interval` to resample ticks into OHLCV on read), plus a
+generic `openbb_deltalake.store` API for any other data shape, with
+versioned, time-travel reads:
+`store(library="research").read("gdp", as_of="2026-08-15")`.
 **`tick-lab`** is a new, separate CLI — install it locally, point it at the
-same store via `minio.env`'s `ARCTICDB_S3_*` values, load FirstRate Data's
-free tick sample (GOOG + MSFT, 2023-05-12 — **not committed here**, it's
-third-party licensed data you download yourself), and it rolls your stored
-ticks into 1-minute bars and checks them against a reference source —
-`eodhd-api` by default since v11.1.0, with `yfinance` and the in-process
-`eodhd-local` also available via `--reference`. **Apple Silicon readers, read
-this:** the Platform image is pinned `linux/amd64` because ArcticDB
-publishes no aarch64 Linux wheels — on an M-series Mac it runs under
-emulation, so expect a slower build and slower queries (correctness is
-unaffected). `tick-lab` itself is unaffected either way: it runs on your
-laptop, not in the image, and ArcticDB does publish native macOS arm64
-wheels. See [tick-lab/README.md](tick-lab/README.md) and
-[docs/arcticdb-minio-design.md](docs/arcticdb-minio-design.md).
+same store via `minio.env`'s `DELTA_S3_*` values (the `openbb-deltalake`
+provider and its `store()` API also accept `DELTA_URI`/`DELTA_LIBRARY` for a
+non-S3 target; `tick-lab` itself reads only `DELTA_S3_*`), load FirstRate
+Data's free tick sample (GOOG + MSFT,
+2023-05-12 — **not committed here**, it's third-party licensed data you
+download yourself), and it rolls your stored ticks into 1-minute bars and
+checks them against a reference source — `eodhd-api` by default since
+v11.1.0, with `yfinance` and the in-process `eodhd-local` also available via
+`--reference`. **Apple Silicon readers:** the Platform image now runs
+**native `arm64`** — delta-rs ships native `aarch64` Linux wheels, so the
+earlier ArcticDB-era `linux/amd64` pin (and the emulation tax that came with
+it) is gone. See [tick-lab/README.md](tick-lab/README.md) and
+[docs/arcticdb-minio-design.md](docs/arcticdb-minio-design.md) (the original
+store design — superseded by Delta Lake; see
+[docs/superpowers/specs/2026-09-01-deltalake-store-design.md](docs/superpowers/specs/2026-09-01-deltalake-store-design.md)).
+
+**Why Delta Lake, not ArcticDB:** ArcticDB is BSL 1.1 with no
+additional-use grant — any production deployment needs a paid ArcticDB Pro
+license from Man Group, and each release converts to Apache 2.0 only two
+years after it ships, so a stack built on it can't legally run in production
+without paying. The replacement, Delta Lake via
+[delta-rs](https://github.com/delta-io/delta-rs), is Apache 2.0 outright, no
+license required at any scale. See
+[docs/arcticdb-alternatives-evaluation.md](docs/arcticdb-alternatives-evaluation.md)
+for the full evaluation and the candidates considered.
+
 This release also ships the **`live_chart` widget** — a data-only
 `live-grid/widgets.json` declaration (Workspace type `live_chart`) over the
 existing `GET /series` + `live_grid_ws`, so the Ep. 10 chart streams in
 Workspace itself with no new server code.
+
+**Upgrading an existing v11 stack:** if you already have a `minio.env` and
+`tick-lab/.env` from before this rename, they still carry `ARCTICDB_S3_*`
+names — rename every key to `DELTA_S3_*` (see `minio.env.example`) before
+restarting. ArcticDB-era objects already in the bucket are unreadable by
+Delta; re-run the loaders (`tick-lab load`) to rebuild each store, then
+delete the orphaned ArcticDB objects from the bucket yourself. If you forget
+to rename: the `minio` container exits immediately with a clear
+`DELTA_S3_ENDPOINT`-not-set error, but `openbb-api` comes up healthy anyway
+— the provider silently falls back to a local-directory store instead of
+MinIO, so reads for previously-stored data fail with `EmptyDataError`
+instead of an obvious connection error.
 
 **New in v10.0.0 (Ep. 10):** the cache, tick recording, and one unified
 chart. The **openbb-kdb provider extension** (`provider="kdb"`) puts an

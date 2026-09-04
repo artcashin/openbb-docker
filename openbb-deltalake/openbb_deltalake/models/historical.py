@@ -1,11 +1,11 @@
-"""ArcticDB historical price models (read path).
+"""Delta Lake historical price models (read path).
 
-Serves OHLCV bars previously persisted to an ArcticDB library back through the
+Serves OHLCV bars previously persisted to a Delta library back through the
 standard OpenBB interface, for several asset classes:
-`obb.equity.price.historical(provider="arcticdb")`,
-`obb.crypto.price.historical(provider="arcticdb")`, etc.
+`obb.equity.price.historical(provider="deltalake")`,
+`obb.crypto.price.historical(provider="deltalake")`, etc.
 
-For arbitrary (non-OHLCV) data, use the generic `openbb_arcticdb.store` API.
+For arbitrary (non-OHLCV) data, use the generic `openbb_deltalake.store` API.
 """
 
 # pylint: disable=unused-argument
@@ -159,19 +159,18 @@ def _pandas_ohlcv(df, rule: str, origin: str = "start_day", vwap: bool = False):
 
 
 async def _extract_bars(query, credentials: Optional[dict]) -> list[dict]:
-    """Read raw bars for one or more symbols from an ArcticDB library."""
+    """Read raw bars for one or more symbols from a Delta library."""
     # pylint: disable=import-outside-toplevel
     import asyncio
 
-    from openbb_arcticdb.utils import get_library, resolve_config, to_bounds
+    from openbb_deltalake.store import DeltaStore
+    from openbb_deltalake.utils import resolve_config, to_bounds
 
-    uri, library = resolve_config(
+    uri, library, _ = resolve_config(
         getattr(query, "uri", None), getattr(query, "library", None), credentials
     )
     symbols = [s.strip().upper() for s in query.symbol.split(",")]
     multiple = len(symbols) > 1
-    # No interval -> assume daily. (OpenBB also strips interval=="1d" since it's the
-    # global default, so an absent interval most often means the caller asked for 1d.)
     interval = getattr(query, "interval", None) or "1d"
     pandas_rule = _resample_spec(interval)
     pandas_anchor = bool(getattr(query, "pandas_anchor", False))
@@ -179,17 +178,19 @@ async def _extract_bars(query, credentials: Optional[dict]) -> list[dict]:
     start_ts, end_ts = to_bounds(query.start_date, query.end_date)
 
     def _read() -> list[dict]:
-        lib = get_library(uri, library, create_if_missing=False)
-        rng = None if start_ts is None and end_ts is None else (start_ts, end_ts)
+        s = DeltaStore(uri=uri, library=library)
         out: list[dict] = []
         missing: list[str] = []
         for sym in symbols:
-            if not lib.has_symbol(sym):
+            if not s.has(sym):
                 missing.append(sym)
                 continue
-            # Single read: ArcticDB filters by date_range on the server; the
-            # resample is done client-side with pandas.
-            df = lib.read(sym, date_range=rng).data
+            df = s.read(
+                sym,
+                start_date=query.start_date,
+                end_date=query.end_date,
+                output="dataframe",
+            )
             if df is None or df.empty:
                 continue
             if pandas_anchor:
@@ -212,7 +213,7 @@ async def _extract_bars(query, credentials: Optional[dict]) -> list[dict]:
             out.extend(records)
         if not out:
             detail = f" Unknown symbols: {missing}." if missing else ""
-            raise EmptyDataError(f"No data in ArcticDB library '{library}'.{detail}")
+            raise EmptyDataError(f"No data in Delta library '{library}'.{detail}")
         return out
 
     return await asyncio.to_thread(_read)
@@ -233,17 +234,20 @@ def _validate(query, data: list[dict], data_cls):
 
 
 def _build_fetcher(label: str, qp_base, data_base):
-    """Create an ArcticDB Fetcher for a given OHLCV standard model."""
+    """Create a Delta Lake Fetcher for a given OHLCV standard model."""
 
     class _QP(qp_base):  # type: ignore[valid-type, misc]
         __json_schema_extra__ = {"symbol": {"multiple_items_allowed": True}}
         library: Optional[str] = Field(
             default=None,
-            description="ArcticDB library to read from. Defaults to ARCTICDB_LIBRARY or 'openbb'.",
+            description="Delta library to read from. Defaults to DELTA_LIBRARY or 'openbb'.",
         )
         uri: Optional[str] = Field(
             default=None,
-            description="ArcticDB connection URI. Defaults to ARCTICDB_URI or a local LMDB store.",
+            description=(
+                "Store base: a local path or s3://bucket. Defaults to DELTA_URI, "
+                "DELTA_S3_*, or a local directory."
+            ),
         )
         interval: Optional[str] = Field(
             default=None,
@@ -287,16 +291,16 @@ def _build_fetcher(label: str, qp_base, data_base):
         @classmethod
         def _coerce_temporal(cls, v):
             # pylint: disable=import-outside-toplevel
-            from openbb_arcticdb.utils import parse_temporal
+            from openbb_deltalake.utils import parse_temporal
 
             return parse_temporal(v)
 
-    _QP.__name__ = f"ArcticDB{label}QueryParams"
+    _QP.__name__ = f"DeltaLake{label}QueryParams"
 
     class _Data(data_base):  # type: ignore[valid-type, misc]
         pass
 
-    _Data.__name__ = f"ArcticDB{label}Data"
+    _Data.__name__ = f"DeltaLake{label}Data"
 
     class _Fetcher(Fetcher[_QP, List[_Data]]):
         @staticmethod
@@ -311,22 +315,22 @@ def _build_fetcher(label: str, qp_base, data_base):
         def transform_data(query, data, **kwargs):
             return _validate(query, data, _Data)
 
-    _Fetcher.__name__ = f"ArcticDB{label}Fetcher"
+    _Fetcher.__name__ = f"DeltaLake{label}Fetcher"
     return _Fetcher
 
 
-ArcticDBEquityHistoricalFetcher = _build_fetcher(
+DeltaLakeEquityHistoricalFetcher = _build_fetcher(
     "EquityHistorical", EquityHistoricalQueryParams, EquityHistoricalData
 )
-ArcticDBEtfHistoricalFetcher = _build_fetcher(
+DeltaLakeEtfHistoricalFetcher = _build_fetcher(
     "EtfHistorical", EtfHistoricalQueryParams, EtfHistoricalData
 )
-ArcticDBCryptoHistoricalFetcher = _build_fetcher(
+DeltaLakeCryptoHistoricalFetcher = _build_fetcher(
     "CryptoHistorical", CryptoHistoricalQueryParams, CryptoHistoricalData
 )
-ArcticDBCurrencyHistoricalFetcher = _build_fetcher(
+DeltaLakeCurrencyHistoricalFetcher = _build_fetcher(
     "CurrencyHistorical", CurrencyHistoricalQueryParams, CurrencyHistoricalData
 )
-ArcticDBIndexHistoricalFetcher = _build_fetcher(
+DeltaLakeIndexHistoricalFetcher = _build_fetcher(
     "IndexHistorical", IndexHistoricalQueryParams, IndexHistoricalData
 )

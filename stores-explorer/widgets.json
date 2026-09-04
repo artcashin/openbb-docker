@@ -1,19 +1,58 @@
 {
-  "arctic_explorer": {
-    "name": "ArcticDB Explorer",
-    "description": "Browse the shared ArcticDB store: pick a library, pick a symbol, see the stored series.",
+  "delta_explorer": {
+    "name": "Delta Lake Explorer",
+    "description": "Browse the shared Delta Lake store: pick a library, pick a symbol, see what is stored and read it at any version.",
     "category": "Data",
-    "type": "table",
-    "endpoint": "arctic/series",
+    "type": "delta_explorer",
+    "endpoint": "delta/series",
     "dataKey": "rows",
-    "gridData": { "w": 30, "h": 14 },
+    "gridData": {
+      "w": 30,
+      "h": 14
+    },
     "params": [
-      { "paramName": "library", "type": "text", "label": "Library", "value": "", "optionsEndpoint": "arctic/libraries" },
-      { "paramName": "symbol", "type": "text", "label": "Symbol", "value": "", "optionsEndpoint": "arctic/symbols", "optionsParams": { "library": "$library" } },
-      { "paramName": "start", "type": "date", "label": "Start", "value": "", "show": false },
-      { "paramName": "end", "type": "date", "label": "End", "value": "", "show": false }
+      {
+        "paramName": "library",
+        "type": "text",
+        "label": "Library",
+        "value": "",
+        "optionsEndpoint": "delta/libraries"
+      },
+      {
+        "paramName": "symbol",
+        "type": "text",
+        "label": "Symbol",
+        "value": "",
+        "optionsEndpoint": "delta/symbols",
+        "optionsParams": {
+          "library": "$library"
+        }
+      },
+      {
+        "paramName": "start",
+        "type": "date",
+        "label": "Start",
+        "value": "",
+        "show": false
+      },
+      {
+        "paramName": "end",
+        "type": "date",
+        "label": "End",
+        "value": "",
+        "show": false
+      },
+      {
+        "paramName": "as_of",
+        "type": "text",
+        "label": "As of",
+        "value": "",
+        "show": false
+      }
     ],
-    "source": ["ArcticDB"]
+    "source": [
+      "Delta Lake"
+    ]
   },
   "kdb_explorer": {
     "name": "kdb+ Explorer",
@@ -22,13 +61,42 @@
     "type": "table",
     "endpoint": "kdb/select",
     "dataKey": "rows",
-    "gridData": { "w": 30, "h": 14 },
+    "gridData": {
+      "w": 30,
+      "h": 14
+    },
     "params": [
-      { "paramName": "table", "type": "text", "label": "Table", "value": "", "optionsEndpoint": "kdb/tables" },
-      { "paramName": "symbol", "type": "text", "label": "Symbol", "value": "", "show": false },
-      { "paramName": "start_time", "type": "date", "label": "Start", "value": "", "show": false },
-      { "paramName": "end_time", "type": "date", "label": "End", "value": "", "show": false }
+      {
+        "paramName": "table",
+        "type": "text",
+        "label": "Table",
+        "value": "",
+        "optionsEndpoint": "kdb/tables"
+      },
+      {
+        "paramName": "symbol",
+        "type": "text",
+        "label": "Symbol",
+        "value": "",
+        "show": false
+      },
+      {
+        "paramName": "start_time",
+        "type": "date",
+        "label": "Start",
+        "value": "",
+        "show": false
+      },
+      {
+        "paramName": "end_time",
+        "type": "date",
+        "label": "End",
+        "value": "",
+        "show": false
+      }
     ],
-    "source": ["kdb+"]
+    "source": [
+      "kdb+"
+    ]
   }
 }

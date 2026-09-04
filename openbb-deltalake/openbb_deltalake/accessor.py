@@ -1,24 +1,24 @@
-"""ArcticDB OBBject accessor (write path).
+"""Delta Lake OBBject accessor (write path).
 
-Attaches an `.arcticdb` namespace to every OBBject result so any query can be
-persisted to ArcticDB and managed:
+Attaches a `.deltalake` namespace to every OBBject result so any query can be
+persisted to a Delta table and managed:
 
     res = obb.equity.price.historical("AAPL", provider="yfinance")
-    res.arcticdb.write("AAPL")                 # store into the default library
-    res.arcticdb.append("AAPL")                # append new rows
-    res.arcticdb.list_symbols()                # catalog
-    res.arcticdb.read_metadata("AAPL")
-    res.arcticdb.delete("AAPL")
+    res.deltalake.write("AAPL")                 # store into the default library
+    res.deltalake.append("AAPL")                # append new rows
+    res.deltalake.list_symbols()                # catalog
+    res.deltalake.read_metadata("AAPL")
+    res.deltalake.delete("AAPL")
 
 All methods accept optional `library=` / `uri=` overrides. For reading arbitrary
-data back (and for use without an existing result), see `openbb_arcticdb.store`.
+data back (and for use without an existing result), see `openbb_deltalake.store`.
 """
 
 from typing import Any, Optional
 
 
-class ArcticDBAccessor:
-    """Persist and manage OBBject results in ArcticDB."""
+class DeltaLakeAccessor:
+    """Persist and manage OBBject results in a Delta Lake library."""
 
     def __init__(self, obbject):
         """Bind the accessor to its OBBject and build a default store."""
@@ -38,15 +38,9 @@ class ArcticDBAccessor:
         library: Optional[str] = None,
         uri: Optional[str] = None,
         metadata: Optional[dict[str, Any]] = None,
-        prune_previous_versions: bool = False,
     ) -> dict[str, Any]:
-        """Write this result to ArcticDB as a new version (overwrites the symbol)."""
-        return self._store(uri, library).write(
-            key,
-            self._obbject,
-            metadata=metadata,
-            prune_previous_versions=prune_previous_versions,
-        )
+        """Write this result to the Delta library as a new version (overwrites the symbol)."""
+        return self._store(uri, library).write(key, self._obbject, metadata=metadata)
 
     def append(
         self, key: str, *, library: Optional[str] = None, uri: Optional[str] = None
@@ -74,8 +68,8 @@ class ArcticDBAccessor:
 
 
 def _make_store(uri: Optional[str], library: Optional[str]):
-    """Build an ArcticStore, resolving config on first access."""
+    """Build a DeltaStore, resolving config on first access."""
     # pylint: disable=import-outside-toplevel
-    from openbb_arcticdb.store import ArcticStore
+    from openbb_deltalake.store import DeltaStore
 
-    return ArcticStore(uri=uri, library=library)
+    return DeltaStore(uri=uri, library=library)

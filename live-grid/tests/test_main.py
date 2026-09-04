@@ -297,6 +297,40 @@ def test_websocket_registers_params_and_streams_dirty_rows(monkeypatch):
         assert row is not None and row["price"] == 151.0
 
 
+def test_advanced_chart_is_declared_with_its_series_websocket():
+    spec = make_client().get("/widgets.json").json()
+    widget = spec["advanced_chart"]
+    assert widget["type"] == "advanced_chart"
+    assert widget["endpoint"] == "series"
+    assert widget["wsEndpoint"] == "ta_series_ws"
+
+
+def test_advanced_chart_macro_options_are_filled_in_like_ta_chart():
+    spec = make_client().get("/widgets.json").json()
+    macro = next(p for p in spec["advanced_chart"]["params"]
+                 if p["paramName"] == "macro")
+    values = [o["value"] for o in macro["options"]]
+    assert values[0] == "none"
+    assert "classic-momentum" in values
+
+
+def test_advanced_chart_offers_a_price_basis_distinct_from_source():
+    spec = make_client().get("/widgets.json").json()
+    names = [p["paramName"] for p in spec["advanced_chart"]["params"]]
+    assert "basis" in names and "source" in names
+    source = next(p for p in spec["advanced_chart"]["params"] if p["paramName"] == "source")
+    assert [o["value"] for o in source["options"]] == ["local", "eodhd"]
+
+
+def test_advanced_chart_offers_the_full_intraday_interval_range():
+    spec = make_client().get("/widgets.json").json()
+    interval = next(p for p in spec["advanced_chart"]["params"]
+                    if p["paramName"] == "interval")
+    assert [o["value"] for o in interval["options"]] == [
+        "1s", "1m", "5m", "15m", "30m", "1h", "1d"
+    ]
+
+
 def test_change_and_percent_are_two_columns_not_one_parenthetical():
     """They sort independently and line up down the grid, which a percent
     riding inside the change cell as "(3.40%)" could not do."""

@@ -1,4 +1,4 @@
-# stores-explorer: read-only widget backend browsing the shared ArcticDB/kdb+
+# stores-explorer: read-only widget backend browsing the shared Delta Lake/kdb+
 # store (Ep. 11) -- the widget's door into the vault, pairing with
 # stores-mcp (the analyst's door). Loopback-only; Tailscale Serve publishes
 # it (see repo compose).
@@ -11,18 +11,29 @@ FROM python:3.12-slim
 ENV PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1
 WORKDIR /srv
 
-# mcp_stores's discovery functions (arctic_list_libraries, arctic_read,
+# mcp_stores's discovery functions (delta_list_libraries, delta_read,
 # kdb_select, ...) -- installed before stores-explorer itself, since
 # stores-explorer's own pyproject.toml depends on it and it is not
 # published to PyPI. Installs as a bare top-level `server` module (its
 # pyproject.toml declares py-modules = ["server"]), which app/main.py
 # imports from directly.
+# openbb-deltalake first: mcp_stores declares it as a dependency (the Delta
+# store is what its delta_* tools read), and like mcp_stores itself it is not
+# published to PyPI -- so pip cannot resolve it from the index and must find
+# it already installed. This is the same ordering the root Dockerfile uses.
+COPY openbb-deltalake/ /srv/openbb-deltalake/
+RUN pip install /srv/openbb-deltalake && rm -rf /srv/openbb-deltalake
+
 COPY mcp_stores/ /srv/mcp_stores/
 RUN pip install /srv/mcp_stores
 
 COPY stores-explorer/pyproject.toml ./
 COPY stores-explorer/app/ app/
 COPY stores-explorer/widgets.json ./
+# apps.json is served by GET /apps.json (the Ep. 11 example dashboard); the
+# route reads it from disk, so leaving it out of the image is a 500, not a
+# missing feature.
+COPY stores-explorer/apps.json ./
 RUN pip install .
 
 # Same reusable entrypoint openbb-local (stores-mcp's own image) already

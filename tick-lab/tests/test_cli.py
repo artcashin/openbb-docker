@@ -63,7 +63,7 @@ def test_missing_eodhd_api_env_is_reported_cleanly(capsys, monkeypatch):
     # configuration problem, with the exit code main() already uses for one.
     # Ticks must actually be found first, or cmd_compare returns 1 for that
     # ("no ticks stored") before ever reaching adapter construction.
-    _set_dummy_arctic_env(monkeypatch)
+    _set_dummy_delta_env(monkeypatch)
     for key in ("OPENBB_URL", "OPENBB_API_USERNAME", "OPENBB_API_PASSWORD"):
         monkeypatch.delenv(key, raising=False)
     _install_fake_store(monkeypatch, read_result=_fake_trades_two_days())
@@ -77,18 +77,18 @@ def test_missing_eodhd_api_env_is_reported_cleanly(capsys, monkeypatch):
 
 
 def test_bad_config_is_reported_without_a_traceback(capsys, monkeypatch):
-    for key in ("ARCTICDB_S3_ENDPOINT", "ARCTICDB_S3_BUCKET",
-                "ARCTICDB_S3_ACCESS", "ARCTICDB_S3_SECRET"):
+    for key in ("DELTA_S3_ENDPOINT", "DELTA_S3_BUCKET",
+                "DELTA_S3_ACCESS", "DELTA_S3_SECRET"):
         monkeypatch.delenv(key, raising=False)
     code = main(["compare", "--symbol", "MSFT", "--date", "2023-05-12"])
     assert code == 1
-    assert "ARCTICDB_S3_ENDPOINT" in capsys.readouterr().err
+    assert "DELTA_S3_ENDPOINT" in capsys.readouterr().err
 
 
 # --- --date/--end validation -------------------------------------------
 #
 # argparse gives --date/--end no type= validator in the brief's sample code,
-# so a typo like "2023-13-45" or "last-tuesday" would reach pandas/ArcticDB
+# so a typo like "2023-13-45" or "last-tuesday" would reach pandas/Delta
 # unvalidated and surface as a confusing parse error deep in the stack.
 # date_or_datetime() is the type= callable that rejects it right at the
 # argparse boundary instead, with a message naming the expected format.
@@ -189,27 +189,27 @@ def test_iter_members_raises_a_clean_error_for_a_non_zip_file(tmp_path):
 
 # --- cmd_load: per-file failures are reported and the run CONTINUES -----
 #
-# Neither a bad file (fails to parse) nor a bad write (ArcticDB rejects it,
+# Neither a bad file (fails to parse) nor a bad write (Delta rejects it,
 # a network blip, ...) may abort the rest of the batch. Every scenario below
 # drives `main(["load", ...])` end to end against a fake TickStore -- no
 # network, no MinIO -- so these tests actually exercise cmd_load, which the
 # rest of this file never did.
 
-ARCTIC_ENV_KEYS = (
-    "ARCTICDB_S3_ENDPOINT",
-    "ARCTICDB_S3_BUCKET",
-    "ARCTICDB_S3_ACCESS",
-    "ARCTICDB_S3_SECRET",
+DELTA_ENV_KEYS = (
+    "DELTA_S3_ENDPOINT",
+    "DELTA_S3_BUCKET",
+    "DELTA_S3_ACCESS",
+    "DELTA_S3_SECRET",
 )
 
 
-def _set_dummy_arctic_env(monkeypatch):
-    for key in ARCTIC_ENV_KEYS:
+def _set_dummy_delta_env(monkeypatch):
+    for key in DELTA_ENV_KEYS:
         monkeypatch.setenv(key, f"dummy-{key}")
 
 
 class _FakeStore:
-    """Stands in for TickStore: records calls, never touches ArcticDB."""
+    """Stands in for TickStore: records calls, never touches Delta Lake."""
 
     def __init__(self):
         self.written = []
@@ -243,7 +243,7 @@ def _write_trade_file(dir_path, symbol, date="2023-05-12"):
 def test_cmd_load_parse_failure_is_skipped_and_good_files_still_written(
     tmp_path, monkeypatch
 ):
-    _set_dummy_arctic_env(monkeypatch)
+    _set_dummy_delta_env(monkeypatch)
     store = _install_fake_store(monkeypatch)
     _write_trade_file(tmp_path, "AAA")
     _write_trade_file(tmp_path, "BBB")
@@ -267,7 +267,7 @@ def test_cmd_load_write_failure_is_skipped_and_good_files_still_written(
     # fails (StoreWriteError propagates out of main() uncaught); against the
     # fix, AAA and CCC are still written and the run reports failure via the
     # exit code, not an exception.
-    _set_dummy_arctic_env(monkeypatch)
+    _set_dummy_delta_env(monkeypatch)
     _write_trade_file(tmp_path, "AAA")
     _write_trade_file(tmp_path, "BBB")
     _write_trade_file(tmp_path, "CCC")
@@ -281,7 +281,7 @@ def test_cmd_load_write_failure_is_skipped_and_good_files_still_written(
 
 
 def test_cmd_load_all_good_writes_everything_and_exits_zero(tmp_path, monkeypatch):
-    _set_dummy_arctic_env(monkeypatch)
+    _set_dummy_delta_env(monkeypatch)
     _write_trade_file(tmp_path, "AAA")
     _write_trade_file(tmp_path, "BBB")
     store = _install_fake_store(monkeypatch)
@@ -294,7 +294,7 @@ def test_cmd_load_all_good_writes_everything_and_exits_zero(tmp_path, monkeypatc
 
 
 def test_cmd_load_dry_run_writes_nothing_and_exits_zero(tmp_path, monkeypatch, capsys):
-    _set_dummy_arctic_env(monkeypatch)
+    _set_dummy_delta_env(monkeypatch)
     _write_trade_file(tmp_path, "AAA")
     store = _install_fake_store(monkeypatch)
 
@@ -306,7 +306,7 @@ def test_cmd_load_dry_run_writes_nothing_and_exits_zero(tmp_path, monkeypatch, c
 
 
 def test_cmd_load_reports_a_bad_top_level_path_cleanly(tmp_path, monkeypatch, capsys):
-    _set_dummy_arctic_env(monkeypatch)
+    _set_dummy_delta_env(monkeypatch)
     _install_fake_store(monkeypatch)
     bad = tmp_path / "not-a-zip.zip"
     bad.write_text("plain text, not a zip")
@@ -359,7 +359,7 @@ def test_compare_reads_our_ticks_over_the_full_requested_window(monkeypatch):
     # start=args.date, end=args.date regardless of --end, silently
     # truncating our side to day one while the reference spanned the whole
     # window. Both sides must use the same (args.date, args.end) window.
-    _set_dummy_arctic_env(monkeypatch)
+    _set_dummy_delta_env(monkeypatch)
     store = _install_fake_store(monkeypatch, read_result=_fake_trades_two_days())
     monkeypatch.setitem(cli.ADAPTERS, "yfinance", _FakeAdapter)
 
@@ -378,11 +378,11 @@ def test_compare_reports_a_missing_library_cleanly(monkeypatch, capsys):
     # not catch it and main() only catches ConfigError -- so the single most
     # likely first mistake (compare before ever loading) produced a raw
     # traceback instead of that friendly message.
-    _set_dummy_arctic_env(monkeypatch)
+    _set_dummy_delta_env(monkeypatch)
 
     def _raise(*_args, **_kwargs):
         raise LibraryNotFoundError(
-            "ArcticDB library 'ticks' does not exist. run `tick-lab load` first"
+            "Delta library 'ticks' does not exist. run `tick-lab load` first"
         )
 
     _install_fake_store(monkeypatch)
@@ -400,7 +400,7 @@ def test_compare_uppercases_the_symbol_before_reading(monkeypatch):
     # Finding 6: the loader upper-cases the symbol at write time, so a
     # lowercase --symbol must be normalised the same way or a real,
     # previously-loaded symbol is reported as "no ticks stored".
-    _set_dummy_arctic_env(monkeypatch)
+    _set_dummy_delta_env(monkeypatch)
     store = _install_fake_store(monkeypatch, read_result=_fake_trades_two_days())
     monkeypatch.setitem(cli.ADAPTERS, "yfinance", _FakeAdapter)
 

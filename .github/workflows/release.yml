@@ -96,11 +96,13 @@ jobs:
               if key in seen:
                   continue
               seen.add(key)
-              # ArcticDB publishes manylinux x86_64 wheels only -- no aarch64 --
-              # so any image that installs it cannot produce an arm64 layer. The
-              # root Dockerfile says so itself from Ep. 11 onward.
-              text = pathlib.Path(df_path).read_text(encoding="utf-8", errors="replace").lower()
-              arches = ["amd64"] if "arcticdb" in text else ["amd64", "arm64"]
+              # Every image builds both arches. ArcticDB was the only
+              # aarch64 blocker (manylinux x86_64 wheels only) and left with
+              # the Ep. 11 Delta re-cut; the gate that keyed on it is gone
+              # with it. Checked on PyPI when the gate was removed: pykx 4.1.0
+              # publishes manylinux2014_aarch64 and manylinux_2_28_aarch64,
+              # deltalake 1.6.3 publishes manylinux_2_28_aarch64.
+              arches = ["amd64", "arm64"]
               # Published under a reserved episode- namespace rather than the
               # bare compose name. `openbb-local` already exists as a
               # hand-pushed package holding OpenBB PLATFORM versions (4.6.0,

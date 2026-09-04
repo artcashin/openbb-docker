@@ -84,7 +84,7 @@ def test_ttl_expiry_refetches(monkeypatch):
 
 
 def test_l2_hit_within_ttl_skips_eodhd(monkeypatch):
-    """A fresh ArcticDB entry is served without any EODHD call."""
+    """A fresh Delta Lake entry is served without any EODHD call."""
     calls = {"n": 0}
     monkeypatch.setattr(F, "_fetch_sync", lambda s, c: (calls.__setitem__("n", calls["n"] + 1) or BUNDLE))
     monkeypatch.setattr(F, "_l2_get", lambda sym: BUNDLE)     # L2 fresh hit
@@ -107,19 +107,55 @@ def test_l2_miss_fetches_and_writes_back(monkeypatch):
     assert calls == {"fetch": 1, "put": 1}
 
 
-def test_arctic_library_passes_resolved_uri_not_none(monkeypatch):
-    U = pytest.importorskip(
-        "openbb_arcticdb.utils",
-        reason="L2 is a soft dependency; without openbb-arcticdb it degrades to L1",
+def test_delta_store_uses_the_cache_library(monkeypatch, tmp_path):
+    """_delta_store resolves through DeltaStore itself; the library is the cache's."""
+    pytest.importorskip(
+        "openbb_deltalake.store",
+        reason="L2 is a soft dependency; without openbb-deltalake it degrades to L1",
     )
-    captured = {}
-    monkeypatch.setattr(U, "resolve_config",
-        lambda uri=None, library=None, credentials=None: ("lmdb:///tmp/eodhd-test", library))
-    monkeypatch.setattr(U, "get_library",
-        lambda uri, library, create_if_missing=True: captured.update(uri=uri, library=library) or "LIB")
-    assert F._arctic_library() == "LIB"
-    assert captured["uri"] == "lmdb:///tmp/eodhd-test"   # regression guard: never None
-    assert captured["library"] == "eodhd_fundamentals_cache"
+    monkeypatch.setenv("DELTA_URI", str(tmp_path))
+    store = F._delta_store()
+    assert store is not None
+    assert store.library == "eodhd_fundamentals_cache"
+    # regression guard: the configured base is honoured, never silently defaulted
+    assert str(tmp_path) in store.base
+
+
+def test_l2_round_trips_a_bundle_through_delta(monkeypatch, tmp_path):
+    pytest.importorskip("openbb_deltalake.store")
+    monkeypatch.setenv("DELTA_URI", str(tmp_path))
+    F._l2_put("AAPL.US", BUNDLE)
+    assert F._l2_get("AAPL.US") == BUNDLE
+
+
+def test_l2_entry_past_its_ttl_is_a_miss(monkeypatch, tmp_path):
+    pytest.importorskip("openbb_deltalake.store")
+    monkeypatch.setenv("DELTA_URI", str(tmp_path))
+    monkeypatch.setenv("EODHD_FUNDAMENTALS_TTL_HOURS", "0")
+    F._l2_put("MSFT.US", BUNDLE)
+    assert F._l2_get("MSFT.US") is None
+
+
+def test_l2_refresh_does_not_accumulate_versions(monkeypatch, tmp_path):
+    """Delta has no prune_previous_versions; without the vacuum step every
+    refresh would add a commit forever and read_metadata's history() walk
+    would slow with it."""
+    pytest.importorskip("openbb_deltalake.store")
+    from deltalake import DeltaTable
+
+    monkeypatch.setenv("DELTA_URI", str(tmp_path))
+    for i in range(4):
+        F._l2_put("NVDA.US", {"General": {"n": i}})
+    store = F._delta_store()
+    dt = DeltaTable(store._path("NVDA.US"), storage_options=store.storage_options)
+    assert len(dt.history()) <= 2, "vacuum should keep the cache's history bounded"
+    assert F._l2_get("NVDA.US") == {"General": {"n": 3}}
+
+
+def test_l2_never_raises_when_the_store_is_unavailable(monkeypatch):
+    monkeypatch.setattr(F, "_delta_store", lambda: None)
+    F._l2_put("TSLA.US", BUNDLE)          # must not raise
+    assert F._l2_get("TSLA.US") is None
 
 
 def test_expired_entries_swept_on_next_populate(monkeypatch):
@@ -140,9 +176,9 @@ def test_expired_entries_swept_on_next_populate(monkeypatch):
 
 
 def test_l2_unavailable_falls_back_to_live_fetch(monkeypatch):
-    """If ArcticDB can't be reached, get/put no-op and the request still succeeds."""
+    """If the Delta store can't be reached, get/put no-op and the request still succeeds."""
     calls = {"n": 0}
-    monkeypatch.setattr(F, "_arctic_library", lambda: None)   # ArcticDB absent
+    monkeypatch.setattr(F, "_delta_store", lambda: None)      # Delta store absent
     monkeypatch.setattr(F, "_fetch_sync", lambda s, c: (calls.__setitem__("n", calls["n"] + 1) or BUNDLE))
 
     out = asyncio.run(F.get_bundle("AAPL", "US", {"eodhd_api_key": "k"}))

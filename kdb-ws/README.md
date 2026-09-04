@@ -64,7 +64,7 @@ from bars alone, trade-true, without ever touching ticks:
                            (a 30-minute rolling vwap = six 5-minute bars)
 
 The same primitive rides through every aggregation layer: this websocket's
-`bars`, live-grid's tick-derived `/series` bars, and the ArcticDB provider's
+`bars`, live-grid's tick-derived `/series` bars, and the Delta Lake provider's
 resample (`vwap=true` query param) over flushed ticks in the HDB.
 
 A second `sub` replaces the first; closing the socket unsubscribes. Defining

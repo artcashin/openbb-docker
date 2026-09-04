@@ -1,0 +1,53 @@
+[
+  {
+    "name": "Ep. 11 — The Shared Store",
+    "description": "Browse the Delta Lake store: stored ticks, the EODHD fundamentals cache that now persists into it, and the kdb+ tape beside it.",
+    "img": "",
+    "img_dark": "",
+    "img_light": "",
+    "allowCustomization": true,
+    "tabs": {
+      "store": {
+        "id": "store",
+        "name": "Store",
+        "layout": [
+          {
+            "i": "delta_explorer",
+            "x": 0,
+            "y": 0,
+            "w": 20,
+            "h": 14,
+            "state": {
+              "params": { "library": "ticks", "symbol": "", "as_of": "" },
+              "chartView": { "enabled": false, "chartType": "line" }
+            }
+          },
+          {
+            "i": "delta_explorer",
+            "x": 20,
+            "y": 0,
+            "w": 20,
+            "h": 14,
+            "state": {
+              "params": { "library": "eodhd_fundamentals_cache", "symbol": "", "as_of": "" },
+              "chartView": { "enabled": false, "chartType": "line" }
+            }
+          },
+          {
+            "i": "kdb_explorer",
+            "x": 0,
+            "y": 14,
+            "w": 40,
+            "h": 12,
+            "state": {
+              "params": { "table": "", "symbol": "" },
+              "chartView": { "enabled": false, "chartType": "line" }
+            }
+          }
+        ]
+      }
+    },
+    "groups": [],
+    "prompts": []
+  }
+]

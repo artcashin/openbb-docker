@@ -162,9 +162,9 @@ IGNORE: frozenset[str] = frozenset(
         "KDB_HOST",
         "KDB_PORT",
         "S3_CONTAINER",
-        "ARCTICDB_BUCKET",
-        "ARCTICDB_LIBRARY",
-        "ARCTICDB_URI",
+        "DELTA_S3_BUCKET",
+        "DELTA_LIBRARY",
+        "DELTA_URI",
     }
 )
 

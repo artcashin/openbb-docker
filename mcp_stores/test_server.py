@@ -1,11 +1,12 @@
-"""Unit tests for mcp_stores/server.py with arcticdb and pykx MOCKED.
+"""Unit tests for mcp_stores/server.py: a real tmp-path Delta store, pykx MOCKED.
 
-Runs on the Mac with no arcticdb/pykx/kdb installed:
+Runs on the Mac with no kdb installed:
     cd /Users/artcashin/Developer/openbb-docker
     uv run --with fastmcp --with pytest --with pandas python -m pytest mcp_stores/test_server.py -v
 
-server.py imports arcticdb/pykx lazily inside helper functions, so these tests
-inject fakes via sys.modules before any tool touches them.
+deltalake needs no server, so the Delta tools are tested against a real
+tmp-path store. server.py imports pykx lazily inside helper functions, so kdb
+fakes still go in via sys.modules before any tool touches them.
 """
 import os
 import sys
@@ -55,15 +56,28 @@ class FakeConn:
 
 
 @pytest.fixture
-def arctic_store(monkeypatch):
-    monkeypatch.setenv(
-        "ARCTICDB_URI", "s3://192.0.2.60:openbb?port=9000&access=x&secret=y"
+def delta_store(monkeypatch, tmp_path):
+    """A real tmp-path Delta store.
+
+    deltalake needs no server and no credentials, so these tests exercise the
+    real read path rather than a MagicMock -- which is what lets the
+    "bounds the read" assertion below mean anything.
+    """
+    from deltalake import write_deltalake
+
+    monkeypatch.setenv("DELTA_URI", str(tmp_path))
+    idx = pd.date_range("2026-01-01", periods=5, freq="1min")
+    write_deltalake(
+        f"{tmp_path}/ticks/AAPL",
+        pd.DataFrame({"date": idx, "bid": [1.0, 2.0, 3.0, 4.0, 5.0]}),
+        mode="overwrite",
     )
-    store = MagicMock()
-    monkeypatch.setitem(
-        sys.modules, "arcticdb", types.SimpleNamespace(Arctic=lambda uri: store)
+    write_deltalake(
+        f"{tmp_path}/hrp_prices/SPY",
+        pd.DataFrame({"date": idx, "bid": [1.0] * 5}),
+        mode="overwrite",
     )
-    return store
+    return tmp_path
 
 
 @pytest.fixture
@@ -79,83 +93,104 @@ def kdb_conn(monkeypatch):
     return conn
 
 
-# ---------- arctic ----------
+# ---------- delta ----------
 
-def test_arctic_list_libraries_sorted(arctic_store):
-    arctic_store.list_libraries.return_value = ["ticks", "hrp_prices"]
-    assert server.arctic_list_libraries() == ["hrp_prices", "ticks"]
+def test_delta_list_libraries_sorted(delta_store):
+    assert server.delta_list_libraries() == ["hrp_prices", "ticks"]
 
 
-def test_arctic_list_symbols_unknown_library_raises(arctic_store):
-    arctic_store.list_libraries.return_value = ["ticks"]
+def test_delta_list_symbols_unknown_library_raises(delta_store):
     with pytest.raises(ValueError, match="unknown library"):
-        server.arctic_list_symbols("nope")
+        server.delta_list_symbols("nope")
 
 
-def test_arctic_read_rejects_unknown_library(arctic_store):
-    # finding 10a: arctic_read has its own allowlist check, separate from
-    # arctic_list_symbols's -- pin it directly so removing it fails this test.
-    arctic_store.list_libraries.return_value = ["ticks"]
+def test_delta_read_rejects_unknown_library(delta_store):
+    # finding 10a: delta_read has its own allowlist check, separate from
+    # delta_list_symbols's -- pin it directly so removing it fails this test.
     with pytest.raises(ValueError, match="unknown library"):
-        server.arctic_read("nope", "AAPL")
+        server.delta_read("nope", "AAPL")
 
 
-def test_arctic_read_bounds_the_read_not_just_the_response(arctic_store):
-    # finding 2: with no start/end, arctic_read must use Library.tail()
-    # (bounded at the backend) instead of read()+tail() (materializes all).
-    idx = pd.date_range("2026-01-01", periods=3, freq="1min")
-    df = pd.DataFrame({"bid": [1.0, 2.0, 3.0]}, index=idx)
-    arctic_store.list_libraries.return_value = ["ticks"]
-    lib = arctic_store.__getitem__.return_value
-    lib.list_symbols.return_value = ["AAPL"]
-    lib.tail.return_value = SimpleNamespace(data=df)
-    lib.get_description.return_value = SimpleNamespace(row_count=10_000_000)
+def test_delta_read_unknown_symbol_raises(delta_store):
+    with pytest.raises(ValueError, match="unknown symbol"):
+        server.delta_read("ticks", "NOPE")
 
-    out = server.arctic_read("ticks", "AAPL", tail_rows=3)
 
-    lib.tail.assert_called_once_with("AAPL", n=3)
-    lib.read.assert_not_called()  # never materializes the whole symbol
-    assert out["total_rows_in_range"] == 10_000_000  # cheap get_description call
+def test_delta_read_bounds_the_read_not_just_the_response(delta_store, monkeypatch):
+    # finding 2, ported: with no start/end the read must be bounded at the
+    # storage layer. ArcticDB gave Library.tail; Delta has none, so this goes
+    # through read_trailing -> trailing_fragment_paths. A plain full read
+    # would materialize the whole symbol.
+    from openbb_deltalake.store import DeltaStore
+
+    def explode(self, *a, **k):
+        raise AssertionError("an unfiltered read must not materialize the symbol")
+
+    monkeypatch.setattr(DeltaStore, "read", explode)
+
+    out = server.delta_read("ticks", "AAPL", tail_rows=3)
+
+    assert out["total_rows_in_range"] == 5   # from the log, not from rows
     assert out["returned_rows"] == 3
-    assert out["rows"][0]["index"].startswith("2026-01-01T00:00")
+    assert out["rows"][0]["date"].startswith("2026-01-01T00:02")
 
 
-def test_arctic_read_clamps_tail_rows_to_max_rows(arctic_store):
-    # finding 10b: the existing test used tail_rows=3 on a 5-row frame, so
-    # MAX_ROWS was never actually exercised. Pin the real clamp here.
-    arctic_store.list_libraries.return_value = ["ticks"]
-    lib = arctic_store.__getitem__.return_value
-    lib.list_symbols.return_value = ["AAPL"]
-    lib.tail.return_value = SimpleNamespace(data=pd.DataFrame({"bid": [1.0]}))
-    lib.get_description.return_value = SimpleNamespace(row_count=1)
+def test_delta_read_clamps_tail_rows_to_max_rows(delta_store, monkeypatch):
+    # finding 10b: pin the real clamp, not a value the frame is smaller than.
+    seen = {}
+    from openbb_deltalake.store import DeltaStore
 
-    server.arctic_read("ticks", "AAPL", tail_rows=999_999_999)
+    real = DeltaStore.read_trailing
 
-    lib.tail.assert_called_once_with("AAPL", n=server.MAX_ROWS)
+    def spy(self, key, n_rows, as_of=None):
+        seen["n"] = n_rows
+        return real(self, key, n_rows, as_of)
+
+    monkeypatch.setattr(DeltaStore, "read_trailing", spy)
+    server.delta_read("ticks", "AAPL", tail_rows=999_999_999)
+    assert seen["n"] == server.MAX_ROWS
 
 
-def test_arctic_read_passes_date_range(arctic_store):
-    df = pd.DataFrame({"bid": [1.0]}, index=pd.date_range("2026-01-01", periods=1))
-    arctic_store.list_libraries.return_value = ["ticks"]
-    lib = arctic_store.__getitem__.return_value
-    lib.list_symbols.return_value = ["AAPL"]
-    lib.read.return_value = SimpleNamespace(data=df)
+def test_delta_read_passes_date_range(delta_store):
+    out = server.delta_read(
+        "ticks", "AAPL", start="2026-01-01T00:01", end="2026-01-01T00:03"
+    )
+    assert out["returned_rows"] == 3
+    assert out["total_rows_in_range"] == 3
 
-    server.arctic_read("ticks", "AAPL", start="2026-01-01", end="2026-01-02")
 
-    _, kwargs = lib.read.call_args
-    assert kwargs["date_range"] == (
-        pd.Timestamp("2026-01-01"),
-        pd.Timestamp("2026-01-02"),
+def test_delta_describe_reports_metadata_without_reading_rows(delta_store, monkeypatch):
+    from openbb_deltalake.store import DeltaStore
+
+    def explode(self, *a, **k):
+        raise AssertionError("describe must not read rows")
+
+    monkeypatch.setattr(DeltaStore, "read", explode)
+    monkeypatch.setattr(DeltaStore, "read_trailing", explode)
+
+    out = server.delta_describe("ticks", "AAPL")
+    assert out["row_count"] == 5
+    assert {c["name"] for c in out["columns"]} == {"date", "bid"}
+
+
+def test_delta_history_and_as_of_return_superseded_data(delta_store):
+    from deltalake import write_deltalake
+
+    idx = pd.date_range("2026-01-01", periods=5, freq="1min")
+    write_deltalake(
+        f"{delta_store}/ticks/AAPL",
+        pd.DataFrame({"date": idx, "bid": [9.0] * 5}),
+        mode="overwrite", schema_mode="overwrite",
     )
 
+    versions = [h["version"] for h in server.delta_history("ticks", "AAPL")]
+    assert versions == sorted(versions, reverse=True)
+    assert len(versions) >= 2
 
-def test_arctic_read_unknown_symbol_raises(arctic_store):
-    arctic_store.list_libraries.return_value = ["ticks"]
-    lib = arctic_store.__getitem__.return_value
-    lib.list_symbols.return_value = ["AAPL"]
-    with pytest.raises(ValueError, match="unknown symbol"):
-        server.arctic_read("ticks", "MSFT")
+    assert server.delta_read("ticks", "AAPL")["rows"][-1]["bid"] == 9.0
+    # as_of accepts the int version and its string form (an MCP arg is text)
+    assert server.delta_read("ticks", "AAPL", as_of=0)["rows"][-1]["bid"] == 5.0
+    assert server.delta_read("ticks", "AAPL", as_of="0")["rows"][-1]["bid"] == 5.0
 
 
 # ---------- finding 1: credential scrubbing ----------
@@ -170,23 +205,34 @@ def test_scrub_redacts_access_and_secret_params():
     assert "SUPERSECRET123" not in out
 
 
-def test_arctic_backend_error_never_leaks_credentials(monkeypatch):
-    # Reproduces the finding-1 repro end to end: a bad/unreachable
-    # ARCTICDB_URI raises a ValueError that (for a real S3 client) echoes
-    # the full credential-bearing URI. Confirm the caller never sees it.
-    secret_uri = (
-        "s3://192.0.2.60:openbb?port=9000"
-        "&access=AKIAMINIOKEY&secret=SUPERSECRET123"
+def test_scrub_redacts_delta_storage_option_credentials():
+    """The leak moved with the store: delta-rs takes credentials as
+    storage_options, so they surface as `access_key_id: ...` rather than as a
+    URI query param. _scrub has to cover the shape that can actually occur."""
+    msg = (
+        "GenericError { store: S3, source: access_key_id: AKIAMINIOKEY, "
+        "secret_access_key=SUPERSECRET123 }"
     )
-    monkeypatch.setenv("ARCTICDB_URI", secret_uri)
+    out = server._scrub(msg)
+    assert "AKIAMINIOKEY" not in out
+    assert "SUPERSECRET123" not in out
+    assert "<redacted>" in out
 
-    def boom(uri):
-        raise ValueError(f"S3 error connecting to {uri}")
 
-    monkeypatch.setitem(sys.modules, "arcticdb", types.SimpleNamespace(Arctic=boom))
+def test_delta_backend_error_never_leaks_credentials(monkeypatch):
+    # A bad/unreachable store raises an error that (for a real S3 client)
+    # echoes the credential it was given. Confirm the caller never sees it.
+    def boom(uri=None, library=None):
+        raise ValueError(
+            "S3 error: access_key_id: AKIAMINIOKEY secret_access_key=SUPERSECRET123"
+        )
+
+    monkeypatch.setitem(
+        sys.modules, "openbb_deltalake.store", types.SimpleNamespace(DeltaStore=boom)
+    )
 
     with pytest.raises(ValueError) as exc_info:
-        server.arctic_list_libraries()
+        server.delta_list_libraries()
 
     msg = str(exc_info.value)
     assert "AKIAMINIOKEY" not in msg
@@ -196,18 +242,19 @@ def test_arctic_backend_error_never_leaks_credentials(monkeypatch):
 
 # ---------- finding 4: backend timeouts ----------
 
-def test_arctic_call_times_out_cleanly_instead_of_hanging(monkeypatch):
-    monkeypatch.setenv("ARCTICDB_URI", "s3://host:bucket?port=9000")
+def test_delta_call_times_out_cleanly_instead_of_hanging(monkeypatch):
     monkeypatch.setattr(server, "STORES_TIMEOUT_S", 0.05)
 
-    def hang(uri):
+    def hang(uri=None, library=None):
         time.sleep(5)
 
-    monkeypatch.setitem(sys.modules, "arcticdb", types.SimpleNamespace(Arctic=hang))
+    monkeypatch.setitem(
+        sys.modules, "openbb_deltalake.store", types.SimpleNamespace(DeltaStore=hang)
+    )
 
     start = time.monotonic()
     with pytest.raises(TimeoutError, match="timed out"):
-        server.arctic_list_libraries()
+        server.delta_list_libraries()
     assert time.monotonic() - start < 2  # returns promptly, doesn't wait for the hang
 
 

@@ -4,6 +4,8 @@ import polars as pl
 import pytest
 
 from app.ta.compute import compute
+from app.ta.iterative import ITERATIVE
+from app.ta.payload import _NUMERIC
 from app.ta.registry import REGISTRY, get, resolve
 from tests.ta_helpers import col, fixture_frame
 
@@ -14,6 +16,23 @@ def test_every_registered_indicator_states_its_conventions():
         assert ind.convention.strip(), f"{name} has no pinned convention"
         assert ind.pane in ("price", "own"), name
         assert isinstance(ind.repaints, bool), name
+        # `sessioned` runs `build` against a once-per-session frame that only
+        # `session_agg` knows how to produce; without it the misconfiguration
+        # fails at call time with a bare "'NoneType' object is not callable".
+        if ind.sessioned:
+            assert ind.session_agg is not None, f"{name} is sessioned but has no session_agg"
+        # `iterative` routes compute() through app.ta.iterative.ITERATIVE by
+        # name; an indicator that claims iterative=True but isn't a key there
+        # would fail the same bare way at call time.
+        if ind.iterative:
+            assert name in ITERATIVE, f"{name} is iterative but missing from ITERATIVE"
+        # parse_indicators._coerce only casts a param to a number when its
+        # name is listed in _NUMERIC -- everything else stays a raw string.
+        # A numeric default not listed here is the exact bug Fix 1 patched:
+        # every numeric param this indicator declares must be in that list.
+        for key, value in ind.params.items():
+            if key != "style" and isinstance(value, (int, float)):
+                assert key in _NUMERIC, f"{name}'s {key!r} default is numeric but missing from _NUMERIC"
 
 
 def test_resolve_applies_defaults_then_overrides():
@@ -34,8 +53,9 @@ def test_resolve_accepts_a_style_override_but_still_rejects_unknown_keys():
 
 
 def test_get_rejects_an_unknown_indicator():
-    with pytest.raises(KeyError, match="ichimoku"):
-        get("ichimoku")
+    # NOT "ichimoku": that has been a registered indicator since v12.0.0.
+    with pytest.raises(KeyError, match="renko"):
+        get("renko")
 
 
 def test_rsi_reads_adjusted_close_and_ignores_raw_close():
@@ -84,8 +104,8 @@ def test_rsi_carries_thirty_seventy_guides():
     assert get("rsi").guides == [30.0, 70.0]
 
 
-def test_tier_one_is_twenty_three_indicators_with_twelve_eodhd_maps():
-    assert len(REGISTRY) == 23, sorted(REGISTRY)  # 22 tier-1 + avwap
+def test_registry_is_thirty_four_indicators_with_twelve_eodhd_maps():
+    assert len(REGISTRY) == 34, sorted(REGISTRY)  # 33 + pivots_standard
     mapped = [n for n, i in REGISTRY.items() if i.eodhd is not None]
     assert len(mapped) == 12, sorted(mapped)  # cci is local-only (see registry)
 

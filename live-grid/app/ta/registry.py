@@ -9,6 +9,7 @@ indicator that is silently wrong somewhere.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -68,6 +69,12 @@ class Indicator:
     guides: list[float] = field(default_factory=list)
     repaints: bool = False
     iterative: bool = False
+    # A sessioned indicator's `build` runs against a once-per-session,
+    # already-shifted frame instead of the bar frame. Distinct from avwap's
+    # anchor: that is ONE anchor chosen once and run cumulatively forward;
+    # this is a RECURRING boundary, every session independent of the last.
+    sessioned: bool = False
+    session_agg: Callable[[dict], dict] | None = None
     eodhd: EodhdMap | None = None
 
 
@@ -254,6 +261,73 @@ register(Indicator(
     render={"wma": _line("#56b6c2")},
     eodhd=EodhdMap("wma", {"period": "period"}, {"wma": "wma"}, "adjusted",
                    "EODHD wma is adjusted close."),
+))
+
+# --- Hull moving average ----------------------------------------------------
+
+
+def _wma_expr(expr: pl.Expr, length: int) -> pl.Expr:
+    # rolling_mean(weights=...) panics on any null in the array (not just the
+    # window) as of polars 1.44 -- fine for a raw price column, not for a
+    # nested WMA-of-WMA input that is null through its own warmup. Fill nulls
+    # so it doesn't panic, then null the result wherever the window itself
+    # wasn't fully covered by real values -- identical output to a direct
+    # weighted rolling_mean whenever the input has no nulls.
+    weights = [float(i) for i in range(1, length + 1)]
+    weighted = expr.fill_null(0.0).rolling_mean(length, weights=weights)
+    enough = expr.is_not_null().cast(pl.Int32).rolling_sum(length) == length
+    return pl.when(enough).then(weighted).otherwise(None)
+
+
+def _hma_build(p: dict, b: dict[str, Base]) -> list[pl.Expr]:
+    n = p["period"]
+    price = pl.col(price_col("adjusted"))
+    raw = 2 * _wma_expr(price, max(round(n / 2), 1)) - _wma_expr(price, n)
+    return [_wma_expr(raw, max(round(math.sqrt(n)), 1)).alias("hma")]
+
+
+register(Indicator(
+    name="hma", label="Hull Moving Average", params={"period": 9}, pane="price",
+    price_basis="adjusted",
+    convention=(
+        "WMA(2*WMA(adj_close, round(n/2)) - WMA(adj_close, n), round(sqrt(n))). "
+        "Both derived lengths are rounded to nearest, not truncated."
+    ),
+    deps=lambda p: [],  # a rolling mean OF a rolling mean is not a flat Base
+    build=_hma_build,
+    render={"hma": _line("#56b6c2")},
+    # No eodhd map: no Hull Moving Average function on EODHD's endpoint.
+))
+
+# --- TRIX --------------------------------------------------------------------
+
+
+def _trix_build(p: dict, b: dict[str, Base]) -> list[pl.Expr]:
+    alpha = 2 / (p["period"] + 1)  # matches the plain `ema` indicator
+    smoothed = pl.col(price_col("adjusted"))
+    for _ in range(3):
+        smoothed = smoothed.ewm_mean(alpha=alpha, adjust=False, ignore_nulls=True)
+    # A zero-price frame (a synthetic fixture, a delisted symbol) makes
+    # pct_change divide 0/0 -> NaN. Unlike uo/chop/vortex there is no
+    # zero-numerator or zero-denominator invariant to lean on here -- any
+    # prior EMA can be exactly zero -- so this is a plain fill_nan, not a
+    # guarded expression.
+    return [(100 * smoothed.pct_change(1)).fill_nan(None).alias("trix")]
+
+
+register(Indicator(
+    name="trix", label="TRIX", params={"period": 18}, pane="own",
+    price_basis="adjusted", guides=[0.0],
+    convention=(
+        "1-bar percent change of a triple EMA(period) on adjusted close, "
+        "alpha = 2/(period+1) matching the plain `ema` indicator. "
+        "fill_nan(None): the EMA can be exactly zero, making the percent "
+        "change 0/0."
+    ),
+    deps=lambda p: [],  # EMA-of-EMA-of-EMA is not a flat Base
+    build=_trix_build,
+    render={"trix": _line("#c678dd")},
+    # No eodhd map: no TRIX function on EODHD's endpoint.
 ))
 
 # --- Keltner channels -------------------------------------------------------
@@ -651,4 +725,289 @@ register(Indicator(
     render={"sar": {"type": "scatter", "mode": "markers", "color": "#abb2bf"}},
     eodhd=EodhdMap("sar", {"acceleration": "acceleration", "maximum": "maximum"},
                    {"sar": "sar"}, "raw", "EODHD sar is raw OHLC."),
+))
+
+# --- Supertrend: a recurrence, handled by iterative.py ----------------------
+
+register(Indicator(
+    name="supertrend", label="Supertrend",
+    params={"period": 10, "multiplier": 3.0}, pane="price",
+    price_basis="raw", iterative=True,
+    convention=(
+        "Wilder ATR(period)-banded trailing stop on raw OHLC. The band only "
+        "tightens until close crosses it, then the side flips. Path-dependent "
+        "like Parabolic SAR, so it runs in the iterative pass."
+    ),
+    deps=lambda p: [Base("tr", "raw", 0)],
+    build=lambda p, b: [],  # produced by iterative.supertrend
+    # st_direction is deliberately NOT here. It is internal state, not a
+    # plotted study, and a width-0 line would still ship an invisible series
+    # to the client. The column is computed and stays addressable in tests
+    # via col("supertrend", "st_direction").
+    render={"supertrend": _line("#98c379")},
+    # No eodhd map: no Supertrend function on EODHD's endpoint.
+))
+
+# --- Awesome oscillator -----------------------------------------------------
+
+register(Indicator(
+    name="ao", label="Awesome Oscillator", params={}, pane="own",
+    price_basis="raw", guides=[0.0],
+    convention="SMA(HL2, 5) - SMA(HL2, 34) on raw high/low. Fixed periods (Bill Williams).",
+    deps=lambda p: [],
+    build=lambda p, b: [
+        (((pl.col("high") + pl.col("low")) / 2).rolling_mean(5)
+         - ((pl.col("high") + pl.col("low")) / 2).rolling_mean(34)).alias("ao"),
+    ],
+    render={"ao": {"type": "bar", "color": "#98c379"}},
+    # No eodhd map: no Awesome Oscillator function on EODHD's endpoint.
+))
+
+# --- Money flow index -------------------------------------------------------
+
+
+def _mfi_build(p: dict, b: dict[str, Base]) -> list[pl.Expr]:
+    n = p["period"]
+    typical = (pl.col("high") + pl.col("low") + pl.col("close")) / 3
+    flow = typical * pl.col("volume")
+    moved = typical.diff()
+    positive = pl.when(moved > 0).then(flow).otherwise(0.0).rolling_sum(n)
+    negative = pl.when(moved < 0).then(flow).otherwise(0.0).rolling_sum(n)
+    total = positive + negative
+    # A flat window has no flow in either bucket: 0/0. Null it here rather
+    # than letting a NaN reach the response boundary.
+    return [pl.when(total > 0).then(100 * positive / total)
+              .otherwise(None).alias("mfi")]
+
+
+register(Indicator(
+    name="mfi", label="Money Flow Index", params={"period": 14}, pane="own",
+    price_basis="raw", guides=[20.0, 80.0],
+    convention=(
+        "Typical price (H+L+C)/3, raw money flow = TP*volume, bucketed by the "
+        "sign of TP.diff() and summed over `period` bars. A window with no "
+        "typical-price movement is null, not 0 and not NaN."
+    ),
+    deps=lambda p: [],
+    build=_mfi_build,
+    render={"mfi": _line("#d19a66")},
+    # No eodhd map: no Money Flow Index function on EODHD's endpoint.
+))
+
+# --- Chaikin money flow -----------------------------------------------------
+
+
+def _cmf_build(p: dict, b: dict[str, Base]) -> list[pl.Expr]:
+    n = p["period"]
+    span = pl.col("high") - pl.col("low")
+    # A flat bar (high == low) contributes zero flow. Dividing would be 0/0
+    # and would poison every window it touches.
+    multiplier = pl.when(span > 0).then(
+        (2 * pl.col("close") - pl.col("high") - pl.col("low")) / span
+    ).otherwise(0.0)
+    volume_sum = pl.col("volume").rolling_sum(n)
+    return [pl.when(volume_sum > 0)
+              .then((multiplier * pl.col("volume")).rolling_sum(n) / volume_sum)
+              .otherwise(None).alias("cmf")]
+
+
+register(Indicator(
+    name="cmf", label="Chaikin Money Flow", params={"period": 20}, pane="own",
+    price_basis="raw", guides=[0.0],
+    convention=(
+        "Sum of money-flow multiplier * volume over `period` bars, divided by "
+        "summed volume. Flat bars (high == low) contribute 0, not NaN."
+    ),
+    deps=lambda p: [],
+    build=_cmf_build,
+    render={"cmf": _line("#61afef")},
+    # No eodhd map: no Chaikin Money Flow function on EODHD's endpoint.
+))
+
+# --- Ultimate oscillator ----------------------------------------------------
+
+
+def _uo_build(p: dict, b: dict[str, Base]) -> list[pl.Expr]:
+    buying = pl.col("close") - pl.min_horizontal(pl.col("low"), pl.col("close").shift(1))
+    true_range = pl.col("tr:raw:0")
+
+    def ratio(n: int) -> pl.Expr:
+        # Ratio of sums, NOT mean of ratios: the two agree only when true
+        # range is constant, and it never is.
+        return buying.rolling_sum(n) / true_range.rolling_sum(n)
+
+    blended = 100 * (4 * ratio(p["fast"]) + 2 * ratio(p["mid"]) + ratio(p["slow"])) / 7
+    return [blended.fill_nan(None).alias("uo")]
+
+
+register(Indicator(
+    name="uo", label="Ultimate Oscillator",
+    params={"fast": 7, "mid": 14, "slow": 28}, pane="own",
+    price_basis="raw", guides=[30.0, 70.0],
+    convention=(
+        "Weighted blend of buying-pressure / true-range sum-ratios at three "
+        "windows, weights 4:2:1, divisor 7. BP = close - min(low, prior close). "
+        "Ratio of sums, not mean of ratios. fill_nan(None) suffices here: "
+        "TR_t == 0 forces close_t == close_{t-1}, which forces buying_t == 0 "
+        "too, so a zero-TR window is always 0/0 (NaN), never x/0."
+    ),
+    deps=lambda p: [Base("tr", "raw", 0)],
+    build=_uo_build,
+    render={"uo": _line("#e5c07b")},
+    # No eodhd map: no Ultimate Oscillator function on EODHD's endpoint.
+))
+
+# --- Vortex indicator -------------------------------------------------------
+
+
+def _vortex_build(p: dict, b: dict[str, Base]) -> list[pl.Expr]:
+    n = p["period"]
+    total = pl.col("tr:raw:0").rolling_sum(n)
+    up = (pl.col("high") - pl.col("low").shift(1)).abs().rolling_sum(n)
+    down = (pl.col("low") - pl.col("high").shift(1)).abs().rolling_sum(n)
+    # up/down read the PRIOR bar's low/high, not the prior close, so a window
+    # with zero summed true range can still have a nonzero numerator here --
+    # unlike uo and chop, x/0 with x != 0 is +inf, which fill_nan cannot
+    # catch. Guard the denominator directly, like chop does.
+    return [pl.when(total > 0).then(up / total).otherwise(None).alias("vi_plus"),
+            pl.when(total > 0).then(down / total).otherwise(None).alias("vi_minus")]
+
+
+register(Indicator(
+    name="vortex", label="Vortex Indicator", params={"period": 14}, pane="own",
+    price_basis="raw",
+    convention=(
+        "VM+ = |high - prior low|, VM- = |low - prior high|, each summed over "
+        "`period` bars and divided by summed true range. The tr base is "
+        "period-independent, keyed tr:raw:0."
+    ),
+    deps=lambda p: [Base("tr", "raw", 0)],
+    build=_vortex_build,
+    render={"vi_plus": _line("#98c379"), "vi_minus": _line("#e06c75")},
+    # No eodhd map: no Vortex Indicator function on EODHD's endpoint.
+))
+
+# --- Choppiness index -------------------------------------------------------
+
+
+def _chop_build(p: dict, b: dict[str, Base]) -> list[pl.Expr]:
+    n = p["period"]
+    span = pl.col(f"max:high:{n}") - pl.col(f"min:low:{n}")
+    ratio = pl.col("tr:raw:0").rolling_sum(n) / span
+    return [pl.when(span > 0)
+              .then(100 * ratio.log(base=10) / math.log10(n))
+              .otherwise(None).alias("chop")]
+
+
+register(Indicator(
+    name="chop", label="Choppiness Index", params={"period": 14}, pane="own",
+    price_basis="raw", guides=[38.2, 61.8],
+    convention=(
+        "100 * log10(sum(TR, n) / (highest high - lowest low)) / log10(n) on "
+        "raw OHLC. A range/trendiness gauge, not a directional one -- high is "
+        "choppy, low is trending. span == 0 forces every in-window bar to the "
+        "same price, so span > 0 implies the summed true range is too -- the "
+        "`span > 0` guard fully closes the divide-by-zero case."
+    ),
+    deps=lambda p: [Base("tr", "raw", 0), Base("max", "high", p["period"]),
+                    Base("min", "low", p["period"])],
+    build=_chop_build,
+    render={"chop": _line("#d19a66")},
+    # No eodhd map: no Choppiness Index function on EODHD's endpoint.
+))
+
+# --- Ichimoku cloud ---------------------------------------------------------
+
+
+def _midpoint(period: int) -> pl.Expr:
+    return (pl.col(f"max:high:{period}") + pl.col(f"min:low:{period}")) / 2
+
+
+def _ichimoku_build(p: dict, b: dict[str, Base]) -> list[pl.Expr]:
+    conversion = _midpoint(p["conversion"])
+    base = _midpoint(p["base"])
+    # No .shift() anywhere: the displacement is a plotting property, declared
+    # per series as render["time_offset"] and applied by panes.shift_times.
+    return [
+        conversion.alias("ichi_conversion"),
+        base.alias("ichi_base"),
+        ((conversion + base) / 2).alias("ichi_span_a"),
+        _midpoint(p["span_b"]).alias("ichi_span_b"),
+        pl.col("close").alias("ichi_chikou"),
+    ]
+
+
+register(Indicator(
+    name="ichimoku", label="Ichimoku Cloud",
+    params={"conversion": 9, "base": 26, "span_b": 52, "displacement": 26},
+    pane="price", price_basis="raw",
+    convention=(
+        "Tenkan/Kijun/Senkou B from rolling high-low midpoints on raw OHLC. "
+        "Values sit at the row they are COMPUTED from; the leading spans and "
+        "Chikou are displaced via render['time_offset'], never by shifting "
+        "the column. That offset is fixed at the default `displacement` "
+        "(26) -- a non-default `displacement` moves the midpoint windows but "
+        "plots the result at the same default offset (see render below)."
+    ),
+    deps=lambda p: [
+        Base("max", "high", p["conversion"]), Base("min", "low", p["conversion"]),
+        Base("max", "high", p["base"]), Base("min", "low", p["base"]),
+        Base("max", "high", p["span_b"]), Base("min", "low", p["span_b"]),
+    ],
+    build=_ichimoku_build,
+    # `render` is a static, frozen-dataclass field shared by every request
+    # for this indicator, so these offsets cannot read the resolved
+    # `displacement` param -- they are pinned to its default. Fixing that
+    # needs Indicator.render to become a callable of params, a signature
+    # change across the whole registry, not a one-off patch here; nobody has
+    # asked for a non-default displacement yet, so it stays a known gap.
+    render={
+        "ichi_conversion": _line("#4c9be8"),
+        "ichi_base": _line("#e06c75"),
+        "ichi_span_a": {**_line("#8ed081"), "time_offset": 26},
+        "ichi_span_b": {**_line("#e5c07b"), "time_offset": 26},
+        "ichi_chikou": {**_line("#9aa0a6"), "time_offset": -26},
+    },
+    # No eodhd map: no Ichimoku function on EODHD's endpoint.
+))
+
+# --- Pivot points (classic / floor) -----------------------------------------
+
+
+def _pivots_session_agg(p: dict) -> dict:
+    return {"H": pl.col("high").max(), "L": pl.col("low").min(),
+            "C": pl.col("close").last()}
+
+
+def _pivots_build(p: dict, b: dict) -> list[pl.Expr]:
+    # Runs against the collapsed, already-shifted session frame, so H/L/C here
+    # are the PRIOR session's.
+    pivot = (pl.col("H") + pl.col("L") + pl.col("C")) / 3
+    return [
+        pivot.alias("PP"),
+        (2 * pivot - pl.col("L")).alias("R1"),
+        (2 * pivot - pl.col("H")).alias("S1"),
+        (pivot + (pl.col("H") - pl.col("L"))).alias("R2"),
+        (pivot - (pl.col("H") - pl.col("L"))).alias("S2"),
+        (pl.col("H") + 2 * (pivot - pl.col("L"))).alias("R3"),
+        (pl.col("L") - 2 * (pl.col("H") - pivot)).alias("S3"),
+    ]
+
+
+register(Indicator(
+    name="pivots_standard", label="Pivot Points Standard",
+    params={"anchor": "1d", "session_shift": 1}, pane="price", price_basis="raw",
+    convention=(
+        "Classic floor pivots from the PRIOR session's high/low/close, held "
+        "flat across the current session. group_by_dynamic(every=anchor) -> "
+        "shift(session_shift) -> join_asof(backward). The first session has no "
+        "prior and is null, not zero."
+    ),
+    deps=lambda p: [],
+    build=_pivots_build,
+    sessioned=True,
+    session_agg=_pivots_session_agg,
+    render={name: _line("#9aa0a6")
+            for name in ("PP", "R1", "S1", "R2", "S2", "R3", "S3")},
+    # No eodhd map: no Pivot Points function on EODHD's endpoint.
 ))

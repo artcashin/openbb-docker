@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "mcp-stores"
 version = "11.0.0"
-description = "Read-only MCP server exposing ArcticDB and kdb+ discovery/query tools"
+description = "Read-only MCP server exposing Delta Lake and kdb+ discovery/query tools"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -13,7 +13,7 @@ dependencies = [
     "pandas",
     "uvicorn",
     "starlette",
-    "arcticdb",
+    "openbb-deltalake",
     "pykx>=3.2",
 ]
 
