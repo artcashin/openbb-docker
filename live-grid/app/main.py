@@ -26,7 +26,7 @@ from app.figure import build_figure
 from app.leases import DEFAULT_TTL, LeaseRegistry
 from app.openbb_client import fetch_series
 from app.quotes import QuoteTable
-from app.studies import studies_for
+from app.studies import parse_anchors, studies_for, window_start
 from app.symbol_meta import get_meta
 from app.ta.figure import delta as ta_delta
 from app.ta.macros import load_all as load_macros_all
@@ -285,7 +285,8 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
         return get_meta(symbols, _seed_client())
 
     @app.get("/live_grid_studies")
-    async def live_grid_studies(symbol: str = Query(default="")):
+    async def live_grid_studies(symbol: str = Query(default=""),
+                                anchor: str = Query(default="")):
         """RSI(14) and anchored VWAP for the live grid -- the favicon
         pattern: consumers fetch once on mount, best-effort. `/live_grid`
         stays synchronous (quotes.seed); this is the async sibling that
@@ -294,40 +295,42 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
         than failing the request, and symbols are fetched concurrently so a
         fifty-row watchlist waits on the slowest single lookup, not their
         sum -- build_series is an HTTP round trip plus up to two blocking
-        kdb calls, not a free in-process read."""
+        kdb calls, not a free in-process read.
+
+        `anchor` is the VWAP Start column: `SYM=ISO,SYM=ISO`, plus an
+        optional unkeyed ISO setting the grid-wide anchor. Absolute UTC
+        timestamps only -- the client resolves "10:00" against its own clock
+        before sending, because this process runs in a container on UTC and
+        has no idea what the user's local time is. See `parse_anchors`.
+        """
         symbols = _parse_symbols(symbol)
         if not symbols:
             return []
-        # Size the window by the bars that ARRIVE, not the interval asked for.
-        # `1m` is a request, not a guarantee: where the kdb cache holds no
-        # recorded ticks for a symbol the series falls back to vendor DAILY
-        # history, and a window sized for minutes then delivers a handful of
-        # bars. Measured against the live stack: a five-day window returned
-        # four daily bars for NVDA, and RSI(14) reported 78.5 off them --
-        # because Wilder is an EWM with no min_periods and yields a confident
-        # number from the second bar. `studies_for` now refuses an RSI below
-        # a full period, and this window is sized so the common case clears
-        # it: ~40 calendar days is ~28 trading days, comfortably past
-        # RSI(14)'s warmup on daily bars. Still a fourteenth of the 365-day
-        # default, which fired fifty year-long fetches at once on every mount.
         today = date.today()
-        s, e = str(today - timedelta(days=40)), str(today)
+        end = str(today)
         # An anchored VWAP needs an anchor. Without one the value is a
         # cumulative mean from whatever bar the window starts at, so it moves
         # as the window rolls and is not comparable between two symbols or
         # two days. A watchlist mixes US equities, crypto and forex, which
         # share no session open -- the current UTC day's start is the one
         # boundary all three do share, and the same boundary kdb's own /day
-        # endpoint slices on.
-        anchor = f"{today}T00:00:00"
+        # endpoint slices on. It is only the default: any row whose VWAP
+        # Start cell is filled in overrides it.
+        fallback, overrides = parse_anchors(anchor, f"{today}T00:00:00")
 
         async def _one(sym: str) -> dict:
+            # Per symbol, because the window has to reach back past that
+            # symbol's own anchor -- one row anchored to an old gap must not
+            # widen the fetch for the other forty-nine.
+            at = overrides.get(sym, fallback)
             try:
-                bars, _ = await build_series(sym, "1m", s, e, recorder, _tick_window())
+                bars, _ = await build_series(
+                    sym, "1m", window_start(at, today), end, recorder, _tick_window()
+                )
             except Exception as exc:  # noqa: BLE001 - one bad symbol must not blank its neighbours
                 log.warning("live_grid_studies failed for %s: %s", sym, exc)
                 bars = []
-            return studies_for(sym, bars, anchor)
+            return studies_for(sym, bars, at)
 
         return list(await asyncio.gather(*[_one(sym) for sym in symbols]))
 
