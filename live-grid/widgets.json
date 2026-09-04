@@ -32,18 +32,19 @@
       "renderFn": [
        "logo"
       ],
-      "width": 40,
+      "width": 32,
       "enableCellChangeWs": false,
       "pinned": "left"
      },
      {
       "field": "symbol",
-      "width": 78,
+      "width": 72,
       "headerName": "Symbol",
       "pinned": "left"
      },
      {
       "field": "price",
+      "width": 88,
       "headerName": "Last",
       "renderFn": [
        "showCellChange"
@@ -56,6 +57,7 @@
      },
      {
       "field": "change",
+      "width": 84,
       "headerName": "Chg",
       "renderFn": [
        "greenRed"
@@ -65,6 +67,7 @@
      },
      {
       "field": "change_percent",
+      "width": 84,
       "headerName": "% Chg",
       "renderFn": [
        "greenRed"
@@ -81,7 +84,7 @@
      },
      {
       "field": "avwap",
-      "width": 96,
+      "width": 88,
       "headerName": "VWAP",
       "headerTooltip": "The anchored VWAP itself, in price. Trade-true: the size-weighted mean of actual trades since VWAP Start, never a (H+L+C)/3 approximation. Blank when the symbol has no trade data in the window.",
       "enableCellChangeWs": false,
@@ -90,13 +93,14 @@
      },
      {
       "field": "avwap_dev",
+      "width": 84,
       "headerName": "vs VWAP",
       "renderFn": ["rangeBar"],
       "renderFnParams": { "signed": true }
      },
      {
       "field": "vwap_start",
-      "width": 88,
+      "width": 80,
       "headerName": "Anchor",
       "headerTooltip": "Where the anchored VWAP starts. Type 10:00 for 10am your time every day, or a full date and time to pin it to one moment. Blank anchors at the UTC day start.",
       "editable": true,
@@ -105,7 +109,7 @@
      },
      {
       "field": "day_low",
-      "width": 92,
+      "width": 84,
       "headerName": "Low",
       "enableCellChangeWs": false,
       "align": "right",
@@ -113,6 +117,7 @@
      },
      {
       "field": "day_range",
+      "width": 64,
       "headerName": "Day",
       "renderFn": [
        "rangeBar"
@@ -127,7 +132,7 @@
      },
      {
       "field": "day_high",
-      "width": 92,
+      "width": 84,
       "headerName": "High",
       "enableCellChangeWs": false,
       "align": "left",
@@ -135,7 +140,7 @@
      },
      {
       "field": "week52_low",
-      "width": 92,
+      "width": 84,
       "headerName": "Low",
       "enableCellChangeWs": false,
       "align": "right",
@@ -143,6 +148,7 @@
      },
      {
       "field": "week52_range",
+      "width": 64,
       "headerName": "52 week",
       "renderFn": [
        "rangeBar"
@@ -157,7 +163,7 @@
      },
      {
       "field": "week52_high",
-      "width": 92,
+      "width": 84,
       "headerName": "High",
       "enableCellChangeWs": false,
       "align": "left",
@@ -165,6 +171,7 @@
      },
      {
       "field": "volume",
+      "width": 88,
       "headerName": "Volume",
       "enableCellChangeWs": false
      },
