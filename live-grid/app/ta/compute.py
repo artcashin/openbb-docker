@@ -14,7 +14,7 @@ import polars as pl
 
 from app.ta.exprs import Base
 from app.ta.iterative import ITERATIVE
-from app.ta.registry import Req, col_suffix, get
+from app.ta.registry import Indicator, Req, col_suffix, get
 
 
 def collect_bases(reqs: list[Req]) -> dict[str, Base]:
@@ -27,7 +27,7 @@ def collect_bases(reqs: list[Req]) -> dict[str, Base]:
 
 
 def session_columns(
-    frame: pl.DataFrame, ind, req: Req
+    frame: pl.DataFrame, ind: Indicator, req: Req
 ) -> dict[str, list]:
     """One value per session, held flat across every bar inside it.
 
@@ -51,7 +51,13 @@ def session_columns(
         .with_columns(**{name: pl.col(name).shift(back) for name in aggregates})
     )
     sessions = sessions.with_columns(ind.build(req.params, {}))
-    outputs = [name for name in ind.render if name in sessions.columns]
+    missing = [name for name in ind.render if name not in sessions.columns]
+    if missing:
+        raise ValueError(
+            f"{ind.name!r}: session build did not produce column(s) {missing} "
+            f"promised by render"
+        )
+    outputs = list(ind.render)
     joined = frame.select("date").join_asof(
         sessions.select(["date", *outputs]), on="date", strategy="backward",
     )

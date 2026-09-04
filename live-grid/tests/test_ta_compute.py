@@ -118,16 +118,42 @@ def test_session_columns_holds_the_prior_sessions_values_flat():
     assert mid[16] != mid[8]
 
 
-def test_session_columns_returns_values_in_the_frames_own_row_order():
-    """The returned lists are assigned straight onto the caller's frame, so
-    they must align with ITS rows. Sorting inside session_columns would
-    reorder them relative to the frame and silently mis-assign every value."""
+def test_session_columns_returns_one_value_per_row_for_an_ascending_frame():
     frame = _intraday()
     ind = _fake_sessioned()
     out = session_columns(frame, ind, Req("_test_session", dict(ind.params)))
     assert len(out["mid"]) == frame.height
 
 
+def test_session_columns_raises_rather_than_silently_mis_assign_an_unsorted_frame():
+    """The returned lists are assigned straight onto the caller's frame by row
+    position, so they must align with ITS rows. session_columns does not sort
+    internally -- group_by_dynamic refuses unsorted input and raises here. If
+    an internal sort were ever added, this call would succeed instead, and the
+    now-reordered lists would be assigned onto the frame's original (unsorted)
+    row order, silently mis-assigning every value."""
+    frame = _intraday().reverse()
+    ind = _fake_sessioned()
+    with pytest.raises(pl.exceptions.InvalidOperationError, match="not sorted"):
+        session_columns(frame, ind, Req("_test_session", dict(ind.params)))
+
+
 def test_a_plain_indicator_declares_sessioned_false():
     assert get("sma").sessioned is False
     assert get("sma").session_agg is None
+
+
+def test_session_columns_raises_when_build_omits_a_promised_render_column():
+    """render promises 'mid' and 'phantom'; build only produces 'mid'. A
+    silently-dropped output means a chart series never appears with no signal
+    as to why -- this must fail loudly instead."""
+    ind = _fake_sessioned()
+    broken = Indicator(
+        name="_test_session_broken", label="Broken", params=ind.params,
+        pane=ind.pane, price_basis=ind.price_basis, convention=ind.convention,
+        deps=ind.deps, build=ind.build,
+        render={**ind.render, "phantom": {"type": "line", "color": None}},
+        sessioned=True, session_agg=ind.session_agg,
+    )
+    with pytest.raises(ValueError, match="phantom"):
+        session_columns(_intraday(), broken, Req("_test_session_broken", dict(broken.params)))
