@@ -337,3 +337,12 @@ def test_the_money_columns_opt_out_of_abbreviation():
     for field in ("price", "change", "day_low", "day_high", "week52_low", "week52_high"):
         assert defs[field]["abbreviate"] is False, field
     assert "abbreviate" not in defs["volume"]
+
+
+def test_the_tick_time_column_is_declared_text():
+    """A tick's time is a timestamp, not a date. The client slices a
+    date-NAMED column to YYYY-MM-DD unless the manifest says otherwise, which
+    left every row of a tick history reading the same day."""
+    body = make_client().get("/widgets.json").json()
+    (t,) = [c for c in body["kdb_ticks"]["data"]["table"]["columnsDefs"] if c["field"] == "time"]
+    assert t["cellDataType"] == "text"

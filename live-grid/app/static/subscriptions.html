@@ -4,8 +4,33 @@
 <meta charset="utf-8">
 <title>Subscriptions</title>
 <style>
-  :root { color-scheme: light dark; --line: #8883; --dim: #8888; --bad: #c33; }
-  body { font: 13px/1.5 system-ui, sans-serif; margin: 0; padding: 12px; }
+  /*
+   * Both colours are set EXPLICITLY, and that is the point.
+   *
+   * This page is framed by the desktop client, and a frame whose body sets no
+   * background shows the embedder's -- which is white -- while `color-scheme`
+   * still hands the UA's dark-mode default text colour. White on white: the
+   * page rendered perfectly and read as blank, with only the borders visible.
+   * Relying on the UA for one of the pair and not the other is what broke it.
+   */
+  :root {
+    color-scheme: light dark;
+    --bg: #ffffff;
+    --fg: #1a1a1a;
+    --line: #8883;
+    --dim: #8888;
+    --bad: #c33;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0d1117; --fg: #e6edf3; --bad: #ef5350; }
+  }
+  body {
+    font: 13px/1.5 system-ui, sans-serif;
+    margin: 0;
+    padding: 12px;
+    background: var(--bg);
+    color: var(--fg);
+  }
   header { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; }
   h1 { font-size: 14px; margin: 0; font-weight: 600; }
   .bar { flex: 1; height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; }
@@ -110,9 +135,7 @@ window.addEventListener("message", (e) => {
   const d = e.data;
   if (!d || d.type !== "openbb-auth" || typeof d.headers !== "object" || d.headers === null) return;
   authHeaders = d.headers;
-  // The first GET below fires before this arrives -- unauthenticated, and
-  // refused when the host has a credential. Re-run it now that we can.
-  call("GET", "/api/subscriptions");
+  start();
 });
 
 // Announce ourselves. The host answers with openbb-auth when it has a
@@ -149,8 +172,29 @@ $("add").onsubmit = (e) => {
   call("POST", "/api/subscriptions", { symbol: v });
 };
 
-call("GET", "/api/subscriptions");
-setInterval(() => call("GET", "/api/subscriptions"), 15000);
+/*
+ * Load once, then poll -- but not before the credentials arrive.
+ *
+ * Firing immediately cost a guaranteed 401 on every single load: the first
+ * GET went out before the host could answer openbb-connect. `started` makes
+ * whichever comes first win, so the handshake is a fast path rather than a
+ * precondition.
+ *
+ * The timer is the fallback for a host that never answers -- one with no
+ * credential to send, or a plain browser tab, where the browser supplies its
+ * own Basic auth and none of this is needed.
+ */
+let started = false;
+
+function start() {
+  if (started) return;
+  started = true;
+  call("GET", "/api/subscriptions");
+  setInterval(() => call("GET", "/api/subscriptions"), 15000);
+}
+
+if (window.parent === window) start();
+else setTimeout(start, 1000);
 </script>
 </body>
 </html>
