@@ -107,6 +107,37 @@ def domains(panes: list[Pane], gap: float = 0.02) -> list[tuple[float, float]]:
     return out
 
 
+def shift_times(times: list, offset: int) -> list:
+    """Where each value should be PLOTTED, given a displacement in bars.
+
+    Ichimoku's leading spans are drawn `displacement` bars into the future and
+    its lagging span the same distance back. Expressing that as a shift of the
+    VALUES inside the frame silently loses the leading ones -- the frame stops
+    at the last bar and has no rows to hold them. Displacing the timestamps
+    instead keeps the frame rectangular and lets the renderer draw past the
+    last candle, which is what both Plotly and lightweight-charts allow.
+
+    Timestamps beyond either end are synthesized from the last observed
+    spacing. One bar carries no spacing to infer, so it yields None.
+    """
+    if offset == 0 or not times:
+        return list(times)
+    count = len(times)
+    step = times[-1] - times[-2] if count >= 2 else None
+    out = []
+    for index in range(count):
+        target = index + offset
+        if 0 <= target < count:
+            out.append(times[target])
+        elif step is None:
+            out.append(None)
+        elif target >= count:
+            out.append(times[-1] + step * (target - count + 1))
+        else:
+            out.append(times[0] + step * target)
+    return out
+
+
 def all_reqs(panes: list[Pane]) -> list[Req]:
     """Every request across every pane, deduplicated, order preserved."""
     seen: set[tuple] = set()

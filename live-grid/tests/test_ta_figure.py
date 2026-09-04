@@ -1,12 +1,13 @@
 """Multi-pane figure assembly and tail deltas."""
 
+from datetime import date
 from itertools import pairwise
 
 import polars as pl
 
 from app.ta.compute import compute
 from app.ta.figure import build_ta_figure, delta, trace_index
-from app.ta.panes import assign
+from app.ta.panes import Pane, Series, assign
 from app.ta.registry import resolve
 from app.ta.sources import Annotation
 from tests.ta_helpers import col, cols, fixture_frame
@@ -177,3 +178,19 @@ def test_an_inf_in_a_series_serialises_as_null_rather_than_raising():
     fig = build_ta_figure("AAPL", poisoned, panes)
     body = JSONResponse(fig).body.decode()  # raises if any inf survived
     assert json.loads(body)["data"][1]["y"][5] is None
+
+
+def test_a_series_with_a_time_offset_gets_its_own_x():
+    frame = pl.DataFrame({
+        "date": [date(2026, 1, 1), date(2026, 1, 2), date(2026, 1, 3)],
+        "open": [1.0, 2.0, 3.0], "high": [1.0, 2.0, 3.0],
+        "low": [1.0, 2.0, 3.0], "close": [1.0, 2.0, 3.0],
+        "lead": [4.0, 5.0, 6.0],
+    })
+    pane = Pane("price", 3.0, True,
+                [Series("lead", "Lead", {"type": "line", "time_offset": 1})])
+    figure = build_ta_figure("AAPL", frame, [pane])
+    candles, lead = figure["data"][0], figure["data"][1]
+    assert candles["x"][-1] == "2026-01-03"
+    assert lead["x"][-1] == "2026-01-04"
+    assert "time_offset" not in lead.get("line", {})

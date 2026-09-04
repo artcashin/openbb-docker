@@ -13,7 +13,7 @@ from collections.abc import Sequence
 
 import polars as pl
 
-from app.ta.panes import Pane, domains
+from app.ta.panes import Pane, domains, shift_times
 
 PRICE = "__price__"
 
@@ -55,10 +55,13 @@ def _column(frame: pl.DataFrame, name: str) -> list:
     ]
 
 
-def _dates(frame: pl.DataFrame) -> list[str]:
+def _dates(frame: pl.DataFrame, offset: int = 0) -> list[str]:
     if "date" not in frame.columns:
         return []
-    return [None if d is None else str(d) for d in frame["date"].to_list()]
+    stamps = frame["date"].to_list()
+    if offset:
+        stamps = shift_times(stamps, offset)
+    return [None if d is None else str(d) for d in stamps]
 
 
 def build_ta_figure(
@@ -100,8 +103,13 @@ def build_ta_figure(
             render = dict(series.render)
             kind = render.pop("type", "line")
             color = render.pop("color", None)
+            # A displaced series is plotted against shifted timestamps, not
+            # shifted values -- see panes.shift_times for why.
+            offset = int(render.pop("time_offset", 0) or 0)
             trace = {
-                "name": series.label, "x": x, "y": _column(frame, series.column),
+                "name": series.label,
+                "x": x if offset == 0 else _dates(frame, offset),
+                "y": _column(frame, series.column),
                 "yaxis": axis, "xaxis": xaxis,
             }
             if kind == "bar":
