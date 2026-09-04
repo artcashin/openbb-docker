@@ -478,6 +478,87 @@ def test_latest_tick_binds_the_symbol_as_a_parameter_not_by_interpolation():
     assert args, "symbol must be passed as a bound argument"
 
 
+def test_read_ticks_returns_newest_first():
+    import pandas as pd
+
+    s, conn = store_with({
+        "xdesc": pd.DataFrame({
+            "time": [
+                pd.Timestamp("2026-09-03T15:00:02"),
+                pd.Timestamp("2026-09-03T15:00:01"),
+            ],
+            "price": [191.5, 191.0],
+            "size": [100.0, 50.0],
+        }),
+    })
+    got = s.read_ticks("AAPL", 10)
+    assert [r["price"] for r in got] == [191.5, 191.0]
+    assert got[0]["time"] == D("2026-09-03T15:00:02")
+    assert got[0]["size"] == 100.0
+
+
+def test_read_ticks_on_an_empty_cache_is_an_empty_list():
+    """A restarted kdb holds no ticks. That is empty, never an error."""
+    import pandas as pd
+
+    s, _ = store_with({
+        "xdesc": pd.DataFrame({"time": [], "price": [], "size": []}),
+    })
+    assert s.read_ticks("AAPL", 10) == []
+
+
+def test_read_ticks_with_a_non_positive_limit_is_an_empty_list():
+    """q's `sublist` takes from the end of the list for a negative left
+    argument, which would silently hand back the OLDEST ticks instead of the
+    newest -- guarded in Python before any query is issued."""
+    s, conn = store_with()
+    assert s.read_ticks("AAPL", -5) == []
+    assert s.read_ticks("AAPL", 0) == []
+    assert conn.calls == [], "a non-positive limit must not reach q at all"
+
+
+def test_read_ticks_binds_the_symbol_as_a_parameter_not_by_interpolation():
+    """Interpolating the symbol into the q string would let a symbol containing
+    q syntax change the statement."""
+    conn = FakeConn()
+    store = KdbStore(FakeSession(conn))
+    store.read_ticks("AAPL", 10)
+    query, args = conn.calls[-1]
+    assert "AAPL" not in query
+    assert args, "symbol must be passed as a bound argument"
+
+
+def test_read_ticks_breaks_time_ties_with_the_later_arrival_first():
+    """Two ticks sharing one `time`, recorded old-then-new: read_ticks must
+    return the later arrival first -- the same tie-break `latest_tick`
+    documents two methods above.
+
+    `xdesc` is a STABLE sort: ties keep their original (arrival) order, so a
+    bare `` `time xdesc `` would present the earlier arrival as the newer
+    one, backwards. The fix reverses the selection before that stable sort.
+
+    FakeConn can't execute q, so this pins the fix at the query-routing
+    level instead of the data level: the canned response below only matches
+    a query containing "xdesc reverse". A regression that drops `reverse`
+    sends a query this response won't match; FakeConn then falls through to
+    its default `None` reply, and read_ticks returns `[]` instead of the two
+    ticks below -- so this fails on the regression itself, not merely on the
+    query text's shape.
+    """
+    import pandas as pd
+
+    tied = pd.Timestamp("2026-09-03T15:00:00")
+    s, _ = store_with({
+        "xdesc reverse": pd.DataFrame({
+            "time": [tied, tied],
+            "price": [102.0, 101.0],  # later arrival first, as the fix produces
+            "size": [2.0, 1.0],
+        }),
+    })
+    got = s.read_ticks("AAPL", 10)
+    assert [r["price"] for r in got] == [102.0, 101.0]
+
+
 def test_write_snapshot_stores_a_fetch_time():
     s, conn = store_with()
     s.write_snapshot("AAPL", {"close": 100.0, "volume": 10.0})
