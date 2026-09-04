@@ -61,7 +61,14 @@
           { "field": "bid", "headerName": "Bid", "hide": true },
           { "field": "ask", "headerName": "Ask", "hide": true },
           { "field": "last_size", "headerName": "Last Size", "hide": true },
-          { "field": "updated_at", "headerName": "Updated", "hide": true }
+          { "field": "updated_at", "headerName": "Updated", "hide": true },
+          { "field": "change_percent", "headerName": "Chg %", "hide": true },
+          { "field": "day_high", "headerName": "Day High", "hide": true },
+          { "field": "day_low", "headerName": "Day Low", "hide": true },
+          { "field": "day_open", "headerName": "Day Open", "hide": true },
+          { "field": "logo_url", "headerName": "Logo", "hide": true },
+          { "field": "week52_high", "headerName": "52W High", "hide": true },
+          { "field": "week52_low", "headerName": "52W Low", "hide": true }
         ]
       }
     },

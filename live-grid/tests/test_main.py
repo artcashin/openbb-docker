@@ -92,14 +92,30 @@ def test_widgets_json_declares_the_live_chart_contract():
     ]
 
 
-def test_live_grid_declares_the_six_visible_columns():
+def test_live_grid_declares_the_six_visible_columns_and_hides_the_rest(monkeypatch):
     body = make_client().get("/widgets.json").json()
     cols = body["live_grid"]["data"]["table"]["columnsDefs"]
     visible = [c["field"] for c in cols if not c.get("hide")]
     assert visible == ["symbol", "price", "change", "day_range", "week52_range", "volume"]
     hidden = {c["field"]: c for c in cols if c.get("hide")}
-    assert set(hidden) == {"bid", "ask", "last_size", "updated_at"}
     assert all(c["hide"] is True for c in hidden.values())
+
+    # The desktop client renders every payload field the manifest does not
+    # declare hidden as a trailing visible column. So the real regression
+    # check is on the payload, not the declarations: every key a seeded
+    # /live_grid row actually carries must either be one of the six visible
+    # fields above or be declared here with hide: true -- otherwise it
+    # renders as an extra column. Get the key set from a real seeded row
+    # (same pattern as test_live_grid_seeds_rows_in_request_order) so a
+    # future field added to the row makes this test fail instead of
+    # silently adding a column.
+    rest = FakeRest({"AAPL.US": {"close": "150", "previousClose": "100", "volume": "7"}})
+    row = make_client(monkeypatch, seed_client=rest).get("/live_grid?symbol=AAPL").json()[0]
+    declared_hidden = set(hidden)
+    for field in row:
+        assert field in visible or field in declared_hidden, (
+            f"payload field {field!r} is neither a visible column nor declared hidden"
+        )
 
 
 def test_the_symbol_column_declares_the_logo_render_fn():
