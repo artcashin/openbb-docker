@@ -478,6 +478,35 @@ def test_latest_tick_binds_the_symbol_as_a_parameter_not_by_interpolation():
     assert args, "symbol must be passed as a bound argument"
 
 
+def test_read_ticks_returns_newest_first():
+    import pandas as pd
+
+    s, conn = store_with({
+        "xdesc": pd.DataFrame({
+            "time": [
+                pd.Timestamp("2026-09-03T15:00:02"),
+                pd.Timestamp("2026-09-03T15:00:01"),
+            ],
+            "price": [191.5, 191.0],
+            "size": [100.0, 50.0],
+        }),
+    })
+    got = s.read_ticks("AAPL", 10)
+    assert [r["price"] for r in got] == [191.5, 191.0]
+    assert got[0]["time"] == D("2026-09-03T15:00:02")
+    assert got[0]["size"] == 100.0
+
+
+def test_read_ticks_on_an_empty_cache_is_an_empty_list():
+    """A restarted kdb holds no ticks. That is empty, never an error."""
+    import pandas as pd
+
+    s, _ = store_with({
+        "xdesc": pd.DataFrame({"time": [], "price": [], "size": []}),
+    })
+    assert s.read_ticks("AAPL", 10) == []
+
+
 def test_write_snapshot_stores_a_fetch_time():
     s, conn = store_with()
     s.write_snapshot("AAPL", {"close": 100.0, "volume": 10.0})
