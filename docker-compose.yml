@@ -273,7 +273,7 @@ services:
     volumes:
       - openbb-data:/root/.openbb_platform
 
-  # stores-mcp (Ep. 11): read-only ArcticDB + kdb+ discovery/query MCP
+  # stores-mcp (Ep. 11): read-only Delta Lake + kdb+ discovery/query MCP
   # server -- see mcp_stores/README.md. Complements openbb-api/openbb-mcp's
   # REST/tool surface, which only answers known-symbol OHLCV and returns 204
   # against raw quote/trade tick data: these tools give an agent
@@ -306,14 +306,14 @@ services:
       - PYKX_UNLICENSED=1
       - PYKX_IGNORE_QHOME=1
     env_file:
-      # ARCTICDB_URI: the same combined-URI fallback openbb-arcticdb itself
-      # reads (see minio.env.example) -- this server takes no split
-      # ARCTICDB_S3_* vars, just the one URI.
+      # DELTA_S3_* / DELTA_URI: the same store config openbb-deltalake reads
+      # (see minio.env.example). Credentials reach delta-rs as
+      # storage_options, so nothing here embeds them in a URI.
       - path: ./minio.env
         required: false
 
   # stores-explorer (Ep. 11): read-only widget backend for the same
-  # ArcticDB/kdb+ discovery code as stores-mcp, over a plain REST/widgets.json
+  # Delta Lake/kdb+ discovery code as stores-mcp, over a plain REST/widgets.json
   # surface instead of MCP -- see stores-explorer/README.md. Loopback :6904;
   # Serve publishes it on :6904 -- tailnet-only, matching live-grid's :6903
   # (no auth of its own, so: don't funnel it). Reached externally because its
