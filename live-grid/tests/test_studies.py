@@ -90,3 +90,38 @@ def test_studies_for_matches_the_raw_compute_and_fills_avwap_dev():
     assert row["rsi"] == expected_rsi
     assert row["avwap"] == expected_avwap
     assert row["avwap_dev"] == (expected_price - expected_avwap) / expected_avwap
+
+
+def test_rsi_is_null_until_a_full_period_of_bars():
+    """Wilder is an EWM, not a rolling window: `ewm_mean(alpha=1/n)` has no
+    min_periods and yields a confident number from the SECOND bar, where
+    `rolling_mean(14)` would stay null until the fourteenth.
+
+    Found against the live stack, not in a fixture: the studies route asked
+    for `1m` bars, the vendor returned DAILY history because kdb held no
+    recorded ticks for the symbol, a five-day window therefore delivered four
+    bars, and RSI(14) reported 78.5 off them. A plausible, authoritative,
+    meaningless number is exactly what the null discipline exists to stop.
+    """
+    assert studies_for("SHORT", _tick_bars(4))["rsi"] is None
+    assert studies_for("EDGE", _tick_bars(14))["rsi"] is None, "period bars is not enough"
+    assert studies_for("OK", _tick_bars(15))["rsi"] is not None
+
+
+def test_the_anchor_moves_the_anchored_vwap():
+    """An anchored VWAP without an anchor is not one -- it is a cumulative
+    mean from wherever the caller's window happens to start, so it moves when
+    the window rolls and is not comparable between two symbols or two days.
+    """
+    bars = _tick_bars(60, shock_at=5)
+    early = studies_for("X", bars, anchor="2026-01-01T09:30:00")["avwap"]
+    late = studies_for("X", bars, anchor="2026-01-01T10:15:00")["avwap"]
+    assert early is not None and late is not None
+    assert early != late, "the anchor must select which trades are averaged"
+
+
+def test_an_anchor_after_the_last_bar_yields_no_avwap():
+    """Nothing has traded since, so there is nothing to average -- null, not
+    the last price and not zero."""
+    bars = _tick_bars(30)
+    assert studies_for("X", bars, anchor="2030-01-01T00:00:00")["avwap"] is None

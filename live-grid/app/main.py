@@ -298,19 +298,28 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
         symbols = _parse_symbols(symbol)
         if not symbols:
             return []
-        # NOT `_window(None, None)`: that default (365 days) makes every
-        # symbol here an HTTP request for a year of one-minute bars, all
-        # fired at once by the gather below -- fifty simultaneous year-long
-        # intraday fetches on mount or any symbol-set change, to compute an
-        # RSI(14) that needs about fifteen bars. It also makes the anchored
-        # VWAP's anchor (anchor=None, cumulative from the window's first bar)
-        # slide to a new start every calendar day, so `vs VWAP` steps at
-        # midnight for no market reason. Five calendar days covers at least
-        # 2-3 trading sessions even across a weekend -- comfortably more than
-        # RSI's warmup -- while giving the anchor a "the last few sessions"
-        # meaning instead of an arbitrary year-long one.
+        # Size the window by the bars that ARRIVE, not the interval asked for.
+        # `1m` is a request, not a guarantee: where the kdb cache holds no
+        # recorded ticks for a symbol the series falls back to vendor DAILY
+        # history, and a window sized for minutes then delivers a handful of
+        # bars. Measured against the live stack: a five-day window returned
+        # four daily bars for NVDA, and RSI(14) reported 78.5 off them --
+        # because Wilder is an EWM with no min_periods and yields a confident
+        # number from the second bar. `studies_for` now refuses an RSI below
+        # a full period, and this window is sized so the common case clears
+        # it: ~40 calendar days is ~28 trading days, comfortably past
+        # RSI(14)'s warmup on daily bars. Still a fourteenth of the 365-day
+        # default, which fired fifty year-long fetches at once on every mount.
         today = date.today()
-        s, e = str(today - timedelta(days=5)), str(today)
+        s, e = str(today - timedelta(days=40)), str(today)
+        # An anchored VWAP needs an anchor. Without one the value is a
+        # cumulative mean from whatever bar the window starts at, so it moves
+        # as the window rolls and is not comparable between two symbols or
+        # two days. A watchlist mixes US equities, crypto and forex, which
+        # share no session open -- the current UTC day's start is the one
+        # boundary all three do share, and the same boundary kdb's own /day
+        # endpoint slices on.
+        anchor = f"{today}T00:00:00"
 
         async def _one(sym: str) -> dict:
             try:
@@ -318,7 +327,7 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
             except Exception as exc:  # noqa: BLE001 - one bad symbol must not blank its neighbours
                 log.warning("live_grid_studies failed for %s: %s", sym, exc)
                 bars = []
-            return studies_for(sym, bars)
+            return studies_for(sym, bars, anchor)
 
         return list(await asyncio.gather(*[_one(sym) for sym in symbols]))
 
