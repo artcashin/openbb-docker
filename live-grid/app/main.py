@@ -731,6 +731,42 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
             "delayed": True,
         }
 
+    @app.get("/ticks")
+    async def ticks(symbol: str, limit: int = 200):
+        """The newest ticks held in the kdb cache for one symbol, newest first.
+
+        kdb is in-memory at this version: a restarted store holds nothing, and
+        a deployment may carry no store at all. Both answer an empty list with
+        a 200 -- the widget then reads as "no ticks" rather than as an error
+        card, which is the honest rendering of an empty cache.
+        """
+        if limit < 1:
+            raise HTTPException(status_code=422, detail="limit must be a positive integer")
+        # Capped rather than 422'd: a caller asking for more than a card can
+        # show has made no error, it just must not be able to pull the whole
+        # rolling window over the wire.
+        limit = min(limit, 1000)
+        sym = symbol.strip().upper()
+        if not sym:
+            raise HTTPException(status_code=422, detail="symbol must be a non-empty string")
+        if recorder is None:
+            return {"symbol": sym, "ticks": []}
+        try:
+            # A blocking IPC round-trip, off the loop like /series's tick
+            # aggregation above -- otherwise this stalls the grid's websocket
+            # flush for every open connection.
+            rows = await asyncio.to_thread(recorder.store.read_ticks, sym, limit)
+        except Exception as exc:  # noqa: BLE001 - the widget still works without ticks
+            log.warning("tick read failed for %s: %s", sym, exc)
+            return {"symbol": sym, "ticks": []}
+        return {
+            "symbol": sym,
+            "ticks": [
+                {"time": r["time"].isoformat(), "price": r["price"], "size": r["size"]}
+                for r in rows
+            ],
+        }
+
     @app.websocket("/live_grid_ws")
     async def live_grid_ws(ws: WebSocket) -> None:
         await ws.accept()

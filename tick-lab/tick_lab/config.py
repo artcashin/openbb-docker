@@ -1,4 +1,4 @@
-"""S3 connection settings, read from the same ARCTICDB_S3_* names the container uses.
+"""S3 connection settings, read from the same DELTA_S3_* names the container uses.
 
 Keeping one convention on both sides means `minio.env` is the single source of
 truth: the laptop and the Platform container cannot drift apart.
@@ -10,13 +10,12 @@ import os
 from collections.abc import Mapping, MutableMapping
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import quote
 
 REQUIRED = (
-    "ARCTICDB_S3_ENDPOINT",
-    "ARCTICDB_S3_BUCKET",
-    "ARCTICDB_S3_ACCESS",
-    "ARCTICDB_S3_SECRET",
+    "DELTA_S3_ENDPOINT",
+    "DELTA_S3_BUCKET",
+    "DELTA_S3_ACCESS",
+    "DELTA_S3_SECRET",
 )
 
 
@@ -104,24 +103,27 @@ class S3Config:
         )
 
     @property
-    def uri(self) -> str:
-        """The ArcticDB connection URI.
+    def base_uri(self) -> str:
+        return f"s3://{self.bucket}"
 
-        Host and bucket are separated by ':' and the port is a QUERY parameter.
-        'host:port:bucket' looks plausible and is not valid ArcticDB syntax.
-        """
-        scheme = "s3s" if self.secure else "s3"
-        return (
-            f"{scheme}://{self.endpoint}:{self.bucket}"
-            f"?port={self.port}"
-            f"&access={quote(self.access, safe='')}"
-            f"&secret={quote(self.secret, safe='')}"
-            f"&use_virtual_addressing=false"
-        )
+    @property
+    def storage_options(self) -> dict[str, str]:
+        scheme = "https" if self.secure else "http"
+        options = {
+            "aws_endpoint": f"{scheme}://{self.endpoint}:{self.port}",
+            "aws_access_key_id": self.access,
+            "aws_secret_access_key": self.secret,
+            "aws_region": "us-east-1",
+            "aws_virtual_hosted_style_request": "false",
+            "aws_conditional_put": "etag",
+        }
+        if not self.secure:
+            options["aws_allow_http"] = "true"
+        return options
 
 
 def from_env(env: Mapping[str, str] | None = None) -> S3Config:
-    """Build an S3Config from ARCTICDB_S3_* variables.
+    """Build an S3Config from DELTA_S3_* variables.
 
     When `env` is not given (the normal CLI path), a `.env` file is loaded
     into the real process environment first via `load_dotenv` -- so the
@@ -157,19 +159,19 @@ def from_env(env: Mapping[str, str] | None = None) -> S3Config:
             + hint
         )
 
-    port_raw = str(e.get("ARCTICDB_S3_PORT") or "9000").strip()
+    port_raw = str(e.get("DELTA_S3_PORT") or "9000").strip()
     if not port_raw.isdigit():
-        raise ConfigError(f"ARCTICDB_S3_PORT must be a number, got {port_raw!r}")
+        raise ConfigError(f"DELTA_S3_PORT must be a number, got {port_raw!r}")
 
-    secure_raw = str(e.get("ARCTICDB_S3_SECURE") or "true").strip().lower()
+    secure_raw = str(e.get("DELTA_S3_SECURE") or "true").strip().lower()
     if secure_raw not in ("true", "false"):
-        raise ConfigError(f"ARCTICDB_S3_SECURE must be 'true' or 'false', got {secure_raw!r}")
+        raise ConfigError(f"DELTA_S3_SECURE must be 'true' or 'false', got {secure_raw!r}")
 
     return S3Config(
-        endpoint=str(e["ARCTICDB_S3_ENDPOINT"]).strip(),
-        bucket=str(e["ARCTICDB_S3_BUCKET"]).strip(),
-        access=str(e["ARCTICDB_S3_ACCESS"]).strip(),
-        secret=str(e["ARCTICDB_S3_SECRET"]).strip(),
+        endpoint=str(e["DELTA_S3_ENDPOINT"]).strip(),
+        bucket=str(e["DELTA_S3_BUCKET"]).strip(),
+        access=str(e["DELTA_S3_ACCESS"]).strip(),
+        secret=str(e["DELTA_S3_SECRET"]).strip(),
         port=int(port_raw),
         secure=secure_raw == "true",
     )

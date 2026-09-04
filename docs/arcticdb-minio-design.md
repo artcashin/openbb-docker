@@ -1,5 +1,9 @@
 # ArcticDB + MinIO: the shared store
 
+> **Storage superseded:** ArcticDB was replaced by Delta Lake for licensing
+> reasons — see `docs/superpowers/specs/2026-09-01-deltalake-store-design.md`.
+> The MinIO/tailnet design below stands.
+
 **Date:** 2026-08-05
 **Status:** Shipped
 **Ships as:** v11.0.0 through v11.1.1 — *Adventures in OpenBB, Ep. 11*

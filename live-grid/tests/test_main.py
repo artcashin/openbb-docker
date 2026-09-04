@@ -72,7 +72,8 @@ def test_widgets_json_declares_the_live_grid_contract():
     assert w["wsEndpoint"] == "live_grid_ws"
     assert w["data"]["wsRowIdColumn"] == "symbol"
     fields = [c["field"] for c in w["data"]["table"]["columnsDefs"]]
-    assert fields[0] == "symbol"
+    # The logo leads, then the symbol it belongs to.
+    assert fields[:2] == ["logo_url", "symbol"]
     # snapshot-only column must never update over the socket
     vol = next(c for c in w["data"]["table"]["columnsDefs"] if c["field"] == "volume")
     assert vol["enableCellChangeWs"] is False
@@ -90,6 +91,90 @@ def test_widgets_json_declares_the_live_chart_contract():
     assert [o["value"] for o in interval["options"]] == [
         "1s", "1m", "5m", "15m", "30m", "1h", "1d",
     ]
+
+
+def test_live_grid_declares_its_visible_columns_and_hides_the_rest(monkeypatch):
+    body = make_client().get("/widgets.json").json()
+    cols = body["live_grid"]["data"]["table"]["columnsDefs"]
+    visible = [c["field"] for c in cols if not c.get("hide")]
+    # Each range bar is flanked by its own low and high, so the numbers line
+    # up down the grid and sort -- the bar itself labels nothing.
+    assert visible == [
+        "logo_url", "symbol", "price", "change", "change_percent",
+        "day_low", "day_range", "day_high",
+        "week52_low", "week52_range", "week52_high",
+        "volume",
+    ]
+    hidden = {c["field"]: c for c in cols if c.get("hide")}
+    assert all(c["hide"] is True for c in hidden.values())
+
+    # The desktop client renders every payload field the manifest does not
+    # declare hidden as a trailing visible column. So the real regression
+    # check is on the payload, not the declarations: every key a seeded
+    # /live_grid row actually carries must either be one of the six visible
+    # fields above or be declared here with hide: true -- otherwise it
+    # renders as an extra column. Get the key set from a real seeded row
+    # (same pattern as test_live_grid_seeds_rows_in_request_order) so a
+    # future field added to the row makes this test fail instead of
+    # silently adding a column.
+    rest = FakeRest({"AAPL.US": {"close": "150", "previousClose": "100", "volume": "7"}})
+    row = make_client(monkeypatch, seed_client=rest).get("/live_grid?symbol=AAPL").json()[0]
+    declared_hidden = set(hidden)
+    for field in row:
+        assert field in visible or field in declared_hidden, (
+            f"payload field {field!r} is neither a visible column nor declared hidden"
+        )
+
+
+def test_the_logo_is_its_own_column_carrying_the_url_as_its_value():
+    body = make_client().get("/widgets.json").json()
+    cols = body["live_grid"]["data"]["table"]["columnsDefs"]
+    (logo,) = [c for c in cols if c["field"] == "logo_url"]
+    assert "logo" in logo["renderFn"]
+    # No urlKey: the column's own value IS the URL, so pointing at a second
+    # field would be indirection with nothing on the other end of it.
+    assert "urlKey" not in logo.get("renderFnParams", {})
+    # And the symbol column beside it stays plain text.
+    (sym,) = [c for c in cols if c["field"] == "symbol"]
+    assert "logo" not in sym.get("renderFn", [])
+
+
+def test_both_range_bars_use_one_render_fn_differing_only_in_params():
+    body = make_client().get("/widgets.json").json()
+    defs = {c["field"]: c for c in body["live_grid"]["data"]["table"]["columnsDefs"]}
+    day, week = defs["day_range"], defs["week52_range"]
+    assert day["renderFn"] == week["renderFn"] == ["rangeBar"]
+    assert day["renderFnParams"] == {
+        "lowKey": "day_low", "highKey": "day_high", "palette": "day",
+    }
+    assert week["renderFnParams"] == {
+        "lowKey": "week52_low", "highKey": "week52_high", "palette": "week52",
+    }
+    # The palettes MUST differ: the two bars sit side by side in one row, and
+    # identical colours read as one repeated column rather than two bands.
+    assert day["renderFnParams"]["palette"] != week["renderFnParams"]["palette"]
+
+
+def test_the_bars_and_volume_opt_out_of_the_change_flash():
+    body = make_client().get("/widgets.json").json()
+    defs = {c["field"]: c for c in body["live_grid"]["data"]["table"]["columnsDefs"]}
+    for field in ("day_range", "week52_range", "volume"):
+        assert defs[field]["enableCellChangeWs"] is False
+
+
+def test_price_keeps_the_change_flash():
+    body = make_client().get("/widgets.json").json()
+    defs = {c["field"]: c for c in body["live_grid"]["data"]["table"]["columnsDefs"]}
+    assert "showCellChange" in defs["price"]["renderFn"]
+    assert defs["price"].get("enableCellChangeWs") is not False
+
+
+def test_kdb_ticks_is_a_plain_table_widget():
+    body = make_client().get("/widgets.json").json()
+    w = body["kdb_ticks"]
+    assert w["type"] == "table"
+    assert w["endpoint"] == "ticks"
+    assert [p["paramName"] for p in w["params"]] == ["symbol", "limit"]
 
 
 def test_live_grid_seeds_rows_in_request_order(monkeypatch):
@@ -239,3 +324,35 @@ def test_advanced_chart_offers_the_full_intraday_interval_range():
     assert [o["value"] for o in interval["options"]] == [
         "1s", "1m", "5m", "15m", "30m", "1h", "1d"
     ]
+
+
+def test_change_and_percent_are_two_columns_not_one_parenthetical():
+    """They sort independently and line up down the grid, which a percent
+    riding inside the change cell as "(3.40%)" could not do."""
+    body = make_client().get("/widgets.json").json()
+    defs = {c["field"]: c for c in body["live_grid"]["data"]["table"]["columnsDefs"]}
+    assert "renderFnParams" not in defs["change"]
+    pct = defs["change_percent"]
+    assert pct.get("hide") is not True
+    # The payload carries a fraction, so it needs the x100 formatter.
+    assert pct["formatterFn"] == "normalizedPercent"
+    assert "greenRed" in pct["renderFn"]
+
+
+def test_the_price_and_change_columns_are_right_aligned():
+    body = make_client().get("/widgets.json").json()
+    defs = {c["field"]: c for c in body["live_grid"]["data"]["table"]["columnsDefs"]}
+    for field in ("price", "change", "change_percent"):
+        assert defs[field]["align"] == "right", field
+
+
+def test_the_range_bars_flanking_columns_hug_their_bar():
+    """A low right-aligned and a high left-aligned put both numbers against
+    the bar they describe, rather than at opposite ends of the row with the
+    bar stranded between them."""
+    body = make_client().get("/widgets.json").json()
+    defs = {c["field"]: c for c in body["live_grid"]["data"]["table"]["columnsDefs"]}
+    assert defs["day_low"]["align"] == "right"
+    assert defs["day_high"]["align"] == "left"
+    assert defs["week52_low"]["align"] == "right"
+    assert defs["week52_high"]["align"] == "left"

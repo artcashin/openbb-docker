@@ -5,13 +5,15 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "tick-lab"
 version = "11.1.1"
-description = "Read ticks from the shared ArcticDB store, roll them into bars, and check them against another source"
+description = "Read ticks from the shared Delta Lake store, roll them into bars, and check them against another source"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "AGPL-3.0-only" }
 dependencies = [
-    "arcticdb>=6.21",
-    "pandas>=2.0",
+    "deltalake>=1.0",
+    "pyarrow>=16",
+    "pandas>=2.0,<3",  # pandas 3 changed tz_localize's ambiguous/nonexistent
+                       # exceptions away from pytz's -- see firstrate.py
     "yfinance>=1.5",
     "requests>=2.31",
 ]

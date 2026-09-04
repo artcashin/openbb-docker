@@ -1,38 +1,40 @@
-"""Read-only MCP server exposing ArcticDB and kdb+ discovery/query tools.
+"""Read-only MCP server exposing Delta Lake and kdb+ discovery/query tools.
 
 Runs beside openbb-api inside the NAS shared network namespace
 (network_mode: service:tailscale), serving streamable-http MCP on
 127.0.0.1:6902 (path /mcp), published by Tailscale Serve on
 https://openbb.<your-tailnet>.ts.net:8444/mcp.
 
-Why it exists: the REST arcticdb/kdb providers only answer known-symbol OHLCV
+Why it exists: the REST deltalake/kdb providers only answer known-symbol OHLCV
 queries and return 204 against this store's raw quote/trade tick data. These
-tools give an agent discovery (libraries/symbols/tables/schemas) plus capped
-raw reads.
+tools give an agent discovery (libraries/symbols/tables/schemas), metadata
+answered from the transaction log, time travel, plus capped raw reads.
 
 Config (already present in the NAS env files):
-  ARCTICDB_URI       s3s://minio.<tailnet>.ts.net:openbb?port=9000&...
-                     A NAME, not a raw tailnet IP. MagicDNS does not resolve
-                     inside these containers, but the entrypoint's HOSTS_ALIAS
-                     writes the mapping into /etc/hosts at start, and the name
-                     is what the MinIO node's certificate is issued for -- a
-                     raw IP cannot match it. The predecessor store (its own
-                     node, plain http, raw IP 100.122.x.x) was retired.
-                     NOTE: this URI embeds S3 access/secret credentials --
-                     never let it or a raw exception from the arcticdb client
-                     reach the caller; see _scrub / _bounded below.
+  DELTA_S3_*         ENDPOINT/BUCKET/ACCESS/SECRET/PORT/SECURE for the
+                     MinIO-backed store, or DELTA_URI for a path or s3:// URL.
+                     The endpoint is a NAME, not a raw tailnet IP. MagicDNS
+                     does not resolve inside these containers, but the
+                     entrypoint's HOSTS_ALIAS writes the mapping into
+                     /etc/hosts at start, and the name is what the MinIO
+                     node's certificate is issued for -- a raw IP cannot
+                     match it.
+                     NOTE: credentials reach delta-rs as storage_options and
+                     never enter a URI, which retired ArcticDB's
+                     credential-bearing URI entirely. They can still surface
+                     in a raw backend exception -- see _scrub / _bounded.
   KX_HOST / KX_PORT  kdb IPC target; KX_PORT may be the combined
                      "127.0.0.1:5000" form used by deps.env — parsed here.
   STORES_HOST/PORT   bind address, default 127.0.0.1:6902.
   STORES_TIMEOUT_S   hard wall-clock timeout (seconds) applied to every
-                     ArcticDB/kdb+ backend call, default 15. Bounds how long
+                     Delta/kdb+ backend call, default 15. Bounds how long
                      a dead S3 endpoint or unreachable kdb+ can hang a tool
                      call (and, transitively, an anyio worker thread).
 
-  ARCTICDB_LIBRARY is intentionally NOT read here. It configures the REST
-  arcticdb provider/other services sharing these env files; this server
+  DELTA_LIBRARY is intentionally NOT read here. It configures the REST
+  deltalake provider/other services sharing these env files; this server
   always requires an explicit `library` argument (discovered via
-  arctic_list_libraries) because cross-library reads are the point of these
+  delta_list_libraries) because cross-library reads are the point of these
   tools, not a default to paper over.
 
 Safety: all tools are read-only. kdb access NEVER interpolates user input into
@@ -75,9 +77,13 @@ mcp = FastMCP("stores", mask_error_details=True)
 
 # ---------- credential scrubbing / backend call bounding ----------
 
-# Matches the credential params in an ArcticDB S3 URI (access=/secret=) and
-# any bare s3(s)://... URI, wherever they show up in exception text.
-_CRED_PARAM_RE = re.compile(r"(?i)\b(access|secret)=[^&\s\"']*")
+# Covers both shapes, wherever they show up in exception text: the legacy URI query form (access=/secret=) and
+# delta-rs storage_options, which surface in exception text as
+# `access_key_id: ...` / `secret_access_key=...`. The credential no longer
+# rides in a URI, but it can still reach an error string.
+_CRED_PARAM_RE = re.compile(
+    r"(?i)\b((?:aws_)?(?:access|secret)(?:_key_id|_access_key)?)\s*[=:]\s*[^&,\s\"'}]*"
+)
 _S3_URI_RE = re.compile(r"s3s?://\S+")
 
 
@@ -90,12 +96,12 @@ def _scrub(text: str) -> str:
 
 
 def _bounded(fn, *args, **kwargs):
-    """Run a raw ArcticDB backend call with a hard wall-clock timeout, and
+    """Run a raw Delta/kdb backend call with a hard wall-clock timeout, and
     scrub any embedded S3 credentials out of its exception text.
 
-    Only wraps calls that touch arcticdb directly (never our own validation
+    Only wraps calls that touch deltalake directly (never our own validation
     raises, which don't contain secrets and should keep their exception
-    type). arcticdb/pykx give no cooperative cancellation, so on timeout the
+    type). delta-rs/pykx give no cooperative cancellation, so on timeout the
     worker thread is abandoned rather than joined -- this call always
     returns or raises within STORES_TIMEOUT_S regardless of what the backend
     is doing.
@@ -121,10 +127,13 @@ def _bounded(fn, *args, **kwargs):
 
 # ---------- shared helpers ----------
 
-def _arctic():
-    from arcticdb import Arctic  # lazy: unit tests mock the module
+def _delta(library: str):
+    """A DeltaStore for `library`. Credentials never enter a URI here --
+    delta-rs takes them as storage_options, which is what retired the
+    combined ARCTICDB_URI form and its leak risk."""
+    from openbb_deltalake.store import DeltaStore  # lazy: tests use tmp paths
 
-    return _bounded(Arctic, os.environ["ARCTICDB_URI"])
+    return _bounded(DeltaStore, None, library)
 
 
 def _kdb_conn():
@@ -162,69 +171,95 @@ def _check_ident(kind, value):
         raise ValueError(f"invalid {kind} {value!r}: must match {_IDENT_RE.pattern}")
 
 
-# ---------- ArcticDB tools ----------
+# ---------- Delta Lake tools ----------
 
-def arctic_list_libraries() -> list[str]:
-    """List ArcticDB libraries in the store (e.g. 'ticks')."""
-    ac = _arctic()
-    return sorted(_bounded(ac.list_libraries))
+def delta_list_libraries() -> list[str]:
+    """List Delta libraries in the shared store (e.g. 'ticks')."""
+    from openbb_deltalake import describe as D  # lazy: tests use tmp paths
+
+    store = _delta("_")
+    return sorted(_bounded(D.list_libraries, store.base, store.storage_options))
 
 
-def arctic_list_symbols(library: str) -> list[str]:
-    """List symbols stored in an ArcticDB library."""
-    ac = _arctic()
-    if library not in _bounded(ac.list_libraries):
+def delta_list_symbols(library: str) -> list[str]:
+    """List symbols (Delta tables) stored in a library."""
+    _check_ident("library", library)
+    if library not in delta_list_libraries():
         raise ValueError(
-            f"unknown library {library!r}; call arctic_list_libraries first"
+            f"unknown library {library!r}; call delta_list_libraries first"
         )
-    lib = _bounded(ac.__getitem__, library)
-    return sorted(_bounded(lib.list_symbols))
+    return sorted(_bounded(_delta(library).list_symbols))
 
 
-def arctic_read(
+def _require_symbol(library: str, symbol: str):
+    """The store for library, once symbol is known to be in it.
+
+    Every tool validates through here so the "unknown X; call Y first" error
+    contract is one implementation, not one per entry point.
+    """
+    _check_ident("symbol", symbol)
+    if symbol not in delta_list_symbols(library):
+        raise ValueError(
+            f"unknown symbol {symbol!r} in {library!r}; call delta_list_symbols first"
+        )
+    return _delta(library)
+
+
+def delta_describe(library: str, symbol: str) -> dict:
+    """Row count, stored date range and column dtypes for a symbol.
+
+    Answered from the transaction log: this reads no rows, however large the
+    symbol is.
+    """
+    from openbb_deltalake import describe as D
+
+    return _bounded(D.describe, _require_symbol(library, symbol), symbol)
+
+
+def delta_history(library: str, symbol: str) -> list[dict]:
+    """Delta versions for a symbol, newest first -- the time-travel choices."""
+    from openbb_deltalake import describe as D
+
+    return _bounded(D.history, _require_symbol(library, symbol), symbol)
+
+
+def delta_read(
     library: str,
     symbol: str,
     start: str | None = None,
     end: str | None = None,
     tail_rows: int = 1000,
+    as_of: str | int | None = None,
 ) -> dict:
-    """Read a symbol from an ArcticDB library.
+    """Read a symbol from a Delta library.
 
-    start/end are ISO dates/timestamps filtering the stored index
-    (ArcticDB date_range). Returns at most tail_rows rows (the most recent
-    ones in range, hard cap 10000) as JSON records with ISO timestamps.
+    start/end are ISO dates/timestamps filtering the stored index. as_of is an
+    int Delta version or an ISO timestamp for time travel. Returns at most
+    tail_rows rows (the most recent in range, hard cap MAX_ROWS) as JSON
+    records with ISO timestamps.
 
-    The READ itself is bounded, not just the response: with no start/end
-    this uses ArcticDB's native `Library.tail(symbol, n)` so an unfiltered
-    call never materializes the whole symbol. With start/end, ArcticDB's
-    storage-level date_range read is already scoped to that window (mutually
-    exclusive with row_range at the API level), then trimmed to tail_rows.
+    The READ is bounded, not just the response: with no start/end this reads
+    only the trailing files the transaction log says hold those rows, so an
+    unfiltered call never materializes the whole symbol -- the guarantee
+    ArcticDB gave via Library.tail, which delta-rs has no equivalent for.
     """
-    import pandas as pd  # available: arcticdb depends on pandas
-
     tail_rows = max(1, min(int(tail_rows), MAX_ROWS))
-    ac = _arctic()
-    if library not in _bounded(ac.list_libraries):
-        raise ValueError(
-            f"unknown library {library!r}; call arctic_list_libraries first"
-        )
-    lib = _bounded(ac.__getitem__, library)
-    if symbol not in _bounded(lib.list_symbols):
-        raise ValueError(
-            f"unknown symbol {symbol!r} in {library!r}; call arctic_list_symbols first"
-        )
+    store = _require_symbol(library, symbol)
+    if isinstance(as_of, str) and as_of.isdigit():
+        as_of = int(as_of)
+
+    from openbb_deltalake import describe as D
 
     if start or end:
-        date_range = (
-            pd.Timestamp(start) if start else None,
-            pd.Timestamp(end) if end else None,
+        df = _bounded(
+            store.read, symbol, start_date=start, end_date=end,
+            as_of=as_of, output="dataframe",
         )
-        df = _bounded(lib.read, symbol, date_range=date_range).data
         total = len(df)
         df = df.tail(tail_rows).reset_index()
     else:
-        total = _bounded(lib.get_description, symbol).row_count
-        df = _bounded(lib.tail, symbol, n=tail_rows).data.reset_index()
+        total = _bounded(D.describe, store, symbol)["row_count"]
+        df = _bounded(store.read_trailing, symbol, tail_rows, as_of).reset_index()
 
     return {
         "library": library,
@@ -323,9 +358,11 @@ def kdb_select(
 
 # Registered here (not via decorator) so tests import the plain functions.
 for _fn in (
-    arctic_list_libraries,
-    arctic_list_symbols,
-    arctic_read,
+    delta_list_libraries,
+    delta_list_symbols,
+    delta_describe,
+    delta_history,
+    delta_read,
     kdb_tables,
     kdb_table_schema,
     kdb_select,

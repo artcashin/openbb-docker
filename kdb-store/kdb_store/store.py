@@ -354,6 +354,53 @@ class KdbStore:
 
         return self._call(newest)
 
+    def read_ticks(self, symbol: str, limit: int) -> list[dict]:
+        """The newest `limit` ticks held for a symbol, newest first.
+
+        Unlike `tick_span` and `latest_tick` this needs no in-q emptiness
+        guard: those are ungrouped AGGREGATES, which over zero rows answer one
+        row of q nulls that PyKX misreads as a 1700s timestamp. This is a plain
+        selection -- zero matching rows is an empty table, and `.pd()` gives an
+        empty frame, which iterates zero times.
+
+        `xdesc` then `sublist` sorts the symbol's whole tick history per call.
+        That is the same trade `startup.q` makes for its as-of join and is
+        cheap at cache scale; kdb is a one-day rolling window here, not a
+        historical database.
+
+        `xdesc` is a STABLE sort: ticks sharing one `time` come out in their
+        original, arrival order, not reversed. `reverse` runs first so that,
+        after the stable sort, arrival order among tied ticks reads newest
+        first -- the same tie-break `latest_tick` documents above.
+
+        A non-positive `limit` returns an empty list. q's `sublist` takes
+        from the *end* of the list for a negative left argument, which would
+        silently hand back the OLDEST ticks instead -- guarded here rather
+        than relying on the one caller (`/ticks`) that happens to reject it.
+        """
+        if limit <= 0:
+            return []
+
+        def read(conn):
+            got = conn(
+                "{[qwsym;qwlim] qwlim sublist `time xdesc reverse"
+                " select time, price, size from trades where sym = qwsym}",
+                _q_symbol(symbol),
+                limit,
+            ).pd()
+            if got is None or got.empty:
+                return []
+            return [
+                {
+                    "time": row["time"].to_pydatetime(),
+                    "price": float(row["price"]),
+                    "size": float(row["size"]),
+                }
+                for _, row in got.iterrows()
+            ]
+
+        return self._call(read)
+
     def aggregate_frame(self, symbol: str, interval: str, start, end):
         """OHLCV buckets for one symbol, aggregated in q.
 

@@ -76,19 +76,22 @@ def _fetch_sync(sym: str, credentials: dict[str, str] | None) -> dict:
     return response
 
 
-# --- L2: ArcticDB read-through (best-effort; never raises) ---------------------
-def _arctic_library():
-    """Return the ArcticDB cache library, or None if unavailable/unconfigured.
+# --- L2: Delta Lake read-through (best-effort; never raises) ------------------
+def _delta_store():
+    """Return the Delta cache store, or None if unavailable/unconfigured.
 
-    Soft dependency: openbb-arcticdb is present in the container but not required
-    for this extension to work (standalone dev, MinIO down). Any failure -> None.
+    Soft dependency: openbb-deltalake is present in the container but not
+    required for this extension to work (standalone dev, MinIO down). Any
+    failure -> None, and the caller degrades to L1 plus a live fetch.
+
+    DeltaStore resolves base/library/storage_options itself, so there is
+    nothing to pass but the cache's library name.
     """
     try:
         # pylint: disable=import-outside-toplevel
-        from openbb_arcticdb.utils import get_library, resolve_config
+        from openbb_deltalake.store import DeltaStore
 
-        uri, library = resolve_config(library=_L2_LIBRARY)
-        return get_library(uri, library, create_if_missing=True)
+        return DeltaStore(library=_L2_LIBRARY)
     except Exception:  # noqa: BLE001 - L2 is optional; degrade to L1 + live fetch
         return None
 
@@ -96,33 +99,46 @@ def _arctic_library():
 def _l2_get(sym: str) -> dict | None:
     """Fresh cached bundle for sym, or None. Never raises."""
     try:
-        lib = _arctic_library()
-        if lib is None or not lib.has_symbol(sym):
+        store = _delta_store()
+        if store is None or not store.has(sym):
             return None
-        meta = (lib.read_metadata(sym).metadata or {})
+        meta = store.read_metadata(sym) or {}
         fetched = meta.get("fetched_at")
         if not fetched:
             return None
         age = (datetime.now(timezone.utc) - datetime.fromisoformat(fetched)).total_seconds()
         if age > _l2_ttl_seconds():
             return None
-        return json.loads(lib.read(sym).data["payload"].iloc[0])
+        return json.loads(store.read(sym, output="dataframe")["payload"].iloc[0])
     except Exception:  # noqa: BLE001
         return None
 
 
 def _l2_put(sym: str, bundle: dict) -> None:
-    """Persist a bundle for sym. Never raises."""
+    """Persist a bundle for sym, keeping exactly one version. Never raises.
+
+    ArcticDB had `prune_previous_versions=True`; Delta has no equivalent, and
+    `vacuum` only reclaims data files -- it does not truncate the transaction
+    log, so `history()` (which read_metadata walks) would still grow a commit
+    per refresh forever. Dropping the table before rewriting resets it to a
+    single version, which is the honest equivalent for a cache: the previous
+    value is stale by definition.
+
+    Delete-then-write is deliberately not atomic. A crash in between leaves no
+    entry, which is a cache miss -- the one failure mode a cache is allowed.
+    """
     try:
-        lib = _arctic_library()
-        if lib is None:
+        store = _delta_store()
+        if store is None:
             return
         # pylint: disable=import-outside-toplevel
         from pandas import DataFrame, Timestamp
 
         now = datetime.now(timezone.utc)
         df = DataFrame({"payload": [json.dumps(bundle)]}, index=[Timestamp(now)])
-        lib.write(sym, df, metadata={"fetched_at": now.isoformat()}, prune_previous_versions=True)
+        if store.has(sym):
+            store.delete(sym)
+        store.write(sym, df, metadata={"fetched_at": now.isoformat()})
     except Exception:  # noqa: BLE001
         return
 
