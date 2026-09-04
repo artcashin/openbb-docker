@@ -5,9 +5,9 @@ drift from the chart's -- see the brief for why this task does not transcribe
 the supplied Perspective prototype's Cutler RSI or its own kdb websocket.
 """
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
-from app.studies import studies_for
+from app.studies import WINDOW_DAYS, parse_anchors, studies_for, window_start
 from app.ta.compute import compute
 from app.ta.payload import bars_to_frame
 from app.ta.registry import resolve
@@ -69,6 +69,7 @@ def test_a_symbol_with_too_little_history_reports_null_rsi_not_fifty():
     every cold symbol in the middle of the pack."""
     assert studies_for("NEW", bars=[]) == {
         "symbol": "NEW", "rsi": None, "avwap": None, "avwap_dev": None,
+        "vwap_start": None,
     }
 
 
@@ -125,3 +126,135 @@ def test_an_anchor_after_the_last_bar_yields_no_avwap():
     the last price and not zero."""
     bars = _tick_bars(30)
     assert studies_for("X", bars, anchor="2030-01-01T00:00:00")["avwap"] is None
+
+
+# --- parse_anchors: the VWAP Start column's wire format ---------------------
+
+
+def test_parse_anchors_empty_is_all_default():
+    assert parse_anchors("", "D") == ("D", {})
+
+
+def test_parse_anchors_bare_iso_overrides_every_symbol():
+    """One unkeyed timestamp is the grid-wide anchor -- "anchor everything at
+    the open" is one cell edited, not fifty."""
+    assert parse_anchors("2026-09-04T14:00:00", "D") == ("2026-09-04T14:00:00", {})
+
+
+def test_parse_anchors_keyed_pairs_are_per_symbol():
+    got = parse_anchors("NVDA=2026-09-04T14:00:00,BTC-USD=2026-09-04T13:30:00", "D")
+    assert got == (
+        "D",
+        {"NVDA": "2026-09-04T14:00:00", "BTC-USD": "2026-09-04T13:30:00"},
+    )
+
+
+def test_parse_anchors_mixes_a_default_with_overrides():
+    fallback, over = parse_anchors("2026-09-04T14:00:00,NVDA=2026-09-04T18:00:00", "D")
+    assert fallback == "2026-09-04T14:00:00"
+    assert over == {"NVDA": "2026-09-04T18:00:00"}
+
+
+def test_parse_anchors_uppercases_the_symbol():
+    """The grid's own symbols are upper-cased by _parse_symbols, so a lookup
+    keyed on a lower-case cell would silently miss and use the default."""
+    assert parse_anchors("nvda=2026-09-04T14:00:00", "D")[1] == {
+        "NVDA": "2026-09-04T14:00:00"
+    }
+
+
+def test_parse_anchors_drops_an_unparseable_timestamp():
+    """A typo in one row's cell must not blank the whole grid, and must not
+    reach polars -- a bad anchor raises inside compute(), which is outside
+    the per-symbol try, so it would 500 the entire request."""
+    fallback, over = parse_anchors("NVDA=not-a-time,AAPL=2026-09-04T14:00:00", "D")
+    assert fallback == "D"
+    assert over == {"AAPL": "2026-09-04T14:00:00"}
+
+
+def test_parse_anchors_drops_an_unparseable_bare_chunk():
+    assert parse_anchors("garbage", "D") == ("D", {})
+
+
+def test_parse_anchors_accepts_a_trailing_z():
+    """The client sends UTC; `toISOString()` ends in Z, which
+    datetime.fromisoformat rejected before 3.11 and _avwap_anchor rewrites."""
+    assert parse_anchors("NVDA=2026-09-04T14:00:00Z", "D")[1] == {
+        "NVDA": "2026-09-04T14:00:00Z"
+    }
+
+
+def test_parse_anchors_ignores_blank_chunks():
+    """An empty cell contributes nothing -- the client sends only the rows
+    that were edited, but a stray comma must not become a symbol."""
+    assert parse_anchors(",NVDA=2026-09-04T14:00:00,,", "D")[1] == {
+        "NVDA": "2026-09-04T14:00:00"
+    }
+
+
+def test_parse_anchors_last_wins_on_a_repeated_symbol():
+    assert parse_anchors("NVDA=2026-09-04T14:00:00,NVDA=2026-09-04T15:00:00", "D")[1] == {
+        "NVDA": "2026-09-04T15:00:00"
+    }
+
+
+# --- window_start: the fetch window has to reach past the anchor ------------
+
+TODAY = date(2026, 9, 4)
+
+
+def test_window_start_defaults_to_the_rsi_warmup_floor():
+    assert window_start(f"{TODAY}T14:00:00", TODAY) == str(TODAY - timedelta(days=WINDOW_DAYS))
+
+
+def test_window_start_stretches_back_to_cover_an_older_anchor():
+    """An anchor before every bar fetched filters nothing, so the AVWAP would
+    report a cumulative mean from the window's first bar while the column
+    still claimed the anchor the user typed -- the same authoritative-and-
+    wrong failure as an RSI off four bars."""
+    assert window_start("2026-01-15T14:00:00", TODAY) == "2026-01-15"
+
+
+def test_window_start_keeps_the_floor_for_a_recent_anchor():
+    """Today's open must not shrink the window below RSI(14)'s warmup."""
+    assert window_start(f"{TODAY}T00:00:00", TODAY) == str(TODAY - timedelta(days=WINDOW_DAYS))
+
+
+def test_window_start_survives_an_unparseable_anchor():
+    assert window_start("not-a-time", TODAY) == str(TODAY - timedelta(days=WINDOW_DAYS))
+
+
+def test_window_start_handles_a_tz_aware_anchor():
+    """A client sending `...Z` must widen the window the same as a naive one."""
+    assert window_start("2026-01-15T14:00:00Z", TODAY) == "2026-01-15"
+
+
+# --- vwap_start: the payload echoes the anchor it actually used -------------
+
+
+def test_studies_echoes_the_anchor_in_vwap_start():
+    """The cell must show what the server COMPUTED with, not what the client
+    believes it asked for -- otherwise a dropped or defaulted anchor leaves
+    the column claiming a time the number beside it never used."""
+    anchor = "2026-01-01T09:35:00"
+    got = studies_for("NVDA", _tick_bars(30), anchor)
+    assert got["vwap_start"] == anchor
+
+
+def test_blank_row_still_carries_vwap_start():
+    """A symbol with no bars keeps every key, so `tableColumns` cannot drop
+    the column on the first render."""
+    got = studies_for("NVDA", [], "2026-01-01T09:35:00")
+    assert got == {
+        "symbol": "NVDA",
+        "rsi": None,
+        "avwap": None,
+        "avwap_dev": None,
+        "vwap_start": "2026-01-01T09:35:00",
+    }
+
+
+def test_vwap_start_is_none_when_unanchored():
+    """No anchor is not the same as an anchor at the epoch -- the column
+    renders blank rather than asserting a start it does not have."""
+    assert studies_for("NVDA", _tick_bars(30))["vwap_start"] is None

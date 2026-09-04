@@ -84,6 +84,15 @@
       "renderFnParams": { "signed": true }
      },
      {
+      "field": "vwap_start",
+      "headerName": "VWAP Start",
+      "headerTooltip": "Where the anchored VWAP starts. Type 10:00 for 10am your time every day, or a full date and time to pin it to one moment. Blank anchors at the UTC day start.",
+      "editable": true,
+      "enableCellChangeWs": false,
+      "align": "center",
+      "width": 104
+     },
+     {
       "field": "day_low",
       "headerName": "Low",
       "enableCellChangeWs": false,
