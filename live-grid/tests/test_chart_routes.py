@@ -175,10 +175,13 @@ TICK_BARS = [bar(D("2025-06-10T14:01:00"), close=5.0),
 
 
 class FakeStore:
-    """Stands in for KdbStore. Records the range each aggregation asked for."""
+    """Stands in for KdbStore. Records the range each aggregation asked for,
+    and (for /ticks) the rows to hand back and the limit it was called with."""
 
     def __init__(self):
         self.aggregate_calls = []
+        self.ticks = []
+        self.last_limit = None
 
     def tick_span(self, symbol):
         return SPAN
@@ -188,6 +191,10 @@ class FakeStore:
 
     def write_ticks(self, frame):
         return 0
+
+    def read_ticks(self, symbol, limit):
+        self.last_limit = limit
+        return self.ticks
 
 
 @pytest.fixture
@@ -290,3 +297,54 @@ def test_history_endpoint_routes_by_asset_class():
     assert history_endpoint("AAPL") == "equity/price/historical"
     assert history_endpoint("BTC-USD") == "crypto/price/historical"
     assert history_endpoint("EURUSD") == "currency/price/historical"
+
+
+# -- GET /ticks ---------------------------------------------------------
+
+def test_ticks_returns_the_stores_rows(tick_client):
+    tick_client.store.ticks = [
+        {"time": D("2026-09-03T15:00:02"), "price": 191.5, "size": 100.0},
+    ]
+    res = tick_client.get("/ticks?symbol=aapl")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["symbol"] == "AAPL"
+    assert body["ticks"][0]["price"] == 191.5
+    assert body["ticks"][0]["time"].startswith("2026-09-03T15:00:02")
+
+
+def test_ticks_defaults_to_200(tick_client):
+    tick_client.get("/ticks?symbol=AAPL")
+    assert tick_client.store.last_limit == 200
+
+
+def test_ticks_caps_the_limit_at_1000(tick_client):
+    """One card must not be able to pull the whole cache over the wire."""
+    tick_client.get("/ticks?symbol=AAPL&limit=99999")
+    assert tick_client.store.last_limit == 1000
+
+
+def test_ticks_rejects_a_non_positive_limit(tick_client):
+    assert tick_client.get("/ticks?symbol=AAPL&limit=0").status_code == 422
+
+
+def test_ticks_on_an_empty_cache_is_an_empty_list_not_a_404(tick_client):
+    """A restarted kdb reads as 'no ticks', never as a broken widget."""
+    tick_client.store.ticks = []
+    res = tick_client.get("/ticks?symbol=AAPL")
+    assert res.status_code == 200
+    assert res.json()["ticks"] == []
+
+
+def test_ticks_without_a_store_is_an_empty_list(monkeypatch):
+    """kdb is optional -- a deployment without it renders an empty table.
+
+    Deliberately mirrors test_series_works_with_no_recorder: LIVE_GRID_CHART=
+    false drives create_app() down the real no-recorder branch rather than the
+    `client`/`tick_client` fixtures' mocked-but-present recorder.
+    """
+    monkeypatch.setenv("LIVE_GRID_CHART", "false")
+    no_recorder_client = TestClient(create_app(api_key="test-key"))
+    res = no_recorder_client.get("/ticks?symbol=AAPL")
+    assert res.status_code == 200
+    assert res.json()["ticks"] == []
