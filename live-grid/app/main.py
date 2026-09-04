@@ -298,7 +298,19 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
         symbols = _parse_symbols(symbol)
         if not symbols:
             return []
-        s, e = _window(None, None)
+        # NOT `_window(None, None)`: that default (365 days) makes every
+        # symbol here an HTTP request for a year of one-minute bars, all
+        # fired at once by the gather below -- fifty simultaneous year-long
+        # intraday fetches on mount or any symbol-set change, to compute an
+        # RSI(14) that needs about fifteen bars. It also makes the anchored
+        # VWAP's anchor (anchor=None, cumulative from the window's first bar)
+        # slide to a new start every calendar day, so `vs VWAP` steps at
+        # midnight for no market reason. Five calendar days covers at least
+        # 2-3 trading sessions even across a weekend -- comfortably more than
+        # RSI's warmup -- while giving the anchor a "the last few sessions"
+        # meaning instead of an arbitrary year-long one.
+        today = date.today()
+        s, e = str(today - timedelta(days=5)), str(today)
 
         async def _one(sym: str) -> dict:
             try:
