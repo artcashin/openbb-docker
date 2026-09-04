@@ -97,16 +97,21 @@ def test_live_grid_declares_its_visible_columns_and_hides_the_rest(monkeypatch):
     body = make_client().get("/widgets.json").json()
     cols = body["live_grid"]["data"]["table"]["columnsDefs"]
     visible = [c["field"] for c in cols if not c.get("hide")]
-    # Each range bar is flanked by its own low and high, so the numbers line
-    # up down the grid and sort -- the bar itself labels nothing.
+    # ORDER IS THE ASSERTION, not just membership: the desktop client renders
+    # every declared field the payload carries in columnsDefs order, so this
+    # list is the grid's left-to-right reading order.
+    #
+    # RSI and vs-VWAP sit immediately after the price columns and BEFORE the
+    # two ranges. They are meters -- each is its own single value -- whereas
+    # each range is a three-column group flanked by its own low and high, so
+    # putting the single values first keeps the two groups intact at the
+    # right rather than splitting them around a lone column.
     assert visible == [
         "logo_url", "symbol", "price", "change", "change_percent",
+        "rsi", "avwap_dev",
         "day_low", "day_range", "day_high",
         "week52_low", "week52_range", "week52_high",
         "volume",
-        # Task 13: RSI and vs-VWAP are meters, not bands -- each is its own
-        # value, with no separate low/high columns flanking it.
-        "rsi", "avwap_dev",
     ]
     hidden = {c["field"]: c for c in cols if c.get("hide")}
     assert all(c["hide"] is True for c in hidden.values())
