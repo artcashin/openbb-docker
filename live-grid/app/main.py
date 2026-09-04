@@ -247,11 +247,17 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
         except Exception as exc:  # noqa: BLE001 - a bad macro must not blank the grid
             log.warning("macro discovery failed: %s", exc)
             macros = {}
-        for param in spec.get("ta_chart", {}).get("params", []):
-            if param.get("paramName") == "macro":
-                param["options"] = [{"label": "None", "value": "none"}] + [
-                    {"label": m.label, "value": name} for name, m in sorted(macros.items())
-                ]
+        # Every widget with a `macro` param gets the same fill, not just the
+        # two known today -- the param's presence, not a hardcoded widget
+        # name, is the actual invariant a future chart widget needs.
+        for widget in spec.values():
+            if not isinstance(widget, dict):
+                continue
+            for param in widget.get("params", []):
+                if param.get("paramName") == "macro":
+                    param["options"] = [{"label": "None", "value": "none"}] + [
+                        {"label": m.label, "value": name} for name, m in sorted(macros.items())
+                    ]
         if public_url is not None:
             if "subscriptions" in spec:
                 spec["subscriptions"]["endpoint"] = f"{public_url}/subscriptions"
@@ -323,10 +329,11 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
                        source: str = "local", macro: str = "none",
                        indicators: str = "", anchor: str | None = None,
                        start: str | None = None,
-                       end: str | None = None, provider: str = "kdb"):
+                       end: str | None = None, provider: str = "kdb",
+                       basis: str = "adjusted"):
         s, e = _window(start, end)
         indicators = with_anchor(indicators, anchor)
-        params = ChartParams(symbol, interval, source, macro, indicators, s, e, provider)
+        params = ChartParams(symbol, interval, source, macro, indicators, s, e, provider, basis)
         bars_error = None
         try:
             bars, _ = await build_series(
@@ -337,7 +344,7 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
             bars, bars_error = [], exc
         try:
             figure, _, _, _ = await build_payload(
-                params, bars_to_frame(bars), eodhd_source=_eodhd
+                params, bars_to_frame(bars, basis=basis), eodhd_source=_eodhd
             )
         except Exception as exc:  # noqa: BLE001
             log.warning("ta_chart failed for %s: %s", symbol, exc)
@@ -365,6 +372,7 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
             macro=query.get("macro", "none"),
             indicators=with_anchor(query.get("indicators", ""), query.get("anchor")),
             start=s, end=e, provider=query.get("provider", "kdb"),
+            basis=query.get("basis", "adjusted"),
         )
         interval_s = float(os.getenv("TA_PUSH_INTERVAL_MS", "1000")) / 1000.0
         previous: list[str] = []
@@ -395,7 +403,7 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
                     bars, bars_error = [], exc
                 try:
                     figure, panes, frame, annotations = await build_payload(
-                        params, bars_to_frame(bars), eodhd_source=_eodhd
+                        params, bars_to_frame(bars, basis=params.basis), eodhd_source=_eodhd
                     )
                 # Mirrors /ta_chart's 502: not a missing-bars degradation, this
                 # is unrecoverable (bad macro, bad indicator params), so end
@@ -454,6 +462,7 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
             macro=query.get("macro", "none"),
             indicators=with_anchor(query.get("indicators", ""), query.get("anchor")),
             start=s, end=e, provider=query.get("provider", "kdb"),
+            basis=query.get("basis", "adjusted"),
         )
         interval_s = float(os.getenv("TA_PUSH_INTERVAL_MS", "1000")) / 1000.0
         previous: list[str] = []
@@ -474,7 +483,7 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
                     bars, bars_error = [], exc
                 try:
                     _, panes, frame, annotations = await build_payload(
-                        params, bars_to_frame(bars), eodhd_source=_eodhd
+                        params, bars_to_frame(bars, basis=params.basis), eodhd_source=_eodhd
                     )
                 except Exception as exc:  # noqa: BLE001
                     log.warning("ta_series_ws failed for %s: %s", params.symbol, exc)

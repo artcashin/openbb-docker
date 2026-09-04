@@ -61,6 +61,16 @@ def test_bars_to_frame_falls_back_when_adjusted_close_is_an_explicit_null():
     assert frame["adj_close"].to_list() == frame["close"].to_list()
 
 
+def test_raw_basis_makes_the_adjusted_indicators_read_raw_close():
+    """price_basis is fixed per indicator in the registry, so `basis` works by
+    overwriting adj_close with close in the frame -- one branch, in the one
+    place adj_close is derived."""
+    bars = [{"date": "2026-01-01", "open": 1, "high": 2, "low": 0.5,
+             "close": 1.5, "adjusted_close": 9.0, "volume": 10, "vwap": 1.4}]
+    assert bars_to_frame(bars)["adj_close"][0] == 9.0
+    assert bars_to_frame(bars, basis="raw")["adj_close"][0] == 1.5
+
+
 def test_bars_to_frame_on_no_bars_has_the_full_schema():
     frame = bars_to_frame([])
     assert {"date", "open", "high", "low", "close", "adj_close", "volume"} <= set(frame.columns)

@@ -31,6 +31,7 @@ class ChartParams:
     start: str | None = None
     end: str | None = None
     provider: str = "kdb"
+    basis: str = "adjusted"
 
 
 def _coerce(key: str, raw: str):
@@ -84,7 +85,7 @@ def parse_indicators(raw: str) -> list[Req]:
     return reqs
 
 
-def bars_to_frame(bars: list[dict]) -> pl.DataFrame:
+def bars_to_frame(bars: list[dict], basis: str = "adjusted") -> pl.DataFrame:
     """Bars from build_series into the frame the engine expects.
 
     Tick-derived bars have no adjusted close, so raw close stands in. That is
@@ -113,7 +114,10 @@ def bars_to_frame(bars: list[dict]) -> pl.DataFrame:
             "date": str(bar.get("date")),
             "open": bar.get("open"), "high": bar.get("high"),
             "low": bar.get("low"), "close": close,
-            "adj_close": close if adjusted is None else adjusted,
+            # basis="raw" makes every price_basis="adjusted" indicator read
+            # raw close, without touching a single indicator: they all read
+            # the adj_close COLUMN, and this is where that column is decided.
+            "adj_close": close if basis == "raw" or adjusted is None else adjusted,
             "volume": bar.get("volume") or 0.0,
             # Only tick-derived bars carry a true trade-weighted vwap; vendor
             # history has no per-trade data, so the column is null there.
