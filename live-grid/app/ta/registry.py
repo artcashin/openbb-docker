@@ -713,3 +713,79 @@ register(Indicator(
     eodhd=EodhdMap("sar", {"acceleration": "acceleration", "maximum": "maximum"},
                    {"sar": "sar"}, "raw", "EODHD sar is raw OHLC."),
 ))
+
+# --- Awesome oscillator -----------------------------------------------------
+
+register(Indicator(
+    name="ao", label="Awesome Oscillator", params={}, pane="own",
+    price_basis="raw", guides=[0.0],
+    convention="SMA(HL2, 5) - SMA(HL2, 34) on raw high/low. Fixed periods (Bill Williams).",
+    deps=lambda p: [],
+    build=lambda p, b: [
+        (((pl.col("high") + pl.col("low")) / 2).rolling_mean(5)
+         - ((pl.col("high") + pl.col("low")) / 2).rolling_mean(34)).alias("ao"),
+    ],
+    render={"ao": {"type": "bar", "color": "#98c379"}},
+    # No eodhd map: no Awesome Oscillator function on EODHD's endpoint.
+))
+
+# --- Money flow index -------------------------------------------------------
+
+
+def _mfi_build(p: dict, b: dict[str, Base]) -> list[pl.Expr]:
+    n = p["period"]
+    typical = (pl.col("high") + pl.col("low") + pl.col("close")) / 3
+    flow = typical * pl.col("volume")
+    moved = typical.diff()
+    positive = pl.when(moved > 0).then(flow).otherwise(0.0).rolling_sum(n)
+    negative = pl.when(moved < 0).then(flow).otherwise(0.0).rolling_sum(n)
+    total = positive + negative
+    # A flat window has no flow in either bucket: 0/0. Null it here rather
+    # than letting a NaN reach the response boundary.
+    return [pl.when(total > 0).then(100 * positive / total)
+              .otherwise(None).alias("mfi")]
+
+
+register(Indicator(
+    name="mfi", label="Money Flow Index", params={"period": 14}, pane="own",
+    price_basis="raw", guides=[20.0, 80.0],
+    convention=(
+        "Typical price (H+L+C)/3, raw money flow = TP*volume, bucketed by the "
+        "sign of TP.diff() and summed over `period` bars. A window with no "
+        "typical-price movement is null, not 0 and not NaN."
+    ),
+    deps=lambda p: [],
+    build=_mfi_build,
+    render={"mfi": _line("#d19a66")},
+    # No eodhd map: no Money Flow Index function on EODHD's endpoint.
+))
+
+# --- Chaikin money flow -----------------------------------------------------
+
+
+def _cmf_build(p: dict, b: dict[str, Base]) -> list[pl.Expr]:
+    n = p["period"]
+    span = pl.col("high") - pl.col("low")
+    # A flat bar (high == low) contributes zero flow. Dividing would be 0/0
+    # and would poison every window it touches.
+    multiplier = pl.when(span > 0).then(
+        (2 * pl.col("close") - pl.col("high") - pl.col("low")) / span
+    ).otherwise(0.0)
+    volume_sum = pl.col("volume").rolling_sum(n)
+    return [pl.when(volume_sum > 0)
+              .then((multiplier * pl.col("volume")).rolling_sum(n) / volume_sum)
+              .otherwise(None).alias("cmf")]
+
+
+register(Indicator(
+    name="cmf", label="Chaikin Money Flow", params={"period": 20}, pane="own",
+    price_basis="raw", guides=[0.0],
+    convention=(
+        "Sum of money-flow multiplier * volume over `period` bars, divided by "
+        "summed volume. Flat bars (high == low) contribute 0, not NaN."
+    ),
+    deps=lambda p: [],
+    build=_cmf_build,
+    render={"cmf": _line("#61afef")},
+    # No eodhd map: no Chaikin Money Flow function on EODHD's endpoint.
+))

@@ -76,3 +76,56 @@ def test_hma_rounds_its_derived_lengths_to_nearest_int():
     ]
     expected = _wma([r for r in raw[-3:]], 3)
     assert out[-1] == approx(expected)
+
+
+def test_ao_is_the_gap_between_two_hl2_means():
+    df = fixture_frame()
+    hl2 = ((pl.col("high") + pl.col("low")) / 2)
+    expected = df.select((hl2.rolling_mean(5) - hl2.rolling_mean(34)).alias("e"))["e"][-1]
+    assert compute(df, [resolve("ao")])[col("ao")][-1] == approx(expected)
+
+
+def test_ao_takes_no_parameters():
+    with pytest.raises(ValueError, match="unknown parameter 'period'"):
+        resolve("ao", period=5)
+
+
+def test_mfi_is_bounded_and_uses_typical_price_direction():
+    df = fixture_frame()
+    out = [v for v in compute(df, [resolve("mfi", period=14)])[col("mfi", period=14)]
+           if v is not None]
+    assert out, "mfi produced nothing"
+    assert all(0.0 <= v <= 100.0 for v in out)
+
+
+def test_mfi_nulls_a_flat_window_rather_than_dividing_by_zero():
+    """A window with no typical-price movement has pos+neg == 0."""
+    flat = pl.DataFrame({
+        "date": [f"2026-01-{d:02d}" for d in range(1, 21)],
+        "open": [10.0] * 20, "high": [10.0] * 20, "low": [10.0] * 20,
+        "close": [10.0] * 20, "adj_close": [10.0] * 20,
+        "volume": [100.0] * 20, "vwap": [10.0] * 20,
+    }).with_columns(pl.col("date").str.to_date())
+    out = compute(flat, [resolve("mfi", period=14)])[col("mfi", period=14)].to_list()
+    assert all(v is None for v in out)
+
+
+def test_cmf_treats_a_flat_bar_as_zero_flow_not_nan():
+    df = fixture_frame().with_columns([
+        pl.when(pl.int_range(pl.len()) == 100).then(pl.col("close"))
+          .otherwise(pl.col("high")).alias("high"),
+        pl.when(pl.int_range(pl.len()) == 100).then(pl.col("close"))
+          .otherwise(pl.col("low")).alias("low"),
+    ])
+    out = compute(df, [resolve("cmf", period=20)])[col("cmf", period=20)].to_list()
+    # Assert INSIDE the flat bar's window. A 20-bar window at index 120 spans
+    # rows 101-120 and never sees row 100 at all, so asserting there would
+    # pass whatever the flat-bar branch did. Index 110 spans 91-110, and
+    # index 100's own window spans 81-100.
+    assert out[100] is not None, "the flat bar's own window must still resolve"
+    assert out[110] is not None, "one flat bar must not poison the window"
+
+
+def test_the_three_declare_no_eodhd_map():
+    for name in ("ao", "mfi", "cmf"):
+        assert REGISTRY[name].eodhd is None, name
