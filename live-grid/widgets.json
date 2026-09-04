@@ -48,7 +48,8 @@
       ],
       "renderFnParams": {
        "colorValueKey": "change"
-      }
+      },
+      "align": "right"
      },
      {
       "field": "change",
@@ -56,9 +57,16 @@
       "renderFn": [
        "greenRed"
       ],
-      "renderFnParams": {
-       "percentKey": "change_percent"
-      }
+      "align": "right"
+     },
+     {
+      "field": "change_percent",
+      "headerName": "% Chg",
+      "renderFn": [
+       "greenRed"
+      ],
+      "formatterFn": "normalizedPercent",
+      "align": "right"
      },
      {
       "field": "day_low",
@@ -133,11 +141,6 @@
      {
       "field": "updated_at",
       "headerName": "Updated",
-      "hide": true
-     },
-     {
-      "field": "change_percent",
-      "headerName": "Chg %",
       "hide": true
      },
      {

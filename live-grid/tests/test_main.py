@@ -100,7 +100,7 @@ def test_live_grid_declares_its_visible_columns_and_hides_the_rest(monkeypatch):
     # Each range bar is flanked by its own low and high, so the numbers line
     # up down the grid and sort -- the bar itself labels nothing.
     assert visible == [
-        "logo_url", "symbol", "price", "change",
+        "logo_url", "symbol", "price", "change", "change_percent",
         "day_low", "day_range", "day_high",
         "week52_low", "week52_range", "week52_high",
         "volume",
@@ -290,6 +290,26 @@ def test_websocket_registers_params_and_streams_dirty_rows(monkeypatch):
             if row["price"] == 151.0:
                 break
         assert row is not None and row["price"] == 151.0
+
+
+def test_change_and_percent_are_two_columns_not_one_parenthetical():
+    """They sort independently and line up down the grid, which a percent
+    riding inside the change cell as "(3.40%)" could not do."""
+    body = make_client().get("/widgets.json").json()
+    defs = {c["field"]: c for c in body["live_grid"]["data"]["table"]["columnsDefs"]}
+    assert "renderFnParams" not in defs["change"]
+    pct = defs["change_percent"]
+    assert pct.get("hide") is not True
+    # The payload carries a fraction, so it needs the x100 formatter.
+    assert pct["formatterFn"] == "normalizedPercent"
+    assert "greenRed" in pct["renderFn"]
+
+
+def test_the_price_and_change_columns_are_right_aligned():
+    body = make_client().get("/widgets.json").json()
+    defs = {c["field"]: c for c in body["live_grid"]["data"]["table"]["columnsDefs"]}
+    for field in ("price", "change", "change_percent"):
+        assert defs[field]["align"] == "right", field
 
 
 def test_the_range_bars_flanking_columns_hug_their_bar():
