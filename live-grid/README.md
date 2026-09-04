@@ -5,13 +5,15 @@ US equities, crypto and forex in one watchlist. Companion code for
 *Adventures in OpenBB, Ep. 9*, extended in **Ep. 10** with tick recording and
 a chart that joins cached history to bars built from the live feed.
 
-- `GET /widgets.json` — the widget contract (`live_grid`, `live_chart`, and
-  `kdb_cache_chart`).
+- `GET /widgets.json` — the widget contract (`live_grid`, `live_chart`,
+  `kdb_cache_chart`, `ta_chart` and `kdb_ticks`).
 - `GET /live_grid?symbol=A,B,C` — initial rows, seeded from REST snapshots
   (previous close is cached as the change baseline).
 - `WS /live_grid_ws` — Workspace sends `{"params":{"symbol":"A,B"}}` on
   connect and on every param change; the backend streams one row dict per
   update, coalesced to ~4 flushes/second per connection.
+- `GET /snapshot?symbol=AAPL` — one symbol's delayed REST snapshot (EODHD,
+  15-20 minutes behind), for callers that want a quote without the live feed.
 - `GET /health` — per-feed connection state, plus a `ticks` block
   (`buffered`, `written`, `dropped`) when the chart is enabled.
 - `GET /chart?symbol=AAPL&interval=1d` — Plotly figure JSON, the Workspace
@@ -19,6 +21,12 @@ a chart that joins cached history to bars built from the live feed.
 - `GET /series?symbol=AAPL&interval=1d&start=&end=` — `{bars, cache}` for
   incremental loads; `cache` reports `rows_from_cache`, `rows_from_upstream`,
   `rows_from_ticks` and a `seam` timestamp (see below).
+- `GET /ta_chart?symbol=AAPL&interval=1d&...` / `WS /ta_chart_ws` — indicator
+  chart over cached OHLCV in stacked panes, the Workspace `ta_chart` widget.
+- `GET /ticks?symbol=AAPL&limit=200` — the newest ticks held in the kdb+ tick
+  cache for one symbol, newest first; the Workspace `kdb_ticks` widget.
+- `GET /subscriptions` — the subscriptions management page (see
+  `POST /subscribe` below).
 - `GET /demo` — a standalone scroll page for the chart, moved here from the
   now-removed `cache-chart` service.
 

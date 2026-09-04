@@ -507,6 +507,27 @@ def test_read_ticks_on_an_empty_cache_is_an_empty_list():
     assert s.read_ticks("AAPL", 10) == []
 
 
+def test_read_ticks_with_a_non_positive_limit_is_an_empty_list():
+    """q's `sublist` takes from the end of the list for a negative left
+    argument, which would silently hand back the OLDEST ticks instead of the
+    newest -- guarded in Python before any query is issued."""
+    s, conn = store_with()
+    assert s.read_ticks("AAPL", -5) == []
+    assert s.read_ticks("AAPL", 0) == []
+    assert conn.calls == [], "a non-positive limit must not reach q at all"
+
+
+def test_read_ticks_binds_the_symbol_as_a_parameter_not_by_interpolation():
+    """Interpolating the symbol into the q string would let a symbol containing
+    q syntax change the statement."""
+    conn = FakeConn()
+    store = KdbStore(FakeSession(conn))
+    store.read_ticks("AAPL", 10)
+    query, args = conn.calls[-1]
+    assert "AAPL" not in query
+    assert args, "symbol must be passed as a bound argument"
+
+
 def test_read_ticks_breaks_time_ties_with_the_later_arrival_first():
     """Two ticks sharing one `time`, recorded old-then-new: read_ticks must
     return the later arrival first -- the same tie-break `latest_tick`

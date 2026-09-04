@@ -372,7 +372,15 @@ class KdbStore:
         original, arrival order, not reversed. `reverse` runs first so that,
         after the stable sort, arrival order among tied ticks reads newest
         first -- the same tie-break `latest_tick` documents above.
+
+        A non-positive `limit` returns an empty list. q's `sublist` takes
+        from the *end* of the list for a negative left argument, which would
+        silently hand back the OLDEST ticks instead -- guarded here rather
+        than relying on the one caller (`/ticks`) that happens to reject it.
         """
+        if limit <= 0:
+            return []
+
         def read(conn):
             got = conn(
                 "{[qwsym;qwlim] qwlim sublist `time xdesc reverse"
