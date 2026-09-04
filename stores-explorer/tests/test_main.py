@@ -306,3 +306,38 @@ def test_apps_json_cards_leave_per_install_values_empty():
         params = item["state"]["params"]
         assert params.get("symbol", "") == ""
         assert params.get("table", "") == ""
+
+
+# ---------- the image must carry what the routes read ----------
+
+def test_dockerfile_copies_every_file_the_routes_read():
+    """A route that reads a file from disk is a 500 if the image lacks it.
+
+    widgets.json was copied and apps.json was not, so /apps.json answered 500
+    in the built image while every test here passed against the source tree.
+    This asserts the two never drift again.
+    """
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    dockerfile = (root / "Dockerfile").read_text()
+    main = (root / "app" / "main.py").read_text()
+
+    for name in ("widgets.json", "apps.json"):
+        assert f'/ "{name}"' in main, f"{name} is no longer read by main.py; update this test"
+        assert f"stores-explorer/{name}" in dockerfile, f"Dockerfile does not COPY {name}"
+
+
+def test_dockerfile_installs_unpublished_siblings_before_mcp_stores():
+    """mcp_stores depends on openbb-deltalake, which is not on PyPI.
+
+    pip cannot resolve it from the index, so it must already be installed when
+    `pip install /srv/mcp_stores` runs. Ordering, not presence, is the bug:
+    the build failed with "No matching distribution found for openbb-deltalake".
+    """
+    from pathlib import Path
+
+    dockerfile = (Path(__file__).resolve().parent.parent / "Dockerfile").read_text()
+    assert dockerfile.index("pip install /srv/openbb-deltalake") < dockerfile.index(
+        "pip install /srv/mcp_stores"
+    )
