@@ -284,7 +284,7 @@ def test_apps_json_publishes_the_example_dashboard():
     assert "kdb_explorer" in widget_ids
 
     libraries = {item["state"]["params"].get("library") for item in layout}
-    assert "eodhd_fundamentals_cache" in libraries
+    assert libraries >= {"ticks", "ticks_live"}
 
 
 def test_apps_json_only_names_widgets_this_service_publishes():
@@ -297,15 +297,19 @@ def test_apps_json_only_names_widgets_this_service_publishes():
     assert {item["i"] for item in layout} <= published
 
 
-def test_apps_json_cards_leave_per_install_values_empty():
-    """library is structural and IS set; symbol/table are not. A hardcoded
-    symbol would be wrong on every install but the author's -- the cascading
-    picker fills them from what the store actually holds."""
+def test_apps_json_pins_only_values_that_do_not_age():
+    """A pinned symbol is right only while it stays right.
+
+    `ticks` holds a fixed historical sample, so its symbol is pinned. The
+    `ticks_live` symbols are date-stamped (AAPL_2026_09_03), so pinning one
+    would be stale within a day -- that card names the library and lets the
+    cascading picker fill the symbol from what the store actually holds.
+    """
     layout = list(make_client().get("/apps.json").json()[0]["tabs"].values())[0]["layout"]
-    for item in layout:
-        params = item["state"]["params"]
-        assert params.get("symbol", "") == ""
-        assert params.get("table", "") == ""
+    by_lib = {i["state"]["params"].get("library"): i["state"]["params"] for i in layout}
+
+    assert by_lib["ticks"]["symbol"] == "msft_trade_2023_05_12"
+    assert by_lib["ticks_live"]["symbol"] == "", "date-stamped symbols must not be pinned"
 
 
 # ---------- the image must carry what the routes read ----------
