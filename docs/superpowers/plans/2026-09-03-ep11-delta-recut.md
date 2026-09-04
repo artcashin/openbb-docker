@@ -1032,6 +1032,21 @@ Verified: `openbb-deltalake` 80 passed, `tick-lab` 163 passed / 2 skipped,
 
 ---
 
+### Task 6 was folded into Task 4
+
+`DeltaStore.read_trailing` shipped with `mcp_stores`, not after it. Keeping
+them apart would have released `v11.1.0` with an unfiltered read that
+materializes the whole symbol — a knowing performance regression against
+ArcticDB's `Library.tail`, fixed only one release later. The bound belongs
+with the function it bounds.
+
+The fragment-count assertion the separate task existed to carry is now
+`test_delta_read_bounds_the_read_not_just_the_response` in
+`mcp_stores/test_server.py`, which monkeypatches `DeltaStore.read` to raise:
+any fallback to a full read fails the test rather than merely being slower.
+
+---
+
 ### Task 8: The Example Dashboard (`v11.3.0`)
 
 Added after Tasks 1–2 landed. bdobb-v2 already fetches `apps.json` from every
