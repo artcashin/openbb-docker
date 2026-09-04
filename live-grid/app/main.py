@@ -26,6 +26,7 @@ from app.figure import build_figure
 from app.leases import DEFAULT_TTL, LeaseRegistry
 from app.openbb_client import fetch_series
 from app.quotes import QuoteTable
+from app.studies import studies_for
 from app.symbol_meta import get_meta
 from app.ta.figure import delta as ta_delta
 from app.ta.macros import load_all as load_macros_all
@@ -282,6 +283,32 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
         if not symbols:
             return []
         return get_meta(symbols, _seed_client())
+
+    @app.get("/live_grid_studies")
+    async def live_grid_studies(symbol: str = Query(default="")):
+        """RSI(14) and anchored VWAP for the live grid -- the favicon
+        pattern: consumers fetch once on mount, best-effort. `/live_grid`
+        stays synchronous (quotes.seed); this is the async sibling that
+        reaches build_series for the two values that change on bar close,
+        not per tick. One symbol's fetch failing yields a null row rather
+        than failing the request, and symbols are fetched concurrently so a
+        fifty-row watchlist waits on the slowest single lookup, not their
+        sum -- build_series is an HTTP round trip plus up to two blocking
+        kdb calls, not a free in-process read."""
+        symbols = _parse_symbols(symbol)
+        if not symbols:
+            return []
+        s, e = _window(None, None)
+
+        async def _one(sym: str) -> dict:
+            try:
+                bars, _ = await build_series(sym, "1m", s, e, recorder, _tick_window())
+            except Exception as exc:  # noqa: BLE001 - one bad symbol must not blank its neighbours
+                log.warning("live_grid_studies failed for %s: %s", sym, exc)
+                bars = []
+            return studies_for(sym, bars)
+
+        return list(await asyncio.gather(*[_one(sym) for sym in symbols]))
 
     @app.get("/series")
     async def series(symbol: str = "AAPL", interval: str = "1d",

@@ -104,6 +104,9 @@ def test_live_grid_declares_its_visible_columns_and_hides_the_rest(monkeypatch):
         "day_low", "day_range", "day_high",
         "week52_low", "week52_range", "week52_high",
         "volume",
+        # Task 13: RSI and vs-VWAP are meters, not bands -- each is its own
+        # value, with no separate low/high columns flanking it.
+        "rsi", "avwap_dev",
     ]
     hidden = {c["field"]: c for c in cols if c.get("hide")}
     assert all(c["hide"] is True for c in hidden.values())

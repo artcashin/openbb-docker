@@ -156,6 +156,18 @@
       "field": "day_open",
       "headerName": "Open",
       "hide": true
+     },
+     {
+      "field": "rsi",
+      "headerName": "RSI",
+      "renderFn": ["rangeBar"],
+      "renderFnParams": { "min": 0, "max": 100, "guides": [30, 50, 70] }
+     },
+     {
+      "field": "avwap_dev",
+      "headerName": "vs VWAP",
+      "renderFn": ["rangeBar"],
+      "renderFnParams": { "signed": true }
      }
     ]
    }
