@@ -336,6 +336,21 @@ def test_ticks_on_an_empty_cache_is_an_empty_list_not_a_404(tick_client):
     assert res.json()["ticks"] == []
 
 
+def test_ticks_read_failure_degrades_to_an_empty_list_not_a_500(tick_client, monkeypatch):
+    """KdbStore._call is what raises on an up-but-unreachable kdb -- this is
+    the whole reason the route's try/except exists (a binding constraint
+    requires every read path to return empty and never raise). Monkeypatching
+    the store instance's read_ticks, rather than a new fake class, matches how
+    this file already stubs single methods elsewhere."""
+    def boom(symbol, limit):
+        raise RuntimeError("kdb unreachable")
+
+    monkeypatch.setattr(tick_client.store, "read_ticks", boom)
+    res = tick_client.get("/ticks?symbol=AAPL")
+    assert res.status_code == 200
+    assert res.json() == {"symbol": "AAPL", "ticks": []}
+
+
 def test_ticks_without_a_store_is_an_empty_list(monkeypatch):
     """kdb is optional -- a deployment without it renders an empty table.
 
