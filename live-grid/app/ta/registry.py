@@ -714,6 +714,27 @@ register(Indicator(
                    {"sar": "sar"}, "raw", "EODHD sar is raw OHLC."),
 ))
 
+# --- Supertrend: a recurrence, handled by iterative.py ----------------------
+
+register(Indicator(
+    name="supertrend", label="Supertrend",
+    params={"period": 10, "multiplier": 3.0}, pane="price",
+    price_basis="raw", iterative=True,
+    convention=(
+        "Wilder ATR(period)-banded trailing stop on raw OHLC. The band only "
+        "tightens until close crosses it, then the side flips. Path-dependent "
+        "like Parabolic SAR, so it runs in the iterative pass."
+    ),
+    deps=lambda p: [Base("tr", "raw", 0)],
+    build=lambda p, b: [],  # produced by iterative.supertrend
+    # st_direction is deliberately NOT here. It is internal state, not a
+    # plotted study, and a width-0 line would still ship an invisible series
+    # to the client. The column is computed and stays addressable in tests
+    # via col("supertrend", "st_direction").
+    render={"supertrend": _line("#98c379")},
+    # No eodhd map: no Supertrend function on EODHD's endpoint.
+))
+
 # --- Awesome oscillator -----------------------------------------------------
 
 register(Indicator(

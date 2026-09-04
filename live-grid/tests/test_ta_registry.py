@@ -85,8 +85,8 @@ def test_rsi_carries_thirty_seventy_guides():
     assert get("rsi").guides == [30.0, 70.0]
 
 
-def test_registry_is_thirty_two_indicators_with_twelve_eodhd_maps():
-    assert len(REGISTRY) == 32, sorted(REGISTRY)  # 28 + uo + vortex + chop + ichimoku
+def test_registry_is_thirty_three_indicators_with_twelve_eodhd_maps():
+    assert len(REGISTRY) == 33, sorted(REGISTRY)  # 32 + supertrend
     mapped = [n for n, i in REGISTRY.items() if i.eodhd is not None]
     assert len(mapped) == 12, sorted(mapped)  # cci is local-only (see registry)
 
