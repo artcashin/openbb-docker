@@ -40,12 +40,14 @@ substantive — which is what makes a rebase cheaper than a re-application.
 
 1. ArcticDB is gone from Episode 11 entirely — image, extension, both doors,
    compose, constraints, and the re-cut tags.
-2. Both doors answer from Delta: `mcp_stores` (the analyst's, via Rita) and
+2. The EODHD read-through cache keeps its persistent tier — removing ArcticDB
+   costs no additional API calls.
+3. Both doors answer from Delta: `mcp_stores` (the analyst's, via Rita) and
    `stores-explorer` (the widget's, via bdobb).
-3. Zero duplicated discovery logic survives the port — `stores-explorer`
+4. Zero duplicated discovery logic survives the port — `stores-explorer`
    keeps importing `mcp_stores`, per the original D3.
-4. Delta's time travel reaches a caller for the first time.
-5. `scripts/scrub-check.sh` stays green.
+5. Delta's time travel reaches a caller for the first time.
+6. `scripts/scrub-check.sh` stays green.
 
 ## Non-goals
 
@@ -68,10 +70,14 @@ substantive — which is what makes a rebase cheaper than a re-application.
 | R6 | **`pa.table(...)` wraps every `get_add_actions` result** | Verified on deltalake 1.6.3: it returns an `arro3.core.Table`, which has no `.to_pandas()`. The branch already pins a delta-rs API canary; this is the same class of drift and belongs under the same pin. |
 | R7 | **Re-cut the v11.x tags on Delta** rather than opening a v12 line | Episode 12 is already reserved for technical analysis / chart tools in the bdobb spec set. Moving tags to regenerated commits is this repo's established release-rebuild practice. |
 
+| R8 | **The EODHD L2 cache vacuums on write** — `DeltaTable.vacuum` with a short retention after each `_l2_put` | Delta has no `prune_previous_versions`. Without a retention step the cache grows a commit per refresh forever, and `read_metadata`'s `history()` walk slows with it (G5). A cache is the one table in the store with no reason to keep history: the previous value is by definition stale. |
+| R9 | **The cache's Delta library is the same `eodhd_fundamentals_cache`** and appears in the explorer like any other | It is browsable data in the shared store, and seeing the cache's own contents through the widget is a useful demonstration rather than something to hide. |
+
 ## Capability gaps and how each closes
 
-ArcticDB gave the doors four things Delta does not give directly. All four were
-probed against `deltalake` 1.6.3 before this spec was written.
+ArcticDB gave Episode 11 five things Delta does not give directly. G1–G4 were
+probed against `deltalake` 1.6.3 before this spec was written; G5 was found by
+reading the shipped extension.
 
 ### G1 — no library catalog
 
@@ -122,6 +128,47 @@ superseded data.
 **Close:** per R5, an `as_of` param on `/delta/series` and on the MCP read tool,
 plus a `/delta/history` endpoint listing versions with their timestamps so a
 caller can populate a version control without guessing.
+
+### G5 — the EODHD read-through cache is ArcticDB-backed
+
+`openbb-eodhd/openbb_eodhd/models/_fundamentals.py` already implements a
+two-tier read-through cache over the FMP look-alike endpoints — the surface
+consumed by 12 model files (`fundamental`, `metrics`, `ownership`, `insider`,
+`estimates`, `profile`, `etf`, `esg`, `news`, `quote`, `market_cap`,
+`dividend_yield`). L1 is an in-memory dict under a per-symbol lock; **L2 is
+ArcticDB**, via `_arctic_library()` → `openbb_arcticdb.utils.resolve_config`.
+
+Deleting ArcticDB without porting L2 silently reduces the cache to L1 only:
+every container restart would then re-fetch every symbol's fundamentals from
+EODHD. The re-cut would *cause* quota waste rather than being neutral to it.
+This is why the port folds into `v11.0.0` alongside the store itself rather
+than trailing it.
+
+**Close:** `_arctic_library()` becomes `_delta_store()`, returning a
+`DeltaStore` over the same `_L2_LIBRARY = "eodhd_fundamentals_cache"`.
+
+| Today | Becomes |
+|---|---|
+| `lib.has_symbol(sym)` | `store.has(sym)` |
+| `lib.read_metadata(sym).metadata` | `store.read_metadata(sym)` — already a plain dict |
+| `lib.read(sym).data["payload"].iloc[0]` | `store.read(sym, output="dataframe")["payload"].iloc[0]` |
+| `lib.write(sym, df, metadata=..., prune_previous_versions=True)` | `store.write(sym, df, metadata=...)` — **no prune equivalent** |
+
+The soft-dependency posture is preserved exactly: `_delta_store()` returns
+`None` on any failure, and both `_l2_get` and `_l2_put` keep their "never
+raises" contract, so a missing or unreachable store degrades to L1 plus a live
+fetch rather than failing the request.
+
+> **The prune gap is real.** ArcticDB's `prune_previous_versions=True` kept one
+> version per symbol. Delta has no equivalent on write: every refresh appends a
+> commit, so a cache entry refreshed daily accumulates a version per day
+> forever. That matters twice — storage grows unbounded, and
+> `DeltaStore.read_metadata` walks `history()` looking for `openbb_meta`, so
+> reads get slower as history lengthens. The cache write path therefore takes a
+> retention step (see R8); this is the one place in the re-cut where Delta is
+> strictly worse than what it replaces, and it needs handling rather than
+> noting.
+
 
 ## Architecture
 
@@ -175,7 +222,7 @@ Three tags, re-cut on Delta, one per commit series (R2):
 
 | Tag | Contents |
 |---|---|
-| `v11.0.0` | The rebase: `openbb-deltalake` replaces `openbb-arcticdb`, tick-lab on Delta, compose/CI/constraints, `linux/amd64` pins dropped |
+| `v11.0.0` | The rebase: `openbb-deltalake` replaces `openbb-arcticdb`, tick-lab on Delta, compose/CI/constraints, `linux/amd64` pins dropped — **and the EODHD L2 cache ported onto Delta (G5)**, so removing ArcticDB never costs API quota |
 | `v11.1.0` | `mcp_stores` on Delta, including G1/G2/G4 additions |
 | `v11.2.0` | `stores-explorer` on Delta, including G3 — matches the `openbb-stores-explorer:11.2.0` image already named in compose |
 
@@ -211,7 +258,9 @@ bdobb-v2 v11.0.0 pairs against `v11.2.0`.
 5. `as_of` returns superseded data through HTTP, by version and by timestamp.
 6. Rita answers the same questions through `mcp_stores` that the widget asks
    through `stores-explorer` — same code, two doors, one vault.
-7. `scripts/scrub-check.sh` passes.
+7. A restart followed by the same fundamentals request issues **no** EODHD
+   HTTP call — the L2 cache answered from Delta.
+8. `scripts/scrub-check.sh` passes.
 
 ## Gotchas
 
@@ -219,5 +268,7 @@ bdobb-v2 v11.0.0 pairs against `v11.2.0`.
 |---|---|---|
 | `AttributeError: 'arro3.core._core.Table' has no attribute 'to_pandas'` | deltalake ≥1.6 returns arro3, not pyarrow, from `get_add_actions` | Wrap: `pa.table(dt.get_add_actions(flatten=True))` (R6) |
 | `date` column loses its timezone across a write/read | Delta stores it as `timestamp_ntz` | `_date_filter` must match the stored tz, not assume the caller's |
+| EODHD quota burns after a restart | The L2 cache fell back to L1 because `_delta_store()` returned `None` | L2 is best-effort by design; check MinIO reachability and `DELTA_*` config before blaming the cache logic |
+| The fundamentals cache slows down over weeks | Delta keeps a commit per refresh; `read_metadata` walks `history()` | Vacuum on write (R8); there is no `prune_previous_versions` in Delta |
 | A `tail_rows` read gets slow as a symbol grows | Someone replaced the stats-bounded tail with scan-then-tail | The fragment-count test (G3) exists to fail first |
 | Rebase conflicts pile up in `docker-compose.yml` | The branch predates 25 commits of compose churn | Resolve toward `main`; the branch's compose edits are the rename only |
