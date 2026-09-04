@@ -128,7 +128,7 @@ def test_an_anchor_after_the_last_bar_yields_no_avwap():
     assert studies_for("X", bars, anchor="2030-01-01T00:00:00")["avwap"] is None
 
 
-# --- parse_anchors: the VWAP Start column's wire format ---------------------
+# --- parse_anchors: the Anchor column's wire format ---------------------
 
 
 def test_parse_anchors_empty_is_all_default():

@@ -297,7 +297,7 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
         sum -- build_series is an HTTP round trip plus up to two blocking
         kdb calls, not a free in-process read.
 
-        `anchor` is the VWAP Start column: `SYM=ISO,SYM=ISO`, plus an
+        `anchor` is the Anchor column: `SYM=ISO,SYM=ISO`, plus an
         optional unkeyed ISO setting the grid-wide anchor. Absolute UTC
         timestamps only -- the client resolves "10:00" against its own clock
         before sending, because this process runs in a container on UTC and

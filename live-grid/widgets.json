@@ -38,6 +38,7 @@
      },
      {
       "field": "symbol",
+      "width": 78,
       "headerName": "Symbol",
       "pinned": "left"
      },
@@ -73,9 +74,19 @@
      },
      {
       "field": "rsi",
+      "width": 116,
       "headerName": "RSI",
       "renderFn": ["rangeBar"],
       "renderFnParams": { "min": 0, "max": 100, "guides": [30, 50, 70] }
+     },
+     {
+      "field": "avwap",
+      "width": 96,
+      "headerName": "VWAP",
+      "headerTooltip": "The anchored VWAP itself, in price. Trade-true: the size-weighted mean of actual trades since VWAP Start, never a (H+L+C)/3 approximation. Blank when the symbol has no trade data in the window.",
+      "enableCellChangeWs": false,
+      "align": "right",
+      "abbreviate": false
      },
      {
       "field": "avwap_dev",
@@ -85,15 +96,16 @@
      },
      {
       "field": "vwap_start",
-      "headerName": "VWAP Start",
+      "width": 88,
+      "headerName": "Anchor",
       "headerTooltip": "Where the anchored VWAP starts. Type 10:00 for 10am your time every day, or a full date and time to pin it to one moment. Blank anchors at the UTC day start.",
       "editable": true,
       "enableCellChangeWs": false,
-      "align": "center",
-      "width": 104
+      "align": "center"
      },
      {
       "field": "day_low",
+      "width": 92,
       "headerName": "Low",
       "enableCellChangeWs": false,
       "align": "right",
@@ -115,6 +127,7 @@
      },
      {
       "field": "day_high",
+      "width": 92,
       "headerName": "High",
       "enableCellChangeWs": false,
       "align": "left",
@@ -122,6 +135,7 @@
      },
      {
       "field": "week52_low",
+      "width": 92,
       "headerName": "Low",
       "enableCellChangeWs": false,
       "align": "right",
@@ -143,6 +157,7 @@
      },
      {
       "field": "week52_high",
+      "width": 92,
       "headerName": "High",
       "enableCellChangeWs": false,
       "align": "left",
