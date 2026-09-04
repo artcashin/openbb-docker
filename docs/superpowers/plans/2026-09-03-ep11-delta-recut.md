@@ -973,3 +973,59 @@ Against the spec's success criteria:
 | 6 | Both doors agree | Both import the same `delta_*` functions — enforced by Task 5 having no backend client code |
 | 7 | A restart costs no EODHD calls | Task 2 round-trip test; confirm live by restarting the container and re-requesting a cached symbol |
 | 8 | Scrub passes | Every task's commit step |
+
+---
+
+## Corrections found during execution
+
+Recorded as Task 1 landed. Each changes a later task; none changes the design.
+
+**Task 2 ports an existing suite, it does not write one.**
+`openbb-eodhd/tests/test_fundamentals_cache.py` already exists with 10 tests,
+including `test_l2_hit_within_ttl_skips_eodhd`, `test_l2_miss_fetches_and_writes_back`,
+`test_l2_unavailable_falls_back_to_live_fetch` and `test_expired_entries_swept_on_next_populate`.
+The L2 coverage the plan proposed writing is already there — swap its fakes from
+`arcticdb` to `deltalake` and rename `test_arctic_library_passes_resolved_uri_not_none`
+to `test_delta_store_passes_resolved_uri_not_none`. `openbb-eodhd/tests/test_fundamental.py`
+also references ArcticDB and needs the same treatment.
+
+**Three ArcticDB references the plan never listed.** All are real work:
+
+| Path | What it needs |
+|---|---|
+| `Dockerfile:183-187` | The `stores-mcp` layer's comment and install list name `openbb-arcticdb`; becomes `openbb-deltalake`. Belongs to Task 4. |
+| `obb-arctic` (host helper script) | Inspects the store from the host via `ARCTICDB_URI`. Rename to `obb-delta` and move to the generic store API over `DELTA_*`. |
+| `obb-up` | Its `s3` mode text says "start the shared ArcticDB store" and points at an `ARCTICDB_URI` block in `credentials.env`. |
+
+`.github/workflows/release.yml:103` gates build arches with
+`["amd64"] if "arcticdb" in text else ["amd64", "arm64"]` — the logic resolves
+itself once ArcticDB is gone, but the comment above it is stale and should go
+with the rest.
+
+Docs still naming ArcticDB: `mcp_stores/README.md` (Task 4),
+`stores-explorer/README.md` (Task 5), `kdb-ws/README.md`, `tick-lab/README.md`.
+
+**Test environments must honour `pandas<3`.** The repo pins it via
+`extension-constraints.txt` (`pandas<3  # from pykx`). Under pandas 3 the
+tick-lab DST tests fail spuriously: `test_nonexistent_local_time_raises_instead_of_silently_coercing`
+expects `pytz.exceptions.NonExistentTimeError`, but pandas 3 raises a plain
+`ValueError` from its own tzconversion first. Two failures, neither a code
+defect. Pin the venv before concluding anything from a red run.
+
+### Task 1 result
+
+Replayed as a cherry-pick range rather than a rebase, so the branch stayed put
+and conflicts paused in place. 15/15 commits applied. Six conflicts, all
+resolved keeping **both** sides rather than picking one:
+
+| File | Resolution |
+|---|---|
+| `openbb-deltalake/pyproject.toml` | Branch's Delta deps, main's `openbb-core<2` ceiling (added after the fork) |
+| `openbb-deltalake/tests/test_historical.py` | Both test classes — main's `TestPandasOhlcvVwap`, the branch's `TestExtractBars` |
+| `extension-constraints.txt` | Branch's — `pandas<3` correctly re-derived from pykx, ArcticDB's protobuf pin dropped |
+| `minio.env.example` | Branch's `DELTA_S3_*`, plus a `DELTA_URI` combined-form block the doors still need |
+| `.github/workflows/ci.yml` | Main's `mcp-stores` and `stores-explorer` jobs kept; only the `openbb-arcticdb` → `openbb-deltalake` rename taken |
+| `docker-compose.yml` | Main's current image tags, branch's intent (amd64 pins dropped) — including on `stores-mcp` and `stores-explorer`, which the branch never saw |
+
+Verified: `openbb-deltalake` 80 passed, `tick-lab` 163 passed / 2 skipped,
+`scripts/scrub-check.sh` clean.
