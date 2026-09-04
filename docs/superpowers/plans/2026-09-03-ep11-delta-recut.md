@@ -1323,3 +1323,31 @@ Two things that surfaced while doing it, both worth knowing:
 
 `v11.3.0` is not tagged, for the same reason `v11.0.0`–`v11.2.0` are not: the
 work is on an unmerged branch and the tags are published. See Task 7.
+
+---
+
+## The doors, verified live
+
+Task 7's walk proved the store and the EODHD cache against MinIO but drove
+them as Python objects. This closes that gap: the same MinIO, reached through
+`TestClient(create_app())` with **no injected fakes anywhere** — real routes →
+real `mcp_stores` tools → real `DeltaStore` → real MinIO. This is exactly the
+contract bdobb-v2 v11.0.0 consumes.
+
+| Call | Result |
+|---|---|
+| `GET /delta/libraries` | `['eodhd_fundamentals_cache', 'ticks']` |
+| `GET /delta/symbols?library=ticks` | `['AAPL']` |
+| `GET /delta/describe` | 200 rows, `2024-01-01..2024-07-18`, `['date','close']` |
+| `GET /delta/history` | versions `[1, 0]`, newest first |
+| `GET /delta/series?tail_rows=5` | 5/200 rows, last close 699 |
+| `GET /delta/series?as_of=0` | last close 199 — superseded data |
+| unknown library / symbol | 404, each naming the next call to make |
+| `GET /widgets.json` | `['delta_explorer', 'kdb_explorer']` |
+| `GET /apps.json` | the example dashboard, 3 cards, every widget published |
+| every response body | no access key, no secret |
+
+The last row is checked by concatenating six responses (including a 404, the
+path most likely to echo backend text) and asserting neither the access key
+nor the secret appears. `_scrub`'s own unit tests prove the redaction; this
+proves nothing routes around it.
