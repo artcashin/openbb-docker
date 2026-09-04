@@ -17,6 +17,13 @@ WORKDIR /srv
 # published to PyPI. Installs as a bare top-level `server` module (its
 # pyproject.toml declares py-modules = ["server"]), which app/main.py
 # imports from directly.
+# openbb-deltalake first: mcp_stores declares it as a dependency (the Delta
+# store is what its delta_* tools read), and like mcp_stores itself it is not
+# published to PyPI -- so pip cannot resolve it from the index and must find
+# it already installed. This is the same ordering the root Dockerfile uses.
+COPY openbb-deltalake/ /srv/openbb-deltalake/
+RUN pip install /srv/openbb-deltalake && rm -rf /srv/openbb-deltalake
+
 COPY mcp_stores/ /srv/mcp_stores/
 RUN pip install /srv/mcp_stores
 

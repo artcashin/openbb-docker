@@ -266,3 +266,18 @@ def test_kdb_schema_error_does_not_leak_credentials():
     assert "topsecret123" not in body
     assert "s3://minio.example.ts.net" not in body
     assert "<redacted>" in body
+
+
+def test_dockerfile_installs_unpublished_siblings_before_mcp_stores():
+    """mcp_stores depends on openbb-deltalake, which is not on PyPI.
+
+    pip cannot resolve it from the index, so it must already be installed when
+    `pip install /srv/mcp_stores` runs. Ordering, not presence, is the bug:
+    the build failed with "No matching distribution found for openbb-deltalake".
+    """
+    from pathlib import Path
+
+    dockerfile = (Path(__file__).resolve().parent.parent / "Dockerfile").read_text()
+    assert dockerfile.index("pip install /srv/openbb-deltalake") < dockerfile.index(
+        "pip install /srv/mcp_stores"
+    )
