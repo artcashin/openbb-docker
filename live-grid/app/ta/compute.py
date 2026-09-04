@@ -26,6 +26,38 @@ def collect_bases(reqs: list[Req]) -> dict[str, Base]:
     return bases
 
 
+def session_columns(
+    frame: pl.DataFrame, ind, req: Req
+) -> dict[str, list]:
+    """One value per session, held flat across every bar inside it.
+
+    The frame is expected ASCENDING by date, which every other path in this
+    engine already assumes -- parabolic_sar walks it in order too. Do NOT
+    sort here: the returned lists are assigned straight onto the caller's
+    frame by row position, so reordering them would mis-assign every value.
+    group_by_dynamic requires the same ordering and raises without it.
+
+    shift() is what makes today read YESTERDAY's aggregates. Without it every
+    level is computed from the session it is drawn on, which is not a
+    forecast, it is a lookahead.
+    """
+    every = str(req.params.get("anchor", "1d"))
+    back = int(req.params.get("session_shift", 1))
+    aggregates = ind.session_agg(req.params)
+
+    sessions = (
+        frame.group_by_dynamic("date", every=every, closed="left")
+        .agg(**aggregates)
+        .with_columns(**{name: pl.col(name).shift(back) for name in aggregates})
+    )
+    sessions = sessions.with_columns(ind.build(req.params, {}))
+    outputs = [name for name in ind.render if name in sessions.columns]
+    joined = frame.select("date").join_asof(
+        sessions.select(["date", *outputs]), on="date", strategy="backward",
+    )
+    return {name: joined[name].to_list() for name in outputs}
+
+
 def compute_with_bases(
     df: pl.DataFrame, reqs: list[Req]
 ) -> tuple[pl.DataFrame, dict[str, Base]]:
@@ -57,6 +89,18 @@ def compute_with_bases(
             continue
         suffix = col_suffix(req)
         for column, values in ITERATIVE[req.name](frame, req.params).items():
+            column += suffix
+            if column not in frame.columns:
+                frame = frame.with_columns(pl.Series(column, values, dtype=pl.Float64))
+
+    # Session-anchored indicators run last, for the same reason the iterative
+    # ones do: they read the frame rather than contributing expressions to it.
+    for req in reqs:
+        indicator = get(req.name)
+        if not indicator.sessioned:
+            continue
+        suffix = col_suffix(req)
+        for column, values in session_columns(frame, indicator, req).items():
             column += suffix
             if column not in frame.columns:
                 frame = frame.with_columns(pl.Series(column, values, dtype=pl.Float64))

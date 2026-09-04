@@ -69,6 +69,12 @@ class Indicator:
     guides: list[float] = field(default_factory=list)
     repaints: bool = False
     iterative: bool = False
+    # A sessioned indicator's `build` runs against a once-per-session,
+    # already-shifted frame instead of the bar frame. Distinct from avwap's
+    # anchor: that is ONE anchor chosen once and run cumulatively forward;
+    # this is a RECURRING boundary, every session independent of the last.
+    sessioned: bool = False
+    session_agg: Callable[[dict], dict] | None = None
     eodhd: EodhdMap | None = None
 
 
