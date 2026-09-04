@@ -1,5 +1,6 @@
 """The eleven next-tier indicators added at v12.0.0."""
 
+import math
 import polars as pl
 import pytest
 
@@ -98,6 +99,34 @@ def test_mfi_is_bounded_and_uses_typical_price_direction():
     assert all(0.0 <= v <= 100.0 for v in out)
 
 
+def test_mfi_matches_a_hand_computed_value_with_known_direction():
+    """Bounds alone can't catch a swapped positive/negative bucket -- a bug
+    that flips the ratio still lands in [0, 100]. Flat bars (high == low ==
+    close) make typical price equal to close, so the up/down bucketing and
+    the expected number below follow straight from the definition.
+
+    Prices: 10, 12, 11, 13, 9 (up, down, up, down from the prior bar).
+    Volumes: 100, 200, 100, 300, 100.
+    period=3 at the last bar covers indices 2, 3, 4 (rolling_sum(3) trailing):
+      positive flow = flow[3]        = 13*300 = 3900   (only idx3 rose)
+      negative flow = flow[2]+flow[4] = 11*100 + 9*100 = 2000
+      mfi = 100 * 3900 / (3900 + 2000)
+    A swapped numerator/denominator would give 100 * 2000 / 5900 instead --
+    a different number, so this test catches that inversion.
+    """
+    prices = [10.0, 12.0, 11.0, 13.0, 9.0]
+    volumes = [100.0, 200.0, 100.0, 300.0, 100.0]
+    df = pl.DataFrame({
+        "date": [f"2026-01-{d:02d}" for d in range(1, 6)],
+        "open": prices, "high": prices, "low": prices, "close": prices,
+        "adj_close": prices, "volume": volumes, "vwap": prices,
+    }).with_columns(pl.col("date").str.to_date())
+    out = compute(df, [resolve("mfi", period=3)])[col("mfi", period=3)].to_list()
+    expected = 100 * 3900 / (3900 + 2000)
+    assert out[-1] == approx(expected)
+    assert not math.isnan(out[-1])
+
+
 def test_mfi_nulls_a_flat_window_rather_than_dividing_by_zero():
     """A window with no typical-price movement has pos+neg == 0."""
     flat = pl.DataFrame({
@@ -124,6 +153,11 @@ def test_cmf_treats_a_flat_bar_as_zero_flow_not_nan():
     # index 100's own window spans 81-100.
     assert out[100] is not None, "the flat bar's own window must still resolve"
     assert out[110] is not None, "one flat bar must not poison the window"
+    # "not None" alone lets NaN slip through and, worse, a NaN would silently
+    # poison every window's rolling_sum -- unlike null, which rolling_sum
+    # skips. Both rows must be real numbers, not NaN.
+    assert not math.isnan(out[100]), "flat bar produced NaN, not a real number"
+    assert not math.isnan(out[110]), "the flat bar's NaN leaked into a later window"
 
 
 def test_the_three_declare_no_eodhd_map():
