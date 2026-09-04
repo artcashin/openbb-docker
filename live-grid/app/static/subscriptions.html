@@ -91,12 +91,46 @@ function render(d) {
   }
 }
 
+/*
+ * Credentials handed over by the host that framed this page.
+ *
+ * This page is public (it is the one path the auth middleware exempts) but
+ * everything it calls is not, because /api/subscriptions mutates durable
+ * state. A browser tab needs none of this -- it authenticated to load the
+ * page and the browser repeats those credentials on every same-origin
+ * request. An IFRAME cannot: it navigates itself, carries no header, and has
+ * no credentials to repeat. So the host sends them over postMessage.
+ */
+let authHeaders = {};
+
+window.addEventListener("message", (e) => {
+  // The host replies to our own parent only; anything else is another page
+  // talking past us.
+  if (e.source !== window.parent) return;
+  const d = e.data;
+  if (!d || d.type !== "openbb-auth" || typeof d.headers !== "object" || d.headers === null) return;
+  authHeaders = d.headers;
+  // The first GET below fires before this arrives -- unauthenticated, and
+  // refused when the host has a credential. Re-run it now that we can.
+  call("GET", "/api/subscriptions");
+});
+
+// Announce ourselves. The host answers with openbb-auth when it has a
+// credential to send, and with the card's parameters either way. Harmless
+// when there is no host: a top-level page's parent is itself.
+if (window.parent !== window) {
+  window.parent.postMessage({ type: "openbb-connect" }, "*");
+}
+
 async function call(method, url, body) {
   $("err").textContent = "";
   try {
     const r = await fetch(url, {
       method,
-      headers: body ? { "content-type": "application/json" } : undefined,
+      headers: {
+        ...authHeaders,
+        ...(body ? { "content-type": "application/json" } : {}),
+      },
       body: body ? JSON.stringify(body) : undefined,
     });
     const d = await r.json();
