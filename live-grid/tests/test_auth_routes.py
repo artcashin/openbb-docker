@@ -129,3 +129,37 @@ def test_the_page_and_its_api_share_one_origin(guarded):
     page = guarded.get("/subscriptions", headers=_hdr())
     assert "/api/subscriptions" in page.text
     assert "http://" not in page.text and "https://" not in page.text
+
+
+def _qs(**kw) -> str:
+    """The header's own value, url-encoded -- derived from `_hdr` so the two
+    cannot drift apart."""
+    import urllib.parse
+
+    return urllib.parse.urlencode(_hdr(**kw))
+
+
+def test_the_credential_is_accepted_from_the_query(guarded):
+    """An iframe issues its own request and cannot attach a header, so the
+    query is the only channel it has. Same name, same `Basic <base64>` value."""
+    assert guarded.get(f"/subscriptions?{_qs()}").status_code == 200
+    assert guarded.get(f"/api/subscriptions?{_qs()}").status_code == 200
+
+
+def test_a_bad_query_credential_is_still_refused(guarded):
+    assert guarded.get("/subscriptions?Authorization=Basic+bm9wZTpub3Bl").status_code == 401
+    assert guarded.get("/subscriptions?Authorization=garbage").status_code == 401
+
+
+def test_a_bad_header_is_not_rescued_by_a_good_query(guarded):
+    """A request that supplies a header is judged on it alone -- otherwise a
+    stale header could be silently overridden by an appended query string."""
+    res = guarded.get(f"/subscriptions?{_qs()}", headers=_hdr(pw="wrong"))
+    assert res.status_code == 401
+
+
+def test_the_websocket_still_takes_the_query_credential(guarded):
+    """buildWidgetWsUrl puts it there for the same reason: no headers on a
+    browser handshake either."""
+    with guarded.websocket_connect(f"/live_grid_ws?{_qs()}") as ws:
+        ws.send_json({"params": {"symbol": "AAPL"}})

@@ -9,6 +9,18 @@ Read with os.environ rather than openbb_core.env.Env: api_app.py uses Env
 because it runs inside the Platform, but live-grid does not depend on
 openbb-core and should not gain that dependency to read three strings.
 
+The credential may arrive as an `Authorization` QUERY PARAMETER as well as a
+header. That exists for one reason: the subscriptions widget is an iframe, and
+a browser frame issues its own request with no way to attach a header, so the
+header the desktop client holds is unusable there. The query is the only
+channel a frame has. It carries the same `Basic <base64>` value under the same
+name, so there is one credential format, not two.
+
+The cost is stated rather than hidden: a credential in a URL can reach proxy
+and access logs. That is tolerable here only because this service is
+tailnet-published and never funneled -- the same reasoning the client applies
+to its websocket URL, which cannot carry a header either.
+
 A RAW ASGI middleware, not BaseHTTPMiddleware. Starlette's BaseHTTPMiddleware
 begins `if scope["type"] != "http": await self.app(...); return`, so it never
 runs for websockets -- and live-grid's two websockets carry the same live data
@@ -67,6 +79,17 @@ class BasicAuthMiddleware:
             if key == b"authorization":
                 header = value.decode("latin-1")
                 break
+
+        # Fall back to the query only when no header was sent: a request that
+        # supplies a header is judged on it alone, so a bad header cannot be
+        # rescued by appending a good query string.
+        if header is None:
+            from urllib.parse import parse_qs
+
+            raw_qs = scope.get("query_string") or b""
+            supplied = parse_qs(raw_qs.decode("latin-1")).get("Authorization")
+            if supplied:
+                header = supplied[0]
 
         if credentials_ok(header):
             await self.app(scope, receive, send)

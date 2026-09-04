@@ -144,11 +144,16 @@ def test_both_range_bars_use_one_render_fn_differing_only_in_params():
     defs = {c["field"]: c for c in body["live_grid"]["data"]["table"]["columnsDefs"]}
     day, week = defs["day_range"], defs["week52_range"]
     assert day["renderFn"] == week["renderFn"] == ["rangeBar"]
+    # valueKey is required: a rangeBar column is presentation-only, so without
+    # it the renderer has no value to mark and draws an empty cell between a
+    # correct low and high.
     assert day["renderFnParams"] == {
-        "lowKey": "day_low", "highKey": "day_high", "palette": "day",
+        "lowKey": "day_low", "highKey": "day_high",
+        "valueKey": "price", "palette": "day",
     }
     assert week["renderFnParams"] == {
-        "lowKey": "week52_low", "highKey": "week52_high", "palette": "week52",
+        "lowKey": "week52_low", "highKey": "week52_high",
+        "valueKey": "price", "palette": "week52",
     }
     # The palettes MUST differ: the two bars sit side by side in one row, and
     # identical colours read as one repeated column rather than two bands.
@@ -322,3 +327,13 @@ def test_the_range_bars_flanking_columns_hug_their_bar():
     assert defs["day_high"]["align"] == "left"
     assert defs["week52_low"]["align"] == "right"
     assert defs["week52_high"]["align"] == "left"
+
+
+def test_the_money_columns_opt_out_of_abbreviation():
+    """"80.7411K" is not a price -- it hides which dollar BTC is trading at.
+    Volume keeps the default: there the magnitude is the point."""
+    body = make_client().get("/widgets.json").json()
+    defs = {c["field"]: c for c in body["live_grid"]["data"]["table"]["columnsDefs"]}
+    for field in ("price", "change", "day_low", "day_high", "week52_low", "week52_high"):
+        assert defs[field]["abbreviate"] is False, field
+    assert "abbreviate" not in defs["volume"]
