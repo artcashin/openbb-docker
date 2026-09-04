@@ -98,13 +98,19 @@ def test_widgets_json_declares_delta_explorer():
 
 def test_delta_libraries_lists_libraries():
     r = make_client(libraries=("openbb", "ticks"))
-    assert r.get("/delta/libraries").json() == ["openbb", "ticks"]
+    assert r.get("/delta/libraries").json() == [
+        {"label": "openbb", "value": "openbb"},
+        {"label": "ticks", "value": "ticks"},
+    ]
 
 
 def test_delta_symbols_lists_symbols_for_library():
     client = make_client(symbols_by_library={"openbb": ["AAPL", "MSFT"]})
     r = client.get("/delta/symbols", params={"library": "openbb"})
-    assert r.json() == ["AAPL", "MSFT"]
+    assert r.json() == [
+        {"label": "AAPL", "value": "AAPL"},
+        {"label": "MSFT", "value": "MSFT"},
+    ]
 
 
 def test_delta_symbols_unknown_library_is_404():
@@ -223,7 +229,10 @@ def test_widgets_json_declares_kdb_explorer():
 
 def test_kdb_tables_lists_tables():
     r = make_kdb_client(tables=("trades", "quotes"))
-    assert r.get("/kdb/tables").json() == ["trades", "quotes"]
+    assert r.get("/kdb/tables").json() == [
+        {"label": "trades", "value": "trades"},
+        {"label": "quotes", "value": "quotes"},
+    ]
 
 
 def test_kdb_schema_returns_columns():
@@ -345,3 +354,40 @@ def test_dockerfile_installs_unpublished_siblings_before_mcp_stores():
     assert dockerfile.index("pip install /srv/openbb-deltalake") < dockerfile.index(
         "pip install /srv/mcp_stores"
     )
+
+
+def test_every_options_endpoint_returns_the_shape_bdobb_can_read():
+    """A picker fed bare strings is EMPTY, and nothing reports an error.
+
+    bdobb normalises fetched option lists through toOptions, which skips any
+    entry that is not an object with a string `label`. Returning list[str]
+    from an optionsEndpoint therefore produced a symbol picker with nothing
+    in it and no failure anywhere to explain why. This walks every
+    optionsEndpoint widgets.json actually declares.
+    """
+    # Every backend call injected: this walks the picker endpoints for BOTH
+    # widgets, and make_client alone would leave kdb_tables pointing at a real
+    # q connection.
+    client = TestClient(create_app(
+        delta_libraries_fn=lambda: ["ticks"],
+        delta_symbols_fn=lambda library: ["AAPL"],
+        kdb_tables_fn=lambda: ["trades"],
+    ))
+    widgets = client.get("/widgets.json").json()
+
+    endpoints = {
+        p["optionsEndpoint"]
+        for w in widgets.values()
+        for p in w.get("params", [])
+        if p.get("optionsEndpoint")
+    }
+    assert endpoints, "widgets.json declares no optionsEndpoint; this test is stale"
+
+    for ep in sorted(endpoints):
+        params = {"library": "openbb"} if "symbol" in ep else {}
+        body = client.get("/" + ep.lstrip("/"), params=params).json()
+        assert isinstance(body, list) and body, f"{ep} returned no list"
+        for entry in body:
+            assert isinstance(entry, dict), f"{ep} returned a bare {type(entry).__name__}"
+            assert isinstance(entry.get("label"), str), f"{ep} entry has no string label"
+            assert entry.get("value") is not None, f"{ep} entry has no value"

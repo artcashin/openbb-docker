@@ -84,13 +84,24 @@ def create_app(
         """
         return JSONResponse(json.loads(APPS_PATH.read_text()))
 
+    def _options(names) -> list[dict]:
+        """The shape a widgets.json optionsEndpoint must return.
+
+        bdobb normalises fetched option lists through toOptions, which SKIPS
+        any entry that is not an object with a string `label` -- so a bare
+        list of strings yields an empty picker with no error anywhere. The
+        MCP tools keep returning plain lists; that is the analyst's contract,
+        and only these two routes feed a picker.
+        """
+        return [{"label": str(n), "value": str(n)} for n in names]
+
     @app.get("/delta/libraries")
-    def delta_libraries() -> list[str]:
-        return delta_libraries_fn()
+    def delta_libraries() -> list[dict]:
+        return _options(delta_libraries_fn())
 
     @app.get("/delta/symbols")
-    def delta_symbols(library: str) -> list[str]:
-        return _404_on_value_error(delta_symbols_fn, library)
+    def delta_symbols(library: str) -> list[dict]:
+        return _options(_404_on_value_error(delta_symbols_fn, library))
 
     @app.get("/delta/describe")
     def delta_describe_route(library: str, symbol: str) -> dict:
@@ -112,8 +123,8 @@ def create_app(
         )
 
     @app.get("/kdb/tables")
-    def kdb_tables_route() -> list[str]:
-        return kdb_tables_fn()
+    def kdb_tables_route() -> list[dict]:
+        return _options(kdb_tables_fn())
 
     @app.get("/kdb/schema")
     def kdb_schema(table: str) -> list[dict]:
