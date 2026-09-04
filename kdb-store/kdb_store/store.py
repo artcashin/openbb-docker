@@ -367,10 +367,15 @@ class KdbStore:
         That is the same trade `startup.q` makes for its as-of join and is
         cheap at cache scale; kdb is a one-day rolling window here, not a
         historical database.
+
+        `xdesc` is a STABLE sort: ticks sharing one `time` come out in their
+        original, arrival order, not reversed. `reverse` runs first so that,
+        after the stable sort, arrival order among tied ticks reads newest
+        first -- the same tie-break `latest_tick` documents above.
         """
         def read(conn):
             got = conn(
-                "{[qwsym;qwlim] qwlim sublist `time xdesc"
+                "{[qwsym;qwlim] qwlim sublist `time xdesc reverse"
                 " select time, price, size from trades where sym = qwsym}",
                 _q_symbol(symbol),
                 limit,

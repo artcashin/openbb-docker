@@ -507,6 +507,37 @@ def test_read_ticks_on_an_empty_cache_is_an_empty_list():
     assert s.read_ticks("AAPL", 10) == []
 
 
+def test_read_ticks_breaks_time_ties_with_the_later_arrival_first():
+    """Two ticks sharing one `time`, recorded old-then-new: read_ticks must
+    return the later arrival first -- the same tie-break `latest_tick`
+    documents two methods above.
+
+    `xdesc` is a STABLE sort: ties keep their original (arrival) order, so a
+    bare `` `time xdesc `` would present the earlier arrival as the newer
+    one, backwards. The fix reverses the selection before that stable sort.
+
+    FakeConn can't execute q, so this pins the fix at the query-routing
+    level instead of the data level: the canned response below only matches
+    a query containing "xdesc reverse". A regression that drops `reverse`
+    sends a query this response won't match; FakeConn then falls through to
+    its default `None` reply, and read_ticks returns `[]` instead of the two
+    ticks below -- so this fails on the regression itself, not merely on the
+    query text's shape.
+    """
+    import pandas as pd
+
+    tied = pd.Timestamp("2026-09-03T15:00:00")
+    s, _ = store_with({
+        "xdesc reverse": pd.DataFrame({
+            "time": [tied, tied],
+            "price": [102.0, 101.0],  # later arrival first, as the fix produces
+            "size": [2.0, 1.0],
+        }),
+    })
+    got = s.read_ticks("AAPL", 10)
+    assert [r["price"] for r in got] == [102.0, 101.0]
+
+
 def test_write_snapshot_stores_a_fetch_time():
     s, conn = store_with()
     s.write_snapshot("AAPL", {"close": 100.0, "volume": 10.0})
