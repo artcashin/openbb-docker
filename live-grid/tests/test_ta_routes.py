@@ -1,6 +1,10 @@
 """The /ta_chart route and macro discovery in /widgets.json."""
 
+from datetime import date, timedelta
+
+import pytest
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 from app.main import create_app
 
@@ -127,3 +131,72 @@ def test_ta_chart_anchor_param_adds_an_anchored_vwap_trace():
                                                  "anchor": "2026-08-28T14:30"})
     names = [t.get("name") for t in response.json().get("data", [])]
     assert "Anchored VWAP" in names
+
+
+# This environment has no reachable OpenBB API (see openbb_client.OPENBB_URL,
+# http://127.0.0.1:6900) -- fetch_series always fails with a connection
+# error, which is exactly the degradation /ta_chart already has a test for.
+# The three tests below need bars to actually arrive, so they stand up their
+# own deterministic history the way the /ta_chart_ws tests above already do.
+def _fake_series_bars(n: int = 40) -> list[dict]:
+    bars = []
+    price = 100.0
+    start = date(2024, 1, 1)
+    for i in range(n):
+        price += 1.0 if i % 3 else -1.5
+        d = (start + timedelta(days=i)).isoformat()
+        bars.append({"date": d, "open": price - 0.5, "high": price + 1.0,
+                     "low": price - 1.0, "close": price,
+                     "adjusted_close": price, "volume": 1000 + i})
+    return bars
+
+
+async def _fake_build_series(*args, **kwargs):
+    return _fake_series_bars(), {}
+
+
+def test_ta_series_ws_first_frame_is_a_full_series_payload(monkeypatch):
+    monkeypatch.setattr("app.main.build_series", _fake_build_series)
+    with client().websocket_connect(
+        "/ta_series_ws?symbol=AAPL&interval=1d&indicators=rsi:period=14"
+    ) as ws:
+        first = ws.receive_json()
+    assert first["type"] == "series"
+    assert first["rev"] == 0
+    assert first["candles"], "no candles in the seed frame"
+    assert any(p["id"] == "price" for p in first["panes"])
+
+
+def test_ta_series_ws_second_frame_is_a_delta(monkeypatch):
+    monkeypatch.setattr("app.main.build_series", _fake_build_series)
+    monkeypatch.setenv("TA_PUSH_INTERVAL_MS", "0")
+    with client().websocket_connect(
+        "/ta_series_ws?symbol=AAPL&interval=1d&indicators=sma:period=20"
+    ) as ws:
+        ws.receive_json()
+        second = ws.receive_json()
+    assert second["type"] == "delta"
+    assert second["rev"] == 1
+    assert "from" in second
+
+
+def test_ta_series_ws_and_ta_chart_ws_agree_on_values(monkeypatch):
+    """One engine, two presenters. If these ever disagree, a second
+    implementation has crept in."""
+    monkeypatch.setattr("app.main.build_series", _fake_build_series)
+    query = "symbol=AAPL&interval=1d&indicators=rsi:period=14"
+    with client().websocket_connect(f"/ta_series_ws?{query}") as ws:
+        series = ws.receive_json()
+    with client().websocket_connect(f"/ta_chart_ws?{query}") as ws:
+        figure = ws.receive_json()
+    rsi_pane = next(p for p in series["panes"] if p["id"] == "rsi")
+    from_series = [point["value"] for point in rsi_pane["series"][0]["data"]]
+    from_figure = next(t["y"] for t in figure["figure"]["data"]
+                       if t.get("name", "").startswith("RSI"))
+    assert from_series == from_figure
+
+
+def test_ta_series_ws_closes_on_an_unknown_macro():
+    with pytest.raises(WebSocketDisconnect):
+        with client().websocket_connect("/ta_series_ws?symbol=AAPL&macro=nope") as ws:
+            ws.receive_json()

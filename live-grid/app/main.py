@@ -37,6 +37,7 @@ from app.ta.payload import (
     revised_from,
     with_anchor,
 )
+from app.ta.series_payload import build_series_payload, series_delta
 from app.ta.sources import EodhdSource
 
 log = logging.getLogger("live-grid")
@@ -432,6 +433,74 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
             return
         except Exception as exc:  # noqa: BLE001
             log.warning("ta_chart_ws ended for %s: %s", params.symbol, exc)
+            return
+
+    @app.websocket("/ta_series_ws")
+    async def ta_series_ws(ws: WebSocket) -> None:
+        """The lightweight-charts client's study feed.
+
+        Everything about the loop matches ta_chart_ws deliberately: the same
+        build_payload, the same bars-unavailable degradation, the same
+        permanent-failure close, the same drop-rather-than-queue sleep. Only
+        the presenter differs.
+        """
+        await ws.accept()
+        query = ws.query_params
+        s, e = _window(query.get("start"), query.get("end"))
+        params = ChartParams(
+            symbol=query.get("symbol", "AAPL"),
+            interval=query.get("interval", "1d"),
+            source=query.get("source", "local"),
+            macro=query.get("macro", "none"),
+            indicators=with_anchor(query.get("indicators", ""), query.get("anchor")),
+            start=s, end=e, provider=query.get("provider", "kdb"),
+        )
+        interval_s = float(os.getenv("TA_PUSH_INTERVAL_MS", "1000")) / 1000.0
+        previous: list[str] = []
+        rev = 0
+        try:
+            while True:
+                started = asyncio.get_running_loop().time()
+                bars_error = None
+                try:
+                    bars, _ = await build_series(
+                        params.symbol, params.interval, s, e, recorder,
+                        _tick_window(), params.provider
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("ta_series_ws bars unavailable for %s: %s",
+                                params.symbol, exc)
+                    bars, bars_error = [], exc
+                try:
+                    _, panes, frame, annotations = await build_payload(
+                        params, bars_to_frame(bars), eodhd_source=_eodhd
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("ta_series_ws failed for %s: %s", params.symbol, exc)
+                    await ws.close(code=1011, reason=str(exc)[:120])
+                    return
+                subtitle = f"{params.interval} · {params.source}"
+                if bars_error is not None:
+                    subtitle += f"  ·  bars unavailable: {bars_error}"
+                dates = [str(d) for d in frame["date"].to_list()] if frame.height else []
+                # A full push whenever a delta could not carry the truth: the
+                # first frame, a repainting indicator, and any error state --
+                # the subtitle only travels on a full push.
+                if rev == 0 or any_repaints(panes) or bars_error is not None:
+                    payload = build_series_payload(
+                        frame, panes, params.symbol, subtitle, annotations
+                    )
+                    await ws.send_json({"type": "series", "rev": rev, **payload})
+                else:
+                    payload = series_delta(frame, panes, revised_from(previous, dates))
+                    await ws.send_json({"type": "delta", "rev": rev, **payload})
+                previous, rev = dates, rev + 1
+                elapsed = asyncio.get_running_loop().time() - started
+                await asyncio.sleep(max(0.0, interval_s - elapsed))
+        except WebSocketDisconnect:
+            return
+        except Exception as exc:  # noqa: BLE001
+            log.warning("ta_series_ws ended for %s: %s", params.symbol, exc)
             return
 
     @app.get("/demo", response_class=HTMLResponse)
