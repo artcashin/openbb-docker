@@ -72,8 +72,20 @@
       "align": "right"
      },
      {
+      "field": "rsi",
+      "headerName": "RSI",
+      "renderFn": ["rangeBar"],
+      "renderFnParams": { "min": 0, "max": 100, "guides": [30, 50, 70] }
+     },
+     {
+      "field": "avwap_dev",
+      "headerName": "vs VWAP",
+      "renderFn": ["rangeBar"],
+      "renderFnParams": { "signed": true }
+     },
+     {
       "field": "day_low",
-      "headerName": "Day Low",
+      "headerName": "Low",
       "enableCellChangeWs": false,
       "align": "right",
       "abbreviate": false
@@ -94,21 +106,21 @@
      },
      {
       "field": "day_high",
-      "headerName": "Day High",
+      "headerName": "High",
       "enableCellChangeWs": false,
       "align": "left",
       "abbreviate": false
      },
      {
       "field": "week52_low",
-      "headerName": "52w Low",
+      "headerName": "Low",
       "enableCellChangeWs": false,
       "align": "right",
       "abbreviate": false
      },
      {
       "field": "week52_range",
-      "headerName": "52 Week",
+      "headerName": "52 week",
       "renderFn": [
        "rangeBar"
       ],
@@ -122,7 +134,7 @@
      },
      {
       "field": "week52_high",
-      "headerName": "52w High",
+      "headerName": "High",
       "enableCellChangeWs": false,
       "align": "left",
       "abbreviate": false
@@ -156,18 +168,6 @@
       "field": "day_open",
       "headerName": "Open",
       "hide": true
-     },
-     {
-      "field": "rsi",
-      "headerName": "RSI",
-      "renderFn": ["rangeBar"],
-      "renderFnParams": { "min": 0, "max": 100, "guides": [30, 50, 70] }
-     },
-     {
-      "field": "avwap_dev",
-      "headerName": "vs VWAP",
-      "renderFn": ["rangeBar"],
-      "renderFnParams": { "signed": true }
      }
     ]
    }
