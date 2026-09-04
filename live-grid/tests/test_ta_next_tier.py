@@ -61,8 +61,18 @@ def test_both_declare_no_eodhd_map():
 
 
 def test_hma_rounds_its_derived_lengths_to_nearest_int():
-    """period=10 -> round(10/2)=5, round(sqrt(10))=3. A truncating int() gives 3
-    for sqrt(10)=3.16 too, but round(7/2)=4 while int(3.5)=3 -- the divergence
-    that makes this worth pinning."""
+    """period=7 -> round(7/2)=4 and round(sqrt(7))=3; a truncating int() would
+    give (3, 2) instead. Both lengths diverge from truncation here, and each
+    scheme lands on a different final value, so this hand-rolled expectation
+    -- built with (4, 3), the same way test_hma_matches_a_hand_rolled_wma_of_wma
+    builds (4, 3) for period=9 -- fails if _hma_build ever truncates instead of
+    rounding."""
     df = fixture_frame()
-    assert compute(df, [resolve("hma", period=7)])[col("hma", period=7)][-1] is not None
+    out = compute(df, [resolve("hma", period=7)])[col("hma", period=7)].to_list()
+    price = df["adj_close"].to_list()
+    raw = [
+        2 * _wma(price[: i + 1], 4) - _wma(price[: i + 1], 7) if i >= 6 else None
+        for i in range(len(price))
+    ]
+    expected = _wma([r for r in raw[-3:]], 3)
+    assert out[-1] == approx(expected)
