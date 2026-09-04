@@ -71,6 +71,15 @@ def test_raw_basis_makes_the_adjusted_indicators_read_raw_close():
     assert bars_to_frame(bars, basis="raw")["adj_close"][0] == 1.5
 
 
+def test_bars_to_frame_rejects_an_unknown_basis():
+    """Every other param in this engine fails loudly on a bad value --
+    resolve() on an unknown parameter name, price_col() on an unknown basis.
+    `basis` used to be the one exception: ?basis=Raw or ?basis=unadjusted
+    silently meant "adjusted" (Fix 5)."""
+    with pytest.raises(ValueError, match="unadjusted"):
+        bars_to_frame(BARS, basis="unadjusted")
+
+
 def test_bars_to_frame_on_no_bars_has_the_full_schema():
     frame = bars_to_frame([])
     assert {"date", "open", "high", "low", "close", "adj_close", "volume"} <= set(frame.columns)

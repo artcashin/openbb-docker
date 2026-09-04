@@ -158,8 +158,20 @@ def delta(frame: pl.DataFrame, panes: Sequence[Pane], start_row: int) -> dict:
             "low": _column(tail, "low"), "close": _column(tail, "close"),
         }
     }
-    for position, column in enumerate(trace_index(panes)):
-        if position == 0:
-            continue
-        traces[str(position)] = {"y": _column(tail, column)}
+    dates = frame["date"].to_list() if "date" in frame.columns else []
+    position = 0
+    for pane in panes:
+        for series in pane.series:
+            position += 1
+            trace: dict = {"y": _column(tail, series.column)}
+            offset = int(series.render.get("time_offset", 0) or 0)
+            if offset:
+                # The shared "x" above is the tail's OWN dates -- wrong for a
+                # displaced series, which plots at a shift of the FULL
+                # frame's dates (see panes.shift_times). Compute that shift
+                # across the whole frame, same as the full push does, then
+                # slice to the tail so point i here still lines up with y[i].
+                shifted = shift_times(dates, offset)[start:]
+                trace["x"] = [None if d is None else str(d) for d in shifted]
+            traces[str(position)] = trace
     return {"from": start, "x": _dates(tail), "traces": traces}

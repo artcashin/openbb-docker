@@ -150,3 +150,23 @@ def test_shift_times_backward_extends_before_the_first_bar():
 
 def test_shift_times_on_a_single_bar_cannot_infer_spacing():
     assert shift_times([date(2026, 1, 1)], 2) == [None]
+
+
+def test_shift_times_infers_step_from_the_smallest_gap_not_the_tail():
+    """An irregular series -- e.g. an intraday frame straddling a session
+    break -- must not let one big trailing gap poison every synthesized
+    timestamp (Fix 8)."""
+    times = [date(2026, 1, 1), date(2026, 1, 2), date(2026, 1, 3), date(2026, 1, 10)]
+    out = shift_times(times, 1)
+    # The true bar spacing is 1 day; the old last-two-entries rule would have
+    # inferred a 7-day step from the tail gap and put this at 2026-01-17.
+    assert out[-1] == date(2026, 1, 11)
+
+
+def test_shift_times_tolerates_a_null_in_the_trailing_positions():
+    """bars_to_frame parses dates with strict=False, so a malformed trailing
+    date becomes a null. The old `times[-1] - times[-2]` step calculation
+    raised TypeError the moment either landed there; this must not."""
+    times = [date(2026, 1, 1), date(2026, 1, 2), date(2026, 1, 3), None]
+    out = shift_times(times, 1)
+    assert out == [date(2026, 1, 2), date(2026, 1, 3), None, date(2026, 1, 5)]

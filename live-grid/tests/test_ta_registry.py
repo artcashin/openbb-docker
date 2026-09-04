@@ -4,6 +4,8 @@ import polars as pl
 import pytest
 
 from app.ta.compute import compute
+from app.ta.iterative import ITERATIVE
+from app.ta.payload import _NUMERIC
 from app.ta.registry import REGISTRY, get, resolve
 from tests.ta_helpers import col, fixture_frame
 
@@ -14,6 +16,23 @@ def test_every_registered_indicator_states_its_conventions():
         assert ind.convention.strip(), f"{name} has no pinned convention"
         assert ind.pane in ("price", "own"), name
         assert isinstance(ind.repaints, bool), name
+        # `sessioned` runs `build` against a once-per-session frame that only
+        # `session_agg` knows how to produce; without it the misconfiguration
+        # fails at call time with a bare "'NoneType' object is not callable".
+        if ind.sessioned:
+            assert ind.session_agg is not None, f"{name} is sessioned but has no session_agg"
+        # `iterative` routes compute() through app.ta.iterative.ITERATIVE by
+        # name; an indicator that claims iterative=True but isn't a key there
+        # would fail the same bare way at call time.
+        if ind.iterative:
+            assert name in ITERATIVE, f"{name} is iterative but missing from ITERATIVE"
+        # parse_indicators._coerce only casts a param to a number when its
+        # name is listed in _NUMERIC -- everything else stays a raw string.
+        # A numeric default not listed here is the exact bug Fix 1 patched:
+        # every numeric param this indicator declares must be in that list.
+        for key, value in ind.params.items():
+            if key != "style" and isinstance(value, (int, float)):
+                assert key in _NUMERIC, f"{name}'s {key!r} default is numeric but missing from _NUMERIC"
 
 
 def test_resolve_applies_defaults_then_overrides():

@@ -117,24 +117,37 @@ def shift_times(times: list, offset: int) -> list:
     instead keeps the frame rectangular and lets the renderer draw past the
     last candle, which is what both Plotly and lightweight-charts allow.
 
-    Timestamps beyond either end are synthesized from the last observed
-    spacing. One bar carries no spacing to infer, so it yields None.
+    Timestamps beyond either end are synthesized from the smallest gap
+    observed between any two adjacent, non-null entries -- not just the
+    trailing pair, which an irregular series (e.g. an intraday frame
+    straddling a session break) could hand us many times the true bar
+    spacing. One bar, or an entirely-null series, carries no spacing to
+    infer, so it yields None.
     """
     if offset == 0 or not times:
         return list(times)
     count = len(times)
-    step = times[-1] - times[-2] if count >= 2 else None
+    step = min(
+        (b - a for a, b in zip(times, times[1:])
+         if a is not None and b is not None and b > a),
+        default=None,
+    )
+    # The anchor is the last (or first) NON-null entry, not simply times[-1]
+    # / times[0] -- bars_to_frame parses dates with strict=False, so a
+    # malformed date becomes a null that can land at either end.
+    last_idx = next((i for i in range(count - 1, -1, -1) if times[i] is not None), None)
+    first_idx = next((i for i in range(count) if times[i] is not None), None)
     out = []
     for index in range(count):
         target = index + offset
         if 0 <= target < count:
             out.append(times[target])
-        elif step is None:
+        elif step is None or last_idx is None:
             out.append(None)
         elif target >= count:
-            out.append(times[-1] + step * (target - count + 1))
+            out.append(times[last_idx] + step * (target - last_idx))
         else:
-            out.append(times[0] + step * target)
+            out.append(times[first_idx] + step * (target - first_idx))
     return out
 
 

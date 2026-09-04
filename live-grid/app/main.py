@@ -34,6 +34,7 @@ from app.ta.payload import (
     any_repaints,
     bars_to_frame,
     build_payload,
+    chart_subtitle,
     revised_from,
     with_anchor,
 )
@@ -489,7 +490,7 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
                     log.warning("ta_series_ws failed for %s: %s", params.symbol, exc)
                     await ws.close(code=1011, reason=str(exc)[:120])
                     return
-                subtitle = f"{params.interval} · {params.source}"
+                subtitle = chart_subtitle(params)
                 if bars_error is not None:
                     subtitle += f"  ·  bars unavailable: {bars_error}"
                 dates = [str(d) for d in frame["date"].to_list()] if frame.height else []

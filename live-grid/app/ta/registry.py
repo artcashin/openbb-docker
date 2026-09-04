@@ -307,7 +307,12 @@ def _trix_build(p: dict, b: dict[str, Base]) -> list[pl.Expr]:
     smoothed = pl.col(price_col("adjusted"))
     for _ in range(3):
         smoothed = smoothed.ewm_mean(alpha=alpha, adjust=False, ignore_nulls=True)
-    return [(100 * smoothed.pct_change(1)).alias("trix")]
+    # A zero-price frame (a synthetic fixture, a delisted symbol) makes
+    # pct_change divide 0/0 -> NaN. Unlike uo/chop/vortex there is no
+    # zero-numerator or zero-denominator invariant to lean on here -- any
+    # prior EMA can be exactly zero -- so this is a plain fill_nan, not a
+    # guarded expression.
+    return [(100 * smoothed.pct_change(1)).fill_nan(None).alias("trix")]
 
 
 register(Indicator(
@@ -315,7 +320,9 @@ register(Indicator(
     price_basis="adjusted", guides=[0.0],
     convention=(
         "1-bar percent change of a triple EMA(period) on adjusted close, "
-        "alpha = 2/(period+1) matching the plain `ema` indicator."
+        "alpha = 2/(period+1) matching the plain `ema` indicator. "
+        "fill_nan(None): the EMA can be exactly zero, making the percent "
+        "change 0/0."
     ),
     deps=lambda p: [],  # EMA-of-EMA-of-EMA is not a flat Base
     build=_trix_build,
@@ -936,9 +943,11 @@ register(Indicator(
     pane="price", price_basis="raw",
     convention=(
         "Tenkan/Kijun/Senkou B from rolling high-low midpoints on raw OHLC. "
-        "Values sit at the row they are COMPUTED from; the leading spans are "
-        "drawn `displacement` bars forward and Chikou the same distance back "
-        "via render['time_offset'], never by shifting the column."
+        "Values sit at the row they are COMPUTED from; the leading spans and "
+        "Chikou are displaced via render['time_offset'], never by shifting "
+        "the column. That offset is fixed at the default `displacement` "
+        "(26) -- a non-default `displacement` moves the midpoint windows but "
+        "plots the result at the same default offset (see render below)."
     ),
     deps=lambda p: [
         Base("max", "high", p["conversion"]), Base("min", "low", p["conversion"]),
@@ -946,6 +955,12 @@ register(Indicator(
         Base("max", "high", p["span_b"]), Base("min", "low", p["span_b"]),
     ],
     build=_ichimoku_build,
+    # `render` is a static, frozen-dataclass field shared by every request
+    # for this indicator, so these offsets cannot read the resolved
+    # `displacement` param -- they are pinned to its default. Fixing that
+    # needs Indicator.render to become a callable of params, a signature
+    # change across the whole registry, not a one-off patch here; nobody has
+    # asked for a non-default displacement yet, so it stays a known gap.
     render={
         "ichi_conversion": _line("#4c9be8"),
         "ichi_base": _line("#e06c75"),

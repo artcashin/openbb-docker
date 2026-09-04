@@ -11,6 +11,7 @@ from dataclasses import dataclass
 
 import polars as pl
 
+from app.ta.exprs import price_col
 from app.ta.figure import build_ta_figure
 from app.ta.macros import load_all
 from app.ta.panes import Pane, all_reqs, assign
@@ -18,7 +19,9 @@ from app.ta.registry import Req, resolve
 from app.ta.sources import LocalSource
 
 _NUMERIC = ("period", "k", "d", "fast", "slow", "signal", "smooth_k",
-            "stoch_period", "atr_period", "mult", "acceleration", "maximum")
+            "stoch_period", "atr_period", "mult", "acceleration", "maximum",
+            "conversion", "base", "span_b", "displacement", "mid",
+            "multiplier", "session_shift")
 
 
 @dataclass(frozen=True)
@@ -92,6 +95,12 @@ def bars_to_frame(bars: list[dict], basis: str = "adjusted") -> pl.DataFrame:
     correct rather than a fudge: intraday ticks are already unadjusted, and the
     alternative is a null column that silently voids every adjusted indicator.
     """
+    # `basis` is a param like any other, and every other one in this engine
+    # raises on an unknown value (resolve, price_col) rather than silently
+    # falling back -- ?basis=raw is the only value besides "adjusted" that
+    # means anything here, so reuse price_col's own check instead of letting
+    # a typo (?basis=Raw) mean "adjusted" with no error anywhere.
+    price_col(basis)
     schema = {"date": pl.Datetime, "open": pl.Float64, "high": pl.Float64,
               "low": pl.Float64, "close": pl.Float64, "adj_close": pl.Float64,
               "volume": pl.Float64, "vwap": pl.Float64}
@@ -132,6 +141,16 @@ def bars_to_frame(bars: list[dict], basis: str = "adjusted") -> pl.DataFrame:
     ])
 
 
+def chart_subtitle(params: ChartParams) -> str:
+    """The line shared by the figure title and the series payload.
+
+    One spelling: `/ta_chart`'s figure and `/ta_series_ws`'s series payload
+    used to copy this string independently, and `basis` was added on this
+    branch to neither copy.
+    """
+    return f"{params.interval} · {params.source} · {params.basis}"
+
+
 async def build_payload(
     params: ChartParams, frame: pl.DataFrame, eodhd_source=None,
 ) -> tuple[dict, list[Pane], pl.DataFrame, list]:
@@ -161,8 +180,9 @@ async def build_payload(
     else:
         computed = LocalSource().series(frame, reqs).frame
 
-    subtitle = f"{params.interval} · {params.source}"
-    figure = build_ta_figure(params.symbol, computed, panes, annotations, subtitle)
+    figure = build_ta_figure(
+        params.symbol, computed, panes, annotations, chart_subtitle(params)
+    )
     return figure, panes, computed, annotations
 
 

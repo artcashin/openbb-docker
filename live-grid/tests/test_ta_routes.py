@@ -196,6 +196,41 @@ def test_ta_series_ws_and_ta_chart_ws_agree_on_values(monkeypatch):
     assert from_series == from_figure
 
 
+def test_ta_series_ws_basis_raw_makes_an_adjusted_indicator_read_raw_close(monkeypatch):
+    """Only the bars_to_frame unit test covered `basis` -- it bypasses the
+    route wiring entirely. This environment has no reachable OpenBB API, so a
+    route test on empty data would pass while proving nothing; stand up
+    deterministic bars, same as the tests above, with adjusted close
+    deliberately different from raw close (Fix 9)."""
+    def bars():
+        out = []
+        price = 100.0
+        start = date(2024, 1, 1)
+        for i in range(10):
+            price += 1.0
+            d = (start + timedelta(days=i)).isoformat()
+            out.append({"date": d, "open": price - 0.5, "high": price + 1.0,
+                        "low": price - 1.0, "close": price,
+                        "adjusted_close": price * 0.5, "volume": 1000})
+        return out
+
+    async def fake(*args, **kwargs):
+        return bars(), {}
+
+    monkeypatch.setattr("app.main.build_series", fake)
+    query = "symbol=AAPL&interval=1d&indicators=sma:period=3"
+    with client().websocket_connect(f"/ta_series_ws?{query}") as ws:
+        adjusted = ws.receive_json()
+    with client().websocket_connect(f"/ta_series_ws?{query}&basis=raw") as ws:
+        raw = ws.receive_json()
+
+    def sma_values(payload):
+        pane = next(p for p in payload["panes"] if p["id"] == "price")
+        return [point["value"] for point in pane["series"][0]["data"]]
+
+    assert sma_values(adjusted) != sma_values(raw)
+
+
 def test_ta_series_ws_annotation_change_forces_a_series_not_a_delta(monkeypatch):
     """Marks live only on a `series` push -- a delta carries no `marks` key.
     Without watching them, an EODHD fetch that starts failing mid-stream
