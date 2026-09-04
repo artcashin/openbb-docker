@@ -881,3 +881,50 @@ register(Indicator(
     render={"chop": _line("#d19a66")},
     # No eodhd map: no Choppiness Index function on EODHD's endpoint.
 ))
+
+# --- Ichimoku cloud ---------------------------------------------------------
+
+
+def _midpoint(period: int) -> pl.Expr:
+    return (pl.col(f"max:high:{period}") + pl.col(f"min:low:{period}")) / 2
+
+
+def _ichimoku_build(p: dict, b: dict[str, Base]) -> list[pl.Expr]:
+    conversion = _midpoint(p["conversion"])
+    base = _midpoint(p["base"])
+    # No .shift() anywhere: the displacement is a plotting property, declared
+    # per series as render["time_offset"] and applied by panes.shift_times.
+    return [
+        conversion.alias("ichi_conversion"),
+        base.alias("ichi_base"),
+        ((conversion + base) / 2).alias("ichi_span_a"),
+        _midpoint(p["span_b"]).alias("ichi_span_b"),
+        pl.col("close").alias("ichi_chikou"),
+    ]
+
+
+register(Indicator(
+    name="ichimoku", label="Ichimoku Cloud",
+    params={"conversion": 9, "base": 26, "span_b": 52, "displacement": 26},
+    pane="price", price_basis="raw",
+    convention=(
+        "Tenkan/Kijun/Senkou B from rolling high-low midpoints on raw OHLC. "
+        "Values sit at the row they are COMPUTED from; the leading spans are "
+        "drawn `displacement` bars forward and Chikou the same distance back "
+        "via render['time_offset'], never by shifting the column."
+    ),
+    deps=lambda p: [
+        Base("max", "high", p["conversion"]), Base("min", "low", p["conversion"]),
+        Base("max", "high", p["base"]), Base("min", "low", p["base"]),
+        Base("max", "high", p["span_b"]), Base("min", "low", p["span_b"]),
+    ],
+    build=_ichimoku_build,
+    render={
+        "ichi_conversion": _line("#4c9be8"),
+        "ichi_base": _line("#e06c75"),
+        "ichi_span_a": {**_line("#8ed081"), "time_offset": 26},
+        "ichi_span_b": {**_line("#e5c07b"), "time_offset": 26},
+        "ichi_chikou": {**_line("#9aa0a6"), "time_offset": -26},
+    },
+    # No eodhd map: no Ichimoku function on EODHD's endpoint.
+))

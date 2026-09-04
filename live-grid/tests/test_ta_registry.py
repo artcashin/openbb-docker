@@ -34,8 +34,9 @@ def test_resolve_accepts_a_style_override_but_still_rejects_unknown_keys():
 
 
 def test_get_rejects_an_unknown_indicator():
-    with pytest.raises(KeyError, match="ichimoku"):
-        get("ichimoku")
+    # NOT "ichimoku": that has been a registered indicator since v12.0.0.
+    with pytest.raises(KeyError, match="renko"):
+        get("renko")
 
 
 def test_rsi_reads_adjusted_close_and_ignores_raw_close():
@@ -84,8 +85,8 @@ def test_rsi_carries_thirty_seventy_guides():
     assert get("rsi").guides == [30.0, 70.0]
 
 
-def test_registry_is_thirty_one_indicators_with_twelve_eodhd_maps():
-    assert len(REGISTRY) == 31, sorted(REGISTRY)  # 28 + uo + vortex + chop
+def test_registry_is_thirty_two_indicators_with_twelve_eodhd_maps():
+    assert len(REGISTRY) == 32, sorted(REGISTRY)  # 28 + uo + vortex + chop + ichimoku
     mapped = [n for n, i in REGISTRY.items() if i.eodhd is not None]
     assert len(mapped) == 12, sorted(mapped)  # cci is local-only (see registry)
 

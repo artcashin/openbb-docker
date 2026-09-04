@@ -288,3 +288,36 @@ def test_vortex_nulls_a_zero_true_range_window_rather_than_dividing_by_zero():
     out = compute(df, [resolve("vortex", period=n)])
     assert out[col("vortex", "vi_plus", period=n)][-1] is None
     assert out[col("vortex", "vi_minus", period=n)][-1] is None
+
+
+def test_ichimoku_conversion_is_the_nine_bar_midpoint():
+    df = fixture_frame()
+    out = compute(df, [resolve("ichimoku")])
+    name = col("ichimoku", "ichi_conversion")
+    tail = df.tail(9)
+    expected = (tail["high"].max() + tail["low"].min()) / 2
+    assert out[name][-1] == approx(expected)
+
+
+def test_ichimoku_does_not_shift_its_values_inside_the_frame():
+    """Span A at row i is computed FROM row i. The displacement is a plotting
+    property carried in render['time_offset'], not a shift of the column --
+    shifting would drop the leading 26 values off the end of the frame."""
+    df = fixture_frame()
+    out = compute(df, [resolve("ichimoku")])
+    conversion = out[col("ichimoku", "ichi_conversion")][-1]
+    base = out[col("ichimoku", "ichi_base")][-1]
+    span_a = out[col("ichimoku", "ichi_span_a")][-1]
+    assert span_a == approx((conversion + base) / 2)
+
+
+def test_ichimoku_declares_its_displacements_on_the_render_dict():
+    render = REGISTRY["ichimoku"].render
+    assert render["ichi_span_a"]["time_offset"] == 26
+    assert render["ichi_span_b"]["time_offset"] == 26
+    assert render["ichi_chikou"]["time_offset"] == -26
+    assert "time_offset" not in render["ichi_conversion"]
+
+
+def test_ichimoku_has_no_eodhd_map():
+    assert REGISTRY["ichimoku"].eodhd is None
