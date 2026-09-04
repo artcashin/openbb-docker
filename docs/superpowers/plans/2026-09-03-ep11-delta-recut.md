@@ -1029,3 +1029,153 @@ resolved keeping **both** sides rather than picking one:
 
 Verified: `openbb-deltalake` 80 passed, `tick-lab` 163 passed / 2 skipped,
 `scripts/scrub-check.sh` clean.
+
+---
+
+### Task 8: The Example Dashboard (`v11.3.0`)
+
+Added after Tasks 1–2 landed. bdobb-v2 already fetches `apps.json` from every
+configured backend during discovery (`src/lib/discovery.ts:37`), and an
+`apps.json` card names its widget by **widget id**, not by the backend's
+per-install UUID — so a shipped dashboard resolves itself against whichever
+backend serves those widgets. That makes this a pure openbb-docker deliverable
+with **zero bdobb-v2 code**, which is why it belongs on this train rather than
+bdobb's.
+
+`stores-explorer` is the first service in this repo to publish an `apps.json`.
+It follows the same static-file pattern as its `widgets.json` (original D7).
+
+**Files:**
+- Create: `stores-explorer/apps.json`
+- Modify: `stores-explorer/app/main.py` (one route)
+- Test: `stores-explorer/tests/test_main.py`
+
+**Interfaces:**
+- Consumes: the `delta_explorer` and `kdb_explorer` widget ids from Task 7
+- Produces: `GET /apps.json` → a one-element array holding the example app
+
+- [ ] **Step 1: Write the failing test**
+
+```python
+def test_apps_json_publishes_the_example_dashboard():
+    body = TestClient(create_app()).get("/apps.json").json()
+    assert isinstance(body, list) and len(body) == 1
+    app_ = body[0]
+    assert app_["name"] == "Ep. 11 — The Shared Store"
+
+    layout = list(app_["tabs"].values())[0]["layout"]
+    widget_ids = [item["i"] for item in layout]
+    assert widget_ids.count("delta_explorer") == 2   # ticks, and the cache itself
+    assert "kdb_explorer" in widget_ids
+
+    by_library = {item["state"]["params"].get("library") for item in layout}
+    assert "eodhd_fundamentals_cache" in by_library
+
+    # every card must name a widget this service actually publishes
+    published = set(TestClient(create_app()).get("/widgets.json").json())
+    assert set(widget_ids) <= published
+```
+
+The last assertion is the one that matters over time: it fails the moment a
+widget is renamed in `widgets.json` without the dashboard following.
+
+- [ ] **Step 2: Run it to verify it fails**
+
+Run: `python -m pytest stores-explorer/tests -q -k apps`
+Expected: FAIL — 404, the route does not exist.
+
+- [ ] **Step 3: Write `stores-explorer/apps.json`**
+
+Three cards, all served by this one backend, telling the chapter's story: the
+store, the cache that store now backs, and the tape beside it.
+
+```json
+[
+  {
+    "name": "Ep. 11 — The Shared Store",
+    "description": "Browse the Delta Lake store: stored ticks, the EODHD fundamentals cache that now persists into it, and the kdb+ tape beside it.",
+    "img": "",
+    "img_dark": "",
+    "img_light": "",
+    "allowCustomization": true,
+    "tabs": {
+      "store": {
+        "id": "store",
+        "name": "Store",
+        "layout": [
+          {
+            "i": "delta_explorer",
+            "x": 0, "y": 0, "w": 20, "h": 14,
+            "state": {
+              "params": { "library": "ticks", "symbol": "" },
+              "chartView": { "enabled": false, "chartType": "line" }
+            }
+          },
+          {
+            "i": "delta_explorer",
+            "x": 20, "y": 0, "w": 20, "h": 14,
+            "state": {
+              "params": { "library": "eodhd_fundamentals_cache", "symbol": "" },
+              "chartView": { "enabled": false, "chartType": "line" }
+            }
+          },
+          {
+            "i": "kdb_explorer",
+            "x": 0, "y": 14, "w": 40, "h": 12,
+            "state": {
+              "params": { "table": "" },
+              "chartView": { "enabled": false, "chartType": "line" }
+            }
+          }
+        ]
+      }
+    },
+    "groups": [],
+    "prompts": []
+  }
+]
+```
+
+`symbol` and `table` are left empty deliberately: the cascading picker fills
+them from whatever the store actually holds, and a hardcoded symbol would be
+wrong on every install but the author's. `library` IS set, because those two
+library names are structural — `eodhd_fundamentals_cache` is named by
+`_fundamentals.py` and a ticks library is what `tick-lab load` writes.
+
+The second card is the demonstration that matters: it browses the read-through
+cache's own contents, so "the cache is persisting and saving API calls" is
+something you can look at rather than take on trust.
+
+- [ ] **Step 4: Serve it**
+
+In `stores-explorer/app/main.py`, beside the `widgets.json` route:
+
+```python
+APPS_PATH = Path(__file__).resolve().parent.parent / "apps.json"
+
+
+    @app.get("/apps.json")
+    def apps() -> JSONResponse:
+        return JSONResponse(json.loads(APPS_PATH.read_text()))
+```
+
+- [ ] **Step 5: Run the tests to verify they pass**
+
+Run: `python -m pytest stores-explorer/tests -q`
+Expected: PASS
+
+- [ ] **Step 6: Verify in bdobb**
+
+With the stack up and `stores-explorer` configured as a backend in bdobb-v2,
+the app appears in the rail's app list with no import step — discovery fetches
+`apps.json` on connect. Importing it creates the three cards; the two
+`delta_explorer` cards resolve to the same backend and open on their declared
+libraries.
+
+- [ ] **Step 7: Commit and tag**
+
+```bash
+bash scripts/scrub-check.sh
+git add stores-explorer/ && git commit -m "feat(stores-explorer): publish the Ep. 11 example dashboard as apps.json"
+git tag v11.3.0
+```

@@ -71,7 +71,7 @@ substantive — which is what makes a rebase cheaper than a re-application.
 | R7 | **Re-cut the v11.x tags on Delta** rather than opening a v12 line | Episode 12 is already reserved for technical analysis / chart tools in the bdobb spec set. Moving tags to regenerated commits is this repo's established release-rebuild practice. |
 
 | R8 | **The EODHD L2 cache vacuums on write** — `DeltaTable.vacuum` with a short retention after each `_l2_put` | Delta has no `prune_previous_versions`. Without a retention step the cache grows a commit per refresh forever, and `read_metadata`'s `history()` walk slows with it (G5). A cache is the one table in the store with no reason to keep history: the previous value is by definition stale. |
-| R9 | **The cache's Delta library is the same `eodhd_fundamentals_cache`** and appears in the explorer like any other | It is browsable data in the shared store, and seeing the cache's own contents through the widget is a useful demonstration rather than something to hide. |
+| R9 | **The cache's Delta library is the same `eodhd_fundamentals_cache`** and appears in the explorer like any other | It is browsable data in the shared store, and seeing the cache's own contents through the widget is a useful demonstration rather than something to hide — the `v11.3.0` example dashboard puts a card on it for exactly that reason. |
 
 ## Capability gaps and how each closes
 
@@ -225,6 +225,8 @@ Three tags, re-cut on Delta, one per commit series (R2):
 | `v11.0.0` | The rebase: `openbb-deltalake` replaces `openbb-arcticdb`, tick-lab on Delta, compose/CI/constraints, `linux/amd64` pins dropped — **and the EODHD L2 cache ported onto Delta (G5)**, so removing ArcticDB never costs API quota |
 | `v11.1.0` | `mcp_stores` on Delta, including G1/G2/G4 additions |
 | `v11.2.0` | `stores-explorer` on Delta, including G3 — matches the `openbb-stores-explorer:11.2.0` image already named in compose |
+
+| `v11.3.0` | An example dashboard published as `stores-explorer/apps.json` — the Delta store, the EODHD cache it now backs, and the kdb+ tape. Zero bdobb-v2 code: bdobb discovers `apps.json` per backend, and its cards name widgets by id, not by the backend's per-install UUID. |
 
 bdobb-v2 v11.0.0 pairs against `v11.2.0`.
 
